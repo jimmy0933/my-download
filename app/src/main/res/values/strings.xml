@@ -1,0 +1,8 @@
+<resources>
+  <string name="app_name">My Download</string>
+  <style name="Theme.MyDownload" parent="android:style/Theme.Material.NoActionBar">
+    <item name="android:statusBarColor">#091421</item>
+    <item name="android:navigationBarColor">#091421</item>
+    <item name="android:windowLightStatusBar">false</item>
+  </style>
+</resources>
