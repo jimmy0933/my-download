@@ -125,7 +125,7 @@ object DownloadStore {
             if (item.status == "失敗" && item.uri.isBlank() &&
                 item.destinationTree.isNotBlank() && folderError) {
                 repaired++
-                item.copy(destinationTree = newTree, status = "已暫停", error = "")
+                item.copy(destinationTree = newTree, status = "待儲存", error = "")
             } else item
         }
         if (repaired > 0) write(context, updated)
