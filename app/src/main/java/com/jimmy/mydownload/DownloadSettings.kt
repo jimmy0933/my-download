@@ -3,6 +3,7 @@ package com.jimmy.mydownload
 import android.content.Context
 import android.net.Uri
 import android.provider.DocumentsContract
+import java.io.IOException
 import java.net.URI
 
 object DownloadSettings {
@@ -16,6 +17,36 @@ object DownloadSettings {
     fun setFolder(context: Context, uri: Uri?) {
         context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
             .edit().putString(FOLDER, uri?.toString().orEmpty()).apply()
+    }
+
+    /**
+     * A real provider write probe, not a comparison against persistedUriPermissions.
+     * Some vendors return equivalent tree permissions with differently encoded URIs.
+     * Fail here while selecting the folder instead of after downloading a large video.
+     */
+    fun testFolderWrite(context: Context, uri: Uri) {
+        val resolver = context.contentResolver
+        val parent = DocumentsContract.buildDocumentUriUsingTree(
+            uri, DocumentsContract.getTreeDocumentId(uri)
+        )
+        val probeName = ".mydownload-write-check-" + System.currentTimeMillis() + ".tmp"
+        val document = try {
+            DocumentsContract.createDocument(
+                resolver, parent, "application/octet-stream", probeName
+            ) ?: throw IOException("所選資料夾不允許建立檔案，請改選其他資料夾")
+        } catch (e: SecurityException) {
+            throw IOException("Android 未授予所選資料夾的寫入權限，請重新選擇", e)
+        }
+        try {
+            resolver.openOutputStream(document, "w")?.use {
+                it.write(byteArrayOf(0x4d, 0x44))
+                it.flush()
+            } ?: throw IOException("所選資料夾無法開啟寫入串流")
+        } catch (e: SecurityException) {
+            throw IOException("所選資料夾拒絕寫入，請改選可寫入的資料夾", e)
+        } finally {
+            runCatching { DocumentsContract.deleteDocument(resolver, document) }
+        }
     }
 
     fun adBlockEnabled(context: Context): Boolean =
