@@ -266,7 +266,7 @@ fun RootScreen(shared: String) {
                                                         scope.launch { snackbar.showSnackbar("找不到可播放的 App") }
                                                     }
                                             }) { Text("播放") }
-                                            "已暫停", "失敗" -> TextButton(onClick = {
+                                            "已暫停", "失敗", "待儲存" -> TextButton(onClick = {
                                                 DownloadService.start(context, item.id)
                                             }) { Text("繼續") }
                                             else -> TextButton(onClick = {
