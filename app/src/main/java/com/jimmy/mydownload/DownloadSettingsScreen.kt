@@ -26,6 +26,7 @@ fun DownloadSettingsScreen(adsBlocked: Boolean, onBlockChange: (Boolean) -> Unit
     var folder by remember { mutableStateOf(DownloadSettings.folderLabel(context)) }
     var customFolder by remember { mutableStateOf(DownloadSettings.folder(context).isNotEmpty()) }
     var error by remember { mutableStateOf("") }
+    var notice by remember { mutableStateOf("") }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) {
@@ -34,12 +35,21 @@ fun DownloadSettingsScreen(adsBlocked: Boolean, onBlockChange: (Boolean) -> Unit
                     uri,
                     Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
                 )
+                // Test real creation and writing instead of comparing URI strings.
+                // Do not record a location that the provider refuses to write to.
+                DownloadSettings.testFolderWrite(context, uri)
                 DownloadSettings.setFolder(context, uri)
                 folder = DownloadSettings.folderLabel(context)
                 customFolder = true
+                val repaired = DownloadStore.repairFailedDestinations(context, uri.toString())
                 error = ""
+                notice = if (repaired > 0) {
+                    "資料夾寫入測試成功，已修復 $repaired 筆失敗任務，可在下載管理按「繼續」。"
+                } else "資料夾寫入測試成功，之後的新下載會儲存到這裡。"
             } catch (e: Exception) {
-                error = "無法使用資料夾：" + (e.message ?: "沒有存取權限")
+                notice = ""
+                error = "資料夾無法寫入：" + (e.message ?: "Android 沒有授予寫入權限") +
+                    "。請選擇已建立的子資料夾，並在系統確認允許存取。"
             }
         }
     }
@@ -74,6 +84,8 @@ fun DownloadSettingsScreen(adsBlocked: Boolean, onBlockChange: (Boolean) -> Unit
                             DownloadSettings.setFolder(context, null)
                             folder = DownloadSettings.folderLabel(context)
                             customFolder = false
+                            error = ""
+                            notice = "已還原預設下載位置。"
                         },
                         modifier = Modifier.fillMaxWidth()
                     ) { Text("還原預設位置") }
@@ -106,6 +118,7 @@ fun DownloadSettingsScreen(adsBlocked: Boolean, onBlockChange: (Boolean) -> Unit
             }
         }
 
+        if (notice.isNotBlank()) Text(notice, color = Color(0xFF27DBB3))
         if (error.isNotBlank()) Text(error, color = Color(0xFFFFB1A8))
     }
 }
