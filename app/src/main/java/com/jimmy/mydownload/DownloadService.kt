@@ -132,6 +132,12 @@ class DownloadService : Service() {
 
     private suspend fun downloadMp4(item: DownloadRecord) {
         val partial = tempFile(item.id)
+        // If bytes were already completely downloaded and only writing into the
+        // selected SAF folder failed, do not download the whole MP4 again.
+        if (item.status == "待儲存" && partial.isFile && partial.length() > 0L) {
+            finish(item, partial, "mp4", "video/mp4")
+            return
+        }
         var current = partial.takeIf { it.exists() }?.length() ?: 0L
         progress(item, "連線中", 0, current)
         for (attempt in 0..1) {
