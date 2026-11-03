@@ -108,6 +108,30 @@ object DownloadStore {
         }
     }
 
+    /**
+     * Newly granted folder permissions should also repair transfers that failed
+     * because their previously saved destination URI became invalid.
+     * Do not redirect completed or actively downloading jobs.
+     */
+    fun repairFailedDestinations(context: Context, newTree: String): Int = synchronized(lock) {
+        val records = read(context)
+        var repaired = 0
+        val updated = records.map { item ->
+            val folderError = item.error.contains("資料夾") ||
+                item.error.contains("授權") ||
+                item.error.contains("寫入權限") ||
+                item.error.contains("permission", ignoreCase = true) ||
+                item.error.contains("denied", ignoreCase = true)
+            if (item.status == "失敗" && item.uri.isBlank() &&
+                item.destinationTree.isNotBlank() && folderError) {
+                repaired++
+                item.copy(destinationTree = newTree, status = "已暫停", error = "")
+            } else item
+        }
+        if (repaired > 0) write(context, updated)
+        repaired
+    }
+
     fun remove(context: Context, id: Long) = synchronized(lock) {
         write(context, read(context).filterNot { it.id == id })
     }
