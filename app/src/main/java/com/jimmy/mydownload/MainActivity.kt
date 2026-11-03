@@ -1,0 +1,359 @@
+package com.jimmy.mydownload
+
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.provider.DocumentsContract
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import java.io.File
+
+private val Navy = Color(0xFF091421)
+private val Panel = Color(0xFF142333)
+private val Green = Color(0xFF27DBB3)
+private val Soft = Color(0xFFB4C8D5)
+
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: android.os.Bundle?) {
+        super.onCreate(savedInstanceState)
+        val shared = if (intent?.action == Intent.ACTION_SEND) {
+            intent?.getStringExtra(Intent.EXTRA_TEXT).orEmpty()
+        } else ""
+        setContent { RootScreen(shared) }
+    }
+}
+
+private fun requestNotificationPermission(context: android.content.Context) {
+    if (Build.VERSION.SDK_INT >= 33 &&
+        ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
+        != PackageManager.PERMISSION_GRANTED
+    ) {
+        (context as? ComponentActivity)?.requestPermissions(
+            arrayOf(Manifest.permission.POST_NOTIFICATIONS), 8
+        )
+    }
+}
+
+private fun startDownload(context: android.content.Context, stream: StreamChoice) {
+    val item = DownloadStore.add(context, stream)
+    try {
+        requestNotificationPermission(context)
+        DownloadService.start(context, item.id)
+    } catch (e: Exception) {
+        DownloadStore.patch(context, item.id) {
+            it.copy(status = "失敗", error = e.message ?: "無法啟動下載")
+        }
+        throw e
+    }
+}
+
+private fun openVideo(context: android.content.Context, item: DownloadRecord) {
+    val uri = DownloadStore.contentUri(item) ?: return
+    val mime = if (item.uri.endsWith(".ts", ignoreCase = true)) "video/mp2t" else "video/*"
+    context.startActivity(Intent(Intent.ACTION_VIEW).apply {
+        setDataAndType(uri, mime)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    })
+}
+
+private fun deleteVideo(context: android.content.Context, item: DownloadRecord) {
+    if (item.status != "完成") {
+        runCatching { DownloadService.pause(context, item.id) }
+    }
+    if (item.uri.isNotBlank()) {
+        runCatching {
+            val uri = Uri.parse(item.uri)
+            if (DocumentsContract.isDocumentUri(context, uri)) {
+                DocumentsContract.deleteDocument(context.contentResolver, uri)
+            } else {
+                context.contentResolver.delete(uri, null, null)
+            }
+        }
+    }
+    DownloadStore.remove(context, item.id)
+    File(context.filesDir, "temp_downloads/" + item.id + ".part").delete()
+    File(context.filesDir, "temp_downloads/" + item.id + ".mp4").delete()
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun RootScreen(shared: String) {
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+    val scope = rememberCoroutineScope()
+    val snackbar = remember { SnackbarHostState() }
+    var tab by rememberSaveable { mutableIntStateOf(if (shared.isNotBlank()) 1 else 0) }
+    var adsBlocked by remember { mutableStateOf(DownloadSettings.adBlockEnabled(context)) }
+    var manualUrl by rememberSaveable { mutableStateOf(shared) }
+
+    var selectedLink by remember { mutableStateOf<String?>(null) }
+    var resolving by remember { mutableStateOf(false) }
+    var resolveError by remember { mutableStateOf("") }
+    var choices by remember { mutableStateOf<List<StreamChoice>>(emptyList()) }
+    var downloads by remember { mutableStateOf<List<DownloadRecord>>(emptyList()) }
+
+    fun showDownload(link: String) {
+        if (!link.startsWith("https://", true)) return
+        selectedLink = link
+        resolving = true
+        resolveError = ""
+        choices = emptyList()
+        scope.launch {
+            val result = runCatching { StreamResolver.inspect(link) }
+            if (selectedLink == link) {
+                resolving = false
+                result.onSuccess { choices = it }
+                    .onFailure { resolveError = it.message ?: "影片解析失敗" }
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            downloads = DownloadStore.read(context)
+            delay(900)
+        }
+    }
+
+    MaterialTheme(
+        colorScheme = darkColorScheme(
+            primary = Green, background = Navy, surface = Panel,
+            onBackground = Color.White, onSurface = Color.White
+        )
+    ) {
+        Scaffold(
+            containerColor = Navy,
+            snackbarHost = { SnackbarHost(snackbar) },
+            bottomBar = {
+                NavigationBar(containerColor = Panel) {
+                    NavigationBarItem(
+                        selected = tab == 0, onClick = { tab = 0 },
+                        icon = { Icon(Icons.Default.Language, null) }, label = { Text("瀏覽網站") }
+                    )
+                    NavigationBarItem(
+                        selected = tab == 1, onClick = { tab = 1 },
+                        icon = { Icon(Icons.Default.Download, null) }, label = { Text("下載管理") }
+                    )
+                    NavigationBarItem(
+                        selected = tab == 2, onClick = { tab = 2 },
+                        icon = { Icon(Icons.Default.Settings, null) }, label = { Text("設定") }
+                    )
+                }
+            }
+        ) { padding ->
+            Box(Modifier.fillMaxSize().padding(padding)) {
+                SiteBrowser(
+                    visible = tab == 0,
+                    adBlockEnabled = adsBlocked,
+                    modifier = if (tab == 0) Modifier.fillMaxSize() else Modifier.size(0.dp),
+                    onDownload = { showDownload(it) },
+                    onSettings = { tab = 2 }
+                )
+                if (tab == 1) {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize().background(Navy),
+                        contentPadding = PaddingValues(18.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        item {
+                            Text("下載管理", style = MaterialTheme.typography.headlineMedium,
+                                fontWeight = FontWeight.Bold)
+                            Spacer(Modifier.height(7.dp))
+                            Text("貼上網址解析影片，或從瀏覽分頁直接選影片下載。", color = Soft)
+                        }
+                        item {
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = Panel),
+                                shape = RoundedCornerShape(18.dp)
+                            ) {
+                                Column(
+                                    Modifier.fillMaxWidth().padding(16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    OutlinedTextField(
+                                        value = manualUrl, onValueChange = { manualUrl = it },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        label = { Text("HTTPS 影片網址") },
+                                        maxLines = 3,
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
+                                    )
+                                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                        OutlinedButton(
+                                            onClick = {
+                                                clipboard.getText()?.text?.let { manualUrl = it }
+                                            },
+                                            modifier = Modifier.weight(1f)
+                                        ) { Text("貼上連結") }
+                                        Button(
+                                            onClick = { showDownload(manualUrl.trim()) },
+                                            enabled = manualUrl.trim().startsWith("https://"),
+                                            modifier = Modifier.weight(1f)
+                                        ) { Text("解析下載") }
+                                    }
+                                }
+                            }
+                        }
+                        item {
+                            Text("下載紀錄（" + downloads.size + "）",
+                                style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        }
+                        if (downloads.isEmpty()) {
+                            item {
+                                Text("目前沒有下載任務。", color = Soft,
+                                    modifier = Modifier.fillMaxWidth().padding(20.dp))
+                            }
+                        }
+                        items(downloads, key = { it.id }) { item ->
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = Panel),
+                                shape = RoundedCornerShape(18.dp)
+                            ) {
+                                Column(
+                                    Modifier.fillMaxWidth().padding(16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(9.dp)
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            item.title, fontWeight = FontWeight.Bold,
+                                            maxLines = 2, overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        Spacer(Modifier.width(10.dp))
+                                        Text(item.label, color = Green)
+                                    }
+                                    LinearProgressIndicator(
+                                        progress = { item.progress / 100f },
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    Text(item.status + " · " + item.progress + "%",
+                                        color = Soft, style = MaterialTheme.typography.bodySmall)
+                                    if (item.error.isNotBlank()) {
+                                        Text(item.error, color = Color(0xFFFFBC92),
+                                            style = MaterialTheme.typography.bodySmall)
+                                    }
+                                    Row(horizontalArrangement = Arrangement.End) {
+                                        when (item.status) {
+                                            "完成" -> TextButton(onClick = {
+                                                runCatching { openVideo(context, item) }
+                                                    .onFailure {
+                                                        scope.launch { snackbar.showSnackbar("找不到可播放的 App") }
+                                                    }
+                                            }) { Text("播放") }
+                                            "已暫停", "失敗" -> TextButton(onClick = {
+                                                DownloadService.start(context, item.id)
+                                            }) { Text("繼續") }
+                                            else -> TextButton(onClick = {
+                                                DownloadService.pause(context, item.id)
+                                            }) { Text("暫停") }
+                                        }
+                                        TextButton(onClick = {
+                                            deleteVideo(context, item)
+                                            downloads = DownloadStore.read(context)
+                                        }) { Text("刪除", color = Color(0xFFFFB1A8)) }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if (tab == 2) {
+                    DownloadSettingsScreen(
+                        adsBlocked = adsBlocked,
+                        onBlockChange = {
+                            adsBlocked = it
+                            DownloadSettings.setAdBlockEnabled(context, it)
+                        }
+                    )
+                }
+            }
+        }
+
+        if (selectedLink != null) {
+            ModalBottomSheet(
+                onDismissRequest = { selectedLink = null },
+                containerColor = Panel
+            ) {
+                Column(
+                    Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, bottom = 30.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text("下載此影片", style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold)
+                    Text(
+                        selectedLink.orEmpty(), maxLines = 2,
+                        overflow = TextOverflow.Ellipsis, color = Soft,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    if (resolving) {
+                        LinearProgressIndicator(Modifier.fillMaxWidth())
+                        Text("正在取得畫質選項…", color = Soft)
+                    }
+                    if (resolveError.isNotBlank()) {
+                        Text(resolveError, color = Color(0xFFFFBC92))
+                        OutlinedButton(onClick = { selectedLink?.let { showDownload(it) } }) {
+                            Text("重試")
+                        }
+                    }
+                    choices.forEach { stream ->
+                        Card(
+                            onClick = {
+                                runCatching {
+                                    startDownload(context, stream)
+                                    selectedLink = null
+                                }.onSuccess {
+                                    scope.launch { snackbar.showSnackbar("已加入下載：" + stream.label) }
+                                }.onFailure {
+                                    resolveError = it.message ?: "無法開始下載"
+                                }
+                            },
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF23384B))
+                        ) {
+                            Row(
+                                Modifier.fillMaxWidth().padding(16.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(stream.label, color = Green, fontWeight = FontWeight.Bold)
+                                    Text(stream.title, maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis, color = Soft)
+                                }
+                                Text("下載 ↓", color = Green)
+                            }
+                        }
+                    }
+                    TextButton(
+                        onClick = { selectedLink = null; tab = 1 },
+                        modifier = Modifier.align(Alignment.End)
+                    ) { Text("查看下載管理") }
+                }
+            }
+        }
+    }
+}
