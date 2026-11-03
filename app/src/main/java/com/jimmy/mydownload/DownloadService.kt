@@ -303,12 +303,11 @@ class DownloadService : Service() {
         val mp4 = File(partial.parentFile, item.id.toString() + ".mp4")
         val indexed = runCatching { remuxToMp4(partial, mp4) }.isSuccess && mp4.length() > 0L
         if (indexed) {
-            try {
-                finish(item, mp4, "mp4", "video/mp4")
-            } finally {
-                partial.delete()
-                mp4.delete()
-            }
+            // Keep both temporary files if SAF output fails. After reselecting a
+            // folder the user can retry instead of losing the downloaded data.
+            finish(item, mp4, "mp4", "video/mp4")
+            partial.delete()
+            mp4.delete()
         } else {
             mp4.delete()
             val ext = if (sources.fragmented) "mp4" else "ts"
@@ -337,23 +336,32 @@ class DownloadService : Service() {
             System.currentTimeMillis().toString() + "." + ext
         val tree = item.destinationTree
         if (tree.isNotBlank()) {
-            val root = Uri.parse(tree)
-            if (contentResolver.persistedUriPermissions.none { it.uri == root && it.isWritePermission }) {
-                throw IOException("自訂資料夾沒有寫入權限，請在設定重新選擇")
+            // Let DocumentsProvider enforce the actual SAF grant. Comparing a saved
+            // tree Uri to persistedUriPermissions by object equality incorrectly
+            // rejects valid grants returned in different URI forms by some providers.
+            val uri = try {
+                val root = Uri.parse(tree)
+                val parent = DocumentsContract.buildDocumentUriUsingTree(
+                    root, DocumentsContract.getTreeDocumentId(root)
+                )
+                DocumentsContract.createDocument(contentResolver, parent, mime, name)
+                    ?: throw IOException("無法在所選資料夾新增影片，請確認資料夾允許寫入")
+            } catch (e: SecurityException) {
+                throw IOException("自訂資料夾的 Android 授權已失效，請在設定重新選擇下載資料夾", e)
+            } catch (e: IllegalArgumentException) {
+                throw IOException("儲存的資料夾位置已失效，請在設定重新選擇", e)
             }
-            val parent = DocumentsContract.buildDocumentUriUsingTree(
-                root, DocumentsContract.getTreeDocumentId(root)
-            )
-            val uri = DocumentsContract.createDocument(contentResolver, parent, mime, name)
-                ?: throw IOException("無法建立自訂位置檔案")
             try {
                 contentResolver.openOutputStream(uri, "w")?.use { target ->
                     file.inputStream().use { it.copyTo(target, 65536) }
-                } ?: throw IOException("無法寫入所選資料夾")
+                } ?: throw IOException("Android 無法開啟所選資料夾的檔案")
                 return uri.toString()
             } catch (e: Exception) {
                 runCatching { DocumentsContract.deleteDocument(contentResolver, uri) }
-                throw e
+                if (e is SecurityException) {
+                    throw IOException("自訂資料夾寫入權限已失效，請到設定重新授權", e)
+                }
+                throw IOException("儲存影片至自訂資料夾失敗：" + (e.message ?: "儲存裝置拒絕寫入"), e)
             }
         }
         val uri = contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, ContentValues().apply {
