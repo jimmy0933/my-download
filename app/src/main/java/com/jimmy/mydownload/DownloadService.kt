@@ -43,11 +43,19 @@ class DownloadService : Service() {
         private const val NOTIFICATION_ID = 2026
         private const val ACTION_START = "download"
         private const val ACTION_PAUSE = "pause"
+        private const val ACTION_REPAIR = "repair"
         private const val EXTRA_ID = "id"
 
         fun start(context: Context, id: Long) {
             ContextCompat.startForegroundService(context, Intent(context, DownloadService::class.java).apply {
                 action = ACTION_START
+                putExtra(EXTRA_ID, id)
+            })
+        }
+
+        fun repair(context: Context, id: Long) {
+            ContextCompat.startForegroundService(context, Intent(context, DownloadService::class.java).apply {
+                action = ACTION_REPAIR
                 putExtra(EXTRA_ID, id)
             })
         }
@@ -78,12 +86,18 @@ class DownloadService : Service() {
         if (intent?.action == ACTION_PAUSE) {
             restartAfterStop.remove(id)
             jobs[id]?.cancel()
-            DownloadStore.patch(this, id) { it.copy(status = "已暫停") }
+            DownloadStore.patch(this, id) { record ->
+                if (record.status == "完成") record.copy(repairStatus = "已暫停修復")
+                else record.copy(status = "已暫停")
+            }
             if (jobs.isEmpty()) stopSelf()
             return START_NOT_STICKY
         }
-        if (intent?.action != ACTION_START || id < 0) return START_NOT_STICKY
-        startForeground(NOTIFICATION_ID, notification("準備下載", 0))
+        val repairRequest = intent?.action == ACTION_REPAIR
+        if (intent?.action != ACTION_START && !repairRequest || id < 0) return START_NOT_STICKY
+        startForeground(NOTIFICATION_ID, notification(
+            if (repairRequest) "準備修復 MP4" else "準備下載", 0
+        ))
         jobs[id]?.let { existing ->
             // A rapid Pause -> Continue can arrive before cancelled work finishes.
             // Queue the restart rather than silently dropping the user's request.
@@ -93,16 +107,27 @@ class DownloadService : Service() {
         val job = scope.launch(start = CoroutineStart.LAZY) {
             try {
                 val record = DownloadStore.get(this@DownloadService, id) ?: return@launch
-                when (record.kind) {
-                    "mp4" -> downloadMp4(record)
-                    "hls" -> downloadHls(record)
-                    else -> throw IOException("尚未支援的影片格式")
+                if (repairRequest) {
+                    if (record.kind != "hls" || record.status != "完成")
+                        throw IOException("只有已完成的 HLS 影片可離線修復 MP4")
+                    repairMp4(record)
+                } else {
+                    when (record.kind) {
+                        "mp4" -> downloadMp4(record)
+                        "hls" -> downloadHls(record)
+                        else -> throw IOException("尚未支援的影片格式")
+                    }
                 }
             } catch (_: CancellationException) {
-                DownloadStore.patch(this@DownloadService, id) { it.copy(status = "已暫停") }
+                DownloadStore.patch(this@DownloadService, id) {
+                    if (repairRequest) it.copy(repairStatus = "已暫停修復")
+                    else it.copy(status = "已暫停")
+                }
             } catch (e: Exception) {
                 DownloadStore.patch(this@DownloadService, id) {
-                    it.copy(status = "失敗", error = e.message ?: "下載中斷")
+                    if (repairRequest) it.copy(
+                        repairStatus = "修復失敗：" + (e.message ?: "未知原因")
+                    ) else it.copy(status = "失敗", error = e.message ?: "下載中斷")
                 }
             } finally {
                 jobs.remove(id)
@@ -406,7 +431,8 @@ class DownloadService : Service() {
         val uri = saveVideo(item, file, ext, mime)
         DownloadStore.patch(this, item.id) {
             it.copy(status = "完成", progress = 100, uri = uri,
-                error = note, bytes = 0L, checkpoint = 0, readyToFinalize = false)
+                error = note, bytes = 0L, checkpoint = 0,
+                readyToFinalize = false, savedExtension = ext)
         }
         file.delete()
         getSystemService(NotificationManager::class.java)
