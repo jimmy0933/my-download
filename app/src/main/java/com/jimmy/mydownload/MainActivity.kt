@@ -286,23 +286,6 @@ fun RootScreen(shared: String) {
                                                             }
                                                         }
                                                 }) { Text("播放") }
-                                                val rawStream = item.kind == "hls" &&
-                                                    (item.savedExtension == "ts" ||
-                                                        item.error.contains("MP4 整理") ||
-                                                        item.error.contains("原始串流") ||
-                                                        item.repairStatus.isNotBlank() &&
-                                                        !item.repairStatus.contains("修復完成"))
-                                                if (rawStream && item.originalUri.isBlank()) {
-                                                    val processing = item.repairStatus.startsWith("讀取") ||
-                                                        item.repairStatus.startsWith("複製") ||
-                                                        item.repairStatus.startsWith("正在") ||
-                                                        item.repairStatus.startsWith("重新") ||
-                                                        item.repairStatus.startsWith("儲存")
-                                                    TextButton(onClick = {
-                                                        if (processing) DownloadService.pause(context, item.id)
-                                                        else DownloadService.repair(context, item.id)
-                                                    }) { Text(if (processing) "暫停修復" else "修復 MP4") }
-                                                }
                                             }
                                             "已暫停", "失敗", "待儲存" -> TextButton(onClick = {
                                                 DownloadService.start(context, item.id)
