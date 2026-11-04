@@ -15,8 +15,10 @@ import android.net.Uri
 import android.os.Environment
 import android.os.IBinder
 import android.os.SystemClock
+import android.os.StatFs
 import android.provider.DocumentsContract
 import android.provider.MediaStore
+import android.provider.OpenableColumns
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -439,7 +441,10 @@ class DownloadService : Service() {
             .notify(NOTIFICATION_ID, notification("下載完成", 100))
     }
 
-    private suspend fun saveVideo(item: DownloadRecord, file: File, ext: String, mime: String): String {
+    private suspend fun saveVideo(
+        item: DownloadRecord, file: File, ext: String, mime: String,
+        repairing: Boolean = false
+    ): String {
         val name = StreamResolver.safeTitle(item.title) + "_" +
             System.currentTimeMillis().toString() + "." + ext
         val tree = item.destinationTree
@@ -461,7 +466,7 @@ class DownloadService : Service() {
             }
             try {
                 contentResolver.openOutputStream(uri, "w")?.use { target ->
-                    copyVideoWithProgress(item, file, target)
+                    copyVideoWithProgress(item, file, target, repairing)
                 } ?: throw IOException("Android 無法開啟所選資料夾的檔案")
                 return uri.toString()
             } catch (e: Exception) {
@@ -481,7 +486,7 @@ class DownloadService : Service() {
         }) ?: throw IOException("無法建立影片檔")
         try {
             contentResolver.openOutputStream(uri)?.use { target ->
-                copyVideoWithProgress(item, file, target)
+                copyVideoWithProgress(item, file, target, repairing)
             } ?: throw IOException("無法寫入影片")
             contentResolver.update(uri, ContentValues().apply {
                 put(MediaStore.MediaColumns.IS_PENDING, 0)
@@ -494,7 +499,8 @@ class DownloadService : Service() {
     }
 
     private suspend fun copyVideoWithProgress(
-        item: DownloadRecord, source: File, target: java.io.OutputStream
+        item: DownloadRecord, source: File, target: java.io.OutputStream,
+        repairing: Boolean = false
     ) {
         val total = source.length().coerceAtLeast(1L)
         var copied = 0L
@@ -513,7 +519,10 @@ class DownloadService : Service() {
                     val sizeMB = total / (1024 * 1024)
                     val copiedMB = copied / (1024 * 1024)
                     val percent = 98 + (copied * 1L / total).toInt().coerceIn(0, 1)
-                    progress(item, "正在寫入手機 $copiedMB / $sizeMB MB", percent)
+                    if (repairing) repairProgress(item,
+                        "正在儲存修復後的 MP4 $copiedMB / $sizeMB MB",
+                        (90 + (copied * 9L / total).toInt()).coerceIn(90, 99))
+                    else progress(item, "正在寫入手機 $copiedMB / $sizeMB MB", percent)
                 }
             }
         }
