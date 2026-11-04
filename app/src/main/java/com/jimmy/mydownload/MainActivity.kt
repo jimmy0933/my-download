@@ -76,7 +76,8 @@ private fun startDownload(context: android.content.Context, stream: StreamChoice
 
 private fun openVideo(context: android.content.Context, item: DownloadRecord) {
     val uri = DownloadStore.contentUri(item) ?: return
-    val mime = if (item.uri.endsWith(".ts", ignoreCase = true)) "video/mp2t" else "video/*"
+    val mime = context.contentResolver.getType(uri)
+        ?: if (item.savedExtension == "ts") "video/mp2t" else "video/*"
     context.startActivity(Intent(Intent.ACTION_VIEW).apply {
         setDataAndType(uri, mime)
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
@@ -87,9 +88,9 @@ private fun deleteVideo(context: android.content.Context, item: DownloadRecord) 
     if (item.status != "完成") {
         runCatching { DownloadService.pause(context, item.id) }
     }
-    if (item.uri.isNotBlank()) {
+    listOf(item.uri, item.originalUri).filter { it.isNotBlank() }.distinct().forEach { path ->
         runCatching {
-            val uri = Uri.parse(item.uri)
+            val uri = Uri.parse(path)
             if (DocumentsContract.isDocumentUri(context, uri)) {
                 DocumentsContract.deleteDocument(context.contentResolver, uri)
             } else {
@@ -258,6 +259,17 @@ fun RootScreen(shared: String) {
                                         Text(item.error, color = Color(0xFFFFBC92),
                                             style = MaterialTheme.typography.bodySmall)
                                     }
+                                    if (item.repairStatus.isNotBlank()) {
+                                        Text(item.repairStatus, color = if (item.repairStatus.startsWith("修復失敗"))
+                                            Color(0xFFFFBC92) else Green,
+                                            style = MaterialTheme.typography.bodySmall)
+                                        if (item.repairProgress in 1..99) {
+                                            LinearProgressIndicator(
+                                                progress = { item.repairProgress / 100f },
+                                                modifier = Modifier.fillMaxWidth()
+                                            )
+                                        }
+                                    }
                                     if (item.kind == "hls" && item.progress in 94..99 &&
                                         item.status !in setOf("完成", "失敗", "已暫停")) {
                                         Text("影片片段已下載，正在整理快轉索引或寫入手機。長片可能需要一些時間。",
@@ -265,12 +277,33 @@ fun RootScreen(shared: String) {
                                     }
                                     Row(horizontalArrangement = Arrangement.End) {
                                         when (item.status) {
-                                            "完成" -> TextButton(onClick = {
-                                                runCatching { openVideo(context, item) }
-                                                    .onFailure {
-                                                        scope.launch { snackbar.showSnackbar("找不到可播放的 App") }
-                                                    }
-                                            }) { Text("播放") }
+                                            "完成" -> {
+                                                TextButton(onClick = {
+                                                    runCatching { openVideo(context, item) }
+                                                        .onFailure {
+                                                            scope.launch {
+                                                                snackbar.showSnackbar("找不到可播放的 App")
+                                                            }
+                                                        }
+                                                }) { Text("播放") }
+                                                val rawStream = item.kind == "hls" &&
+                                                    (item.savedExtension == "ts" ||
+                                                        item.error.contains("MP4 整理") ||
+                                                        item.error.contains("原始串流") ||
+                                                        item.repairStatus.isNotBlank() &&
+                                                        !item.repairStatus.contains("修復完成"))
+                                                if (rawStream && item.originalUri.isBlank()) {
+                                                    val processing = item.repairStatus.startsWith("讀取") ||
+                                                        item.repairStatus.startsWith("複製") ||
+                                                        item.repairStatus.startsWith("正在") ||
+                                                        item.repairStatus.startsWith("重新") ||
+                                                        item.repairStatus.startsWith("儲存")
+                                                    TextButton(onClick = {
+                                                        if (processing) DownloadService.pause(context, item.id)
+                                                        else DownloadService.repair(context, item.id)
+                                                    }) { Text(if (processing) "暫停修復" else "修復 MP4") }
+                                                }
+                                            }
                                             "已暫停", "失敗", "待儲存" -> TextButton(onClick = {
                                                 DownloadService.start(context, item.id)
                                             }) { Text("繼續") }
