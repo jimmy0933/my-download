@@ -40,13 +40,16 @@ fun DownloadSettingsScreen(adsBlocked: Boolean, onBlockChange: (Boolean) -> Unit
             val all = DownloadStore.read(context)
             val previous = all.firstOrNull { it.id == selectedRepairId }
             if (previous != null &&
+                previous.repairProgress == 100 &&
                 previous.repairStatus.contains("修復完成") &&
                 !previous.isMp4RepairCandidate()) {
                 repairResult = previous.title + "：" + previous.repairStatus
             }
             val eligible = all.filter { it.isMp4RepairCandidate() }.take(60)
             repairOptions = eligible
-            if (eligible.none { it.id == selectedRepairId }) {
+            val cleaningUp = previous?.repairStatus?.contains("正在清理舊影片") == true &&
+                previous.repairProgress < 100
+            if (eligible.none { it.id == selectedRepairId } && !cleaningUp) {
                 selectedRepairId = eligible.firstOrNull()?.id ?: -1L
             }
             delay(900L)
