@@ -267,6 +267,22 @@ class DownloadService : Service() {
 
     private suspend fun downloadHls(original: DownloadRecord) {
         var item = original
+        val partial = tempFile(item.id)
+
+        // Older releases reached 96% after all segments were downloaded, but
+        // accidentally reset checkpoint and byte count. Preserve and finalize
+        // that local file instead of truncating it and re-downloading everything.
+        val legacyCompleted = item.progress >= 96 && item.checkpoint == 0 &&
+            partial.isFile && partial.length() > 0L
+        if ((item.readyToFinalize || legacyCompleted) && partial.isFile && partial.length() > 0L) {
+            DownloadStore.patch(this, item.id) {
+                it.copy(readyToFinalize = true, status = "準備整理已下載影片",
+                    bytes = partial.length(), error = "")
+            }
+            finalizeHls(item, partial, isFragmentedMp4(partial))
+            return
+        }
+
         progress(item, "解析串流中", item.progress)
         if (Av01Resolver.supports(item.referer)) {
             val refreshed = runCatching { Av01Resolver.inspect(item.referer) }
@@ -278,7 +294,6 @@ class DownloadService : Service() {
         }
         val manifest = StreamResolver.fetchText(item.url, item.referer)
         val sources = parseSegments(manifest, item.url, item.referer)
-        val partial = tempFile(item.id)
         val saved = DownloadStore.get(this, item.id) ?: item
         val count = if (partial.exists()) saved.checkpoint.coerceIn(0, sources.list.size) else 0
         val bytesSaved = if (partial.exists()) saved.bytes.coerceAtLeast(0) else 0L
@@ -290,7 +305,7 @@ class DownloadService : Service() {
             val before = partial.length()
             var error: Exception? = null
             var success = false
-            for (tryNo in 0 until 3) {
+            for (attempt in 0 until 3) {
                 coroutineContext.ensureActive()
                 try {
                     java.io.RandomAccessFile(partial, "rw").use { it.setLength(before) }
@@ -301,12 +316,12 @@ class DownloadService : Service() {
                         if (!response.isSuccessful) throw IOException("片段 HTTP " + response.code)
                         FileOutputStream(partial, true).use { output ->
                             response.body?.byteStream()?.use { input ->
-                                val block = ByteArray(65536)
+                                val buffer = ByteArray(65536)
                                 while (true) {
                                     coroutineContext.ensureActive()
-                                    val n = input.read(block)
+                                    val n = input.read(buffer)
                                     if (n < 0) break
-                                    output.write(block, 0, n)
+                                    output.write(buffer, 0, n)
                                 }
                             } ?: throw IOException("空白影片片段")
                         }
@@ -322,21 +337,64 @@ class DownloadService : Service() {
             val pct = ((index + 1) * 93 / sources.list.size).coerceAtMost(93)
             progress(item, "下載中", pct, partial.length(), index + 1)
         }
+
         coroutineContext.ensureActive()
-        progress(item, "正在整理影片", 96)
+        // The complete source is on disk. This state survives process death
+        // and ensures Pause -> Continue can resume without network access.
+        DownloadStore.patch(this, item.id) {
+            it.copy(readyToFinalize = true, status = "準備整理已下載影片",
+                progress = 94, checkpoint = sources.list.size, bytes = partial.length(), error = "")
+        }
+        finalizeHls(item, partial, sources.fragmented)
+    }
+
+    private fun isFragmentedMp4(file: File): Boolean {
+        if (file.length() < 12L) return false
+        return runCatching {
+            file.inputStream().use { input ->
+                val header = ByteArray(12)
+                if (input.read(header) < 8) return@use false
+                val atom = String(header, 4, 4, Charsets.US_ASCII)
+                atom in setOf("ftyp", "styp", "moov", "moof")
+            }
+        }.getOrDefault(false)
+    }
+
+    /**
+     * Remux with observable progress and a bounded work budget.
+     * Never throw away the complete downloaded source if remuxing cannot finish.
+     */
+    private suspend fun finalizeHls(item: DownloadRecord, partial: File, fragmented: Boolean) {
+        coroutineContext.ensureActive()
+        progress(item, "重新封裝 MP4（可暫停）", 94)
         val mp4 = File(partial.parentFile, item.id.toString() + ".mp4")
-        val indexed = runCatching { remuxToMp4(partial, mp4) }.isSuccess && mp4.length() > 0L
+        // A previous interrupted remux may leave a partial MP4.
+        mp4.delete()
+        val job = coroutineContext[Job]
+        var remuxFailure: Throwable? = null
+        val indexed = try {
+            remuxToMp4(partial, mp4, job) { percentage ->
+                progress(item, "正在建立可快轉 MP4", percentage)
+            }
+            mp4.isFile && mp4.length() > 0L
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            remuxFailure = e
+            false
+        }
+        coroutineContext.ensureActive()
         if (indexed) {
-            // Keep both temporary files if SAF output fails. After reselecting a
-            // folder the user can retry instead of losing the downloaded data.
             finish(item, mp4, "mp4", "video/mp4")
             partial.delete()
             mp4.delete()
         } else {
             mp4.delete()
-            val ext = if (sources.fragmented) "mp4" else "ts"
-            finish(item, partial, ext, if (sources.fragmented) "video/mp4" else "video/mp2t",
-                "已保留原始影片，播放器可能無法拖動進度條。")
+            val extension = if (fragmented) "mp4" else "ts"
+            val kind = if (fragmented) "video/mp4" else "video/mp2t"
+            val note = "MP4 整理無法完成，已保留原始串流。" +
+                (remuxFailure?.message?.let { "原因：" + it.take(140) } ?: "")
+            finish(item, partial, extension, kind, note)
         }
     }
 
