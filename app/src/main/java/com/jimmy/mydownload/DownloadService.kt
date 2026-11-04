@@ -455,7 +455,7 @@ class DownloadService : Service() {
         }) ?: throw IOException("無法建立影片檔")
         try {
             contentResolver.openOutputStream(uri)?.use { target ->
-                file.inputStream().use { it.copyTo(target, 65536) }
+                copyVideoWithProgress(item, file, target)
             } ?: throw IOException("無法寫入影片")
             contentResolver.update(uri, ContentValues().apply {
                 put(MediaStore.MediaColumns.IS_PENDING, 0)
