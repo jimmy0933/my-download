@@ -638,20 +638,84 @@ class DownloadService : Service() {
                 item.copy(title = item.title + "_fixed"),
                 mp4, "mp4", "video/mp4", repairing = true
             )
+            val savedUri = Uri.parse(newUri)
+            // Safeguard against deleting the only usable copy: validate the
+            // saved output first, then persist the new download history target.
+            // If these fail, the original content URI remains untouched.
+            try {
+                verifySavedMp4(savedUri, mp4.length())
+            } catch (e: Exception) {
+                runCatching { deleteSavedVideo(savedUri) }
+                throw IOException("修復檔儲存驗證失敗，舊影片已保留：" + (e.message ?: "無法讀取"), e)
+            }
+            coroutineContext.ensureActive()
             DownloadStore.patch(this, item.id) { record ->
                 record.copy(
                     uri = newUri,
-                    originalUri = record.originalUri.ifBlank { original },
+                    originalUri = original,
                     status = "完成", progress = 100,
                     error = "", savedExtension = "mp4",
-                    repairStatus = "MP4 修復完成，可使用新影片播放",
+                    repairStatus = "MP4 修復完成，正在清理舊影片",
+                    repairProgress = 99
+                )
+            }
+            if (DownloadStore.get(this, item.id)?.uri != newUri) {
+                throw IOException("無法更新修復紀錄，舊影片保留")
+            }
+
+            // The new MP4 is verified and is now the active record. Only now
+            // delete the old SAF/MediaStore file; failure is visible and retryable.
+            val originalDeleted = newUri != original &&
+                runCatching { deleteSavedVideo(originalUri) }.getOrDefault(false)
+            DownloadStore.patch(this, item.id) { record ->
+                record.copy(
+                    originalUri = if (originalDeleted) "" else original,
+                    repairStatus = if (originalDeleted)
+                        "MP4 修復完成，舊影片已刪除"
+                    else "MP4 修復完成，但舊影片無法刪除，請檢查儲存權限",
                     repairProgress = 100
                 )
             }
         } finally {
-            // Original content URI is deliberately never deleted.
+            // Temporary working copies are safe to remove. The old saved video
+            // is deleted only after new-MP4 verification and history commit.
             source.delete()
             mp4.delete()
+        }
+    }
+
+    private fun verifySavedMp4(uri: Uri, expectedSize: Long) {
+        val header = ByteArray(12)
+        val count = contentResolver.openInputStream(uri)?.use { stream ->
+            var total = 0
+            while (total < header.size) {
+                val n = stream.read(header, total, header.size - total)
+                if (n < 0) break
+                total += n
+            }
+            total
+        } ?: throw IOException("新影片無法重新開啟")
+        if (count < 12 || String(header, 4, 4, Charsets.US_ASCII) != "ftyp") {
+            throw IOException("新影片沒有有效的 MP4 標頭")
+        }
+        if (expectedSize <= 0) throw IOException("修復後影片大小異常")
+        val size = runCatching {
+            contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)
+                ?.use { cursor ->
+                    if (cursor.moveToFirst() && !cursor.isNull(0))
+                        cursor.getLong(0) else null
+                }
+        }.getOrNull()
+        if (size != null && size >= 0 && size != expectedSize) {
+            throw IOException("儲存檔大小不符 ($size / $expectedSize)")
+        }
+    }
+
+    private fun deleteSavedVideo(uri: Uri): Boolean {
+        return if (DocumentsContract.isDocumentUri(this, uri)) {
+            DocumentsContract.deleteDocument(contentResolver, uri)
+        } else {
+            contentResolver.delete(uri, null, null) > 0
         }
     }
 
