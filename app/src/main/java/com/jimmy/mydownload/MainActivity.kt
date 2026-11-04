@@ -258,6 +258,11 @@ fun RootScreen(shared: String) {
                                         Text(item.error, color = Color(0xFFFFBC92),
                                             style = MaterialTheme.typography.bodySmall)
                                     }
+                                    if (item.kind == "hls" && item.progress in 94..99 &&
+                                        item.status !in setOf("完成", "失敗", "已暫停")) {
+                                        Text("影片片段已下載，正在整理快轉索引或寫入手機。長片可能需要一些時間。",
+                                            color = Soft, style = MaterialTheme.typography.bodySmall)
+                                    }
                                     Row(horizontalArrangement = Arrangement.End) {
                                         when (item.status) {
                                             "完成" -> TextButton(onClick = {
@@ -272,6 +277,13 @@ fun RootScreen(shared: String) {
                                             else -> TextButton(onClick = {
                                                 DownloadService.pause(context, item.id)
                                             }) { Text("暫停") }
+                                        }
+                                        if (item.kind == "hls" && item.progress in 94..99 &&
+                                            item.status !in setOf("完成", "失敗", "已暫停")) {
+                                            TextButton(onClick = {
+                                                DownloadService.pause(context, item.id)
+                                                DownloadService.start(context, item.id)
+                                            }) { Text("重試整理") }
                                         }
                                         TextButton(onClick = {
                                             deleteVideo(context, item)
