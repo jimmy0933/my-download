@@ -530,7 +530,11 @@ class DownloadService : Service() {
         coroutineContext.ensureActive()
     }
 
-    private fun remuxToMp4(input: File, output: File, job: Job?, onProgress: (Int) -> Unit) {
+    private fun remuxToMp4(
+        input: File, output: File, job: Job?,
+        progressMin: Int = 94, progressMax: Int = 97,
+        onProgress: (Int) -> Unit
+    ) {
         val extractor = MediaExtractor()
         var muxer: MediaMuxer? = null
         var started = false
@@ -538,6 +542,12 @@ class DownloadService : Service() {
         var lastUpdate = 0L
         var processedBytes = 0L
         val expectedBytes = input.length().coerceAtLeast(1L)
+        // A hard-coded 90 seconds causes large, valid transport streams to
+        // always fall back to raw TS. Scale the budget to video size, while
+        // keeping a bounded failure path on corrupt streams.
+        val mib = expectedBytes / (1024L * 1024L)
+        val remuxBudgetMs = (360_000L + mib.coerceAtMost(4096L) * 250L)
+            .coerceAtMost(1_200_000L)
         try {
             job?.ensureActive()
             extractor.setDataSource(input.absolutePath)
@@ -560,8 +570,8 @@ class DownloadService : Service() {
             var total = 0
             while (true) {
                 job?.ensureActive()
-                if (SystemClock.elapsedRealtime() - startTime > 90_000L)
-                    throw IOException("MP4 整理逾時，改為儲存原始影片")
+                if (SystemClock.elapsedRealtime() - startTime > remuxBudgetMs)
+                    throw IOException("MP4 整理超過處理時間，改為保留原始影片")
                 buffer.clear()
                 val size = extractor.readSampleData(buffer, 0)
                 if (size < 0) break
@@ -578,8 +588,9 @@ class DownloadService : Service() {
                 val now = SystemClock.elapsedRealtime()
                 if (now - lastUpdate > 500L) {
                     lastUpdate = now
-                    onProgress((94 + (processedBytes.coerceAtMost(expectedBytes) * 3L /
-                        expectedBytes).toInt()).coerceIn(94, 97))
+                    val fraction = processedBytes.coerceAtMost(expectedBytes)
+                    onProgress((progressMin + fraction * (progressMax - progressMin) /
+                        expectedBytes).toInt().coerceIn(progressMin, progressMax))
                 }
                 if (!extractor.advance()) break
             }
