@@ -406,14 +406,14 @@ class DownloadService : Service() {
         val uri = saveVideo(item, file, ext, mime)
         DownloadStore.patch(this, item.id) {
             it.copy(status = "完成", progress = 100, uri = uri,
-                error = note, bytes = 0L, checkpoint = 0)
+                error = note, bytes = 0L, checkpoint = 0, readyToFinalize = false)
         }
         file.delete()
         getSystemService(NotificationManager::class.java)
             .notify(NOTIFICATION_ID, notification("下載完成", 100))
     }
 
-    private fun saveVideo(item: DownloadRecord, file: File, ext: String, mime: String): String {
+    private suspend fun saveVideo(item: DownloadRecord, file: File, ext: String, mime: String): String {
         val name = StreamResolver.safeTitle(item.title) + "_" +
             System.currentTimeMillis().toString() + "." + ext
         val tree = item.destinationTree
@@ -435,11 +435,12 @@ class DownloadService : Service() {
             }
             try {
                 contentResolver.openOutputStream(uri, "w")?.use { target ->
-                    file.inputStream().use { it.copyTo(target, 65536) }
+                    copyVideoWithProgress(item, file, target)
                 } ?: throw IOException("Android 無法開啟所選資料夾的檔案")
                 return uri.toString()
             } catch (e: Exception) {
                 runCatching { DocumentsContract.deleteDocument(contentResolver, uri) }
+                if (e is CancellationException) throw e
                 if (e is SecurityException) {
                     throw IOException("自訂資料夾寫入權限已失效，請到設定重新授權", e)
                 }
@@ -464,6 +465,34 @@ class DownloadService : Service() {
             contentResolver.delete(uri, null, null)
             throw e
         }
+    }
+
+    private suspend fun copyVideoWithProgress(
+        item: DownloadRecord, source: File, target: java.io.OutputStream
+    ) {
+        val total = source.length().coerceAtLeast(1L)
+        var copied = 0L
+        var lastReport = 0L
+        source.inputStream().use { input ->
+            val buffer = ByteArray(65536)
+            while (true) {
+                coroutineContext.ensureActive()
+                val size = input.read(buffer)
+                if (size < 0) break
+                target.write(buffer, 0, size)
+                copied += size
+                val now = SystemClock.elapsedRealtime()
+                if (now - lastReport > 450L) {
+                    lastReport = now
+                    val sizeMB = total / (1024 * 1024)
+                    val copiedMB = copied / (1024 * 1024)
+                    val percent = 98 + (copied * 1L / total).toInt().coerceIn(0, 1)
+                    progress(item, "正在寫入手機 $copiedMB / $sizeMB MB", percent)
+                }
+            }
+        }
+        target.flush()
+        coroutineContext.ensureActive()
     }
 
     private fun remuxToMp4(input: File, output: File, job: Job?, onProgress: (Int) -> Unit) {
