@@ -63,6 +63,7 @@ import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.delay
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.LinkedHashMap
 import java.io.ByteArrayInputStream
 import kotlin.math.roundToInt
 
@@ -208,7 +209,7 @@ fun MultiTabBrowser(
 
     // Every WebView gets its own navigation state, cookies are shared normally
     // by Android WebView, and all navigation stays within the app.
-    fun createWebView(tab: TabViewState): WebView {
+    fun createWebView(tab: TabViewState, initialLoad: Boolean = true): WebView {
         val web = WebView(context)
         web.settings.javaScriptEnabled = true
         web.settings.domStorageEnabled = true
@@ -311,7 +312,8 @@ fun MultiTabBrowser(
                 if (!isUserGesture || resultMsg == null) return false
                 val transport = resultMsg.obj as? WebView.WebViewTransport ?: return false
                 val next = addTab() ?: return false
-                val child = createWebView(next)
+                // WebViewTransport requires a never-navigated WebView.
+                val child = createWebView(next, initialLoad = false)
                 webViews[next.id] = child
                 transport.webView = child
                 resultMsg.sendToTarget()
@@ -351,8 +353,7 @@ fun MultiTabBrowser(
                 Toast.makeText(context, "目前下載管理支援影片檔案", Toast.LENGTH_SHORT).show()
             }
         })
-        if (tab.url != BrowserAddress.BLANK_TAB) web.loadUrl(tab.url)
-        else web.loadUrl(BrowserAddress.BLANK_TAB)
+        if (initialLoad) web.loadUrl(tab.url)
         return web
     }
 
