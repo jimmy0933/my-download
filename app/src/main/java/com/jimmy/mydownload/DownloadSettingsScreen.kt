@@ -10,6 +10,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Wrench
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -19,6 +20,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 
 @Composable
 fun DownloadSettingsScreen(adsBlocked: Boolean, onBlockChange: (Boolean) -> Unit) {
@@ -27,6 +29,28 @@ fun DownloadSettingsScreen(adsBlocked: Boolean, onBlockChange: (Boolean) -> Unit
     var customFolder by remember { mutableStateOf(DownloadSettings.folder(context).isNotEmpty()) }
     var error by remember { mutableStateOf("") }
     var notice by remember { mutableStateOf("") }
+    var autoRepair by remember { mutableStateOf(DownloadSettings.autoRepairMp4(context)) }
+    var repairOptions by remember { mutableStateOf<List<DownloadRecord>>(emptyList()) }
+    var selectedRepairId by remember { mutableLongStateOf(-1L) }
+    var repairMenuExpanded by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            val eligible = DownloadStore.read(context)
+                .filter { it.isMp4RepairCandidate() }
+                .take(60)
+            repairOptions = eligible
+            if (eligible.none { it.id == selectedRepairId }) {
+                selectedRepairId = eligible.firstOrNull()?.id ?: -1L
+            }
+            delay(900L)
+        }
+    }
+    val selectedRepair = repairOptions.firstOrNull { it.id == selectedRepairId }
+    val repairingNow = selectedRepair != null &&
+        selectedRepair.repairProgress in 1..99 &&
+        selectedRepair.repairStatus != "已暫停修復" &&
+        !selectedRepair.repairStatus.startsWith("修復失敗")
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) {
@@ -115,6 +139,115 @@ fun DownloadSettingsScreen(adsBlocked: Boolean, onBlockChange: (Boolean) -> Unit
                     color = Color(0xFFB4C8D5), style = MaterialTheme.typography.bodySmall)
                 Text("廣告阻擋是輕量功能，無法保證清除全部廣告。若播放器或網站按鈕異常可關閉。",
                     color = Color(0xFF9CAFC0), style = MaterialTheme.typography.bodySmall)
+            }
+        }
+
+
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF142333)),
+            shape = RoundedCornerShape(20.dp)
+        ) {
+            Column(
+                Modifier.fillMaxWidth().padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Wrench, null, tint = Color(0xFF27DBB3))
+                    Spacer(Modifier.width(9.dp))
+                    Text(
+                        "影片修復",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("下載完成後自動修復 MP4", fontWeight = FontWeight.Medium)
+                        Text(
+                            if (autoRepair) "啟用：下載完成後建立 MP4 快轉索引"
+                            else "停用：先保留原始影片，之後可手動修復",
+                            color = Color(0xFF9CAFC0), style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    Switch(
+                        checked = autoRepair,
+                        onCheckedChange = { enabled ->
+                            autoRepair = enabled
+                            DownloadSettings.setAutoRepairMp4(context, enabled)
+                        }
+                    )
+                }
+                Text(
+                    "只影響新加入的 HLS 下載。修復不設時間上限；若影片格式不支援，會顯示處理錯誤。",
+                    color = Color(0xFFB4C8D5), style = MaterialTheme.typography.bodySmall
+                )
+                HorizontalDivider(color = Color(0xFF304458))
+                Text("手動修復已下載影片", fontWeight = FontWeight.Bold)
+                if (repairOptions.isEmpty()) {
+                    Text(
+                        "目前沒有需要修復的已完成影片。",
+                        color = Color(0xFF9CAFC0), style = MaterialTheme.typography.bodySmall
+                    )
+                } else {
+                    Box {
+                        OutlinedButton(
+                            onClick = { repairMenuExpanded = true },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                selectedRepair?.title ?: "選擇需要修復的影片",
+                                maxLines = 1
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = repairMenuExpanded,
+                            onDismissRequest = { repairMenuExpanded = false }
+                        ) {
+                            repairOptions.forEach { video ->
+                                DropdownMenuItem(
+                                    text = { Text(video.title, maxLines = 2) },
+                                    onClick = {
+                                        selectedRepairId = video.id
+                                        repairMenuExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    if (selectedRepair != null) {
+                        if (selectedRepair.repairStatus.isNotBlank()) {
+                            Text(
+                                selectedRepair.repairStatus,
+                                color = if (selectedRepair.repairStatus.startsWith("修復失敗"))
+                                    Color(0xFFFFB1A8) else Color(0xFF27DBB3),
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                        if (selectedRepair.repairProgress in 1..99) {
+                            LinearProgressIndicator(
+                                progress = { selectedRepair.repairProgress / 100f },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    }
+                    Button(
+                        onClick = {
+                            selectedRepair?.let { video ->
+                                if (repairingNow) DownloadService.pause(context, video.id)
+                                else DownloadService.repair(context, video.id)
+                            }
+                        },
+                        enabled = selectedRepair != null,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(if (repairingNow) "暫停修復" else "開始修復 MP4")
+                    }
+                }
+                Text(
+                    "修復使用已下載的影片，不會重新下載。新 MP4 成功驗證後會自動刪除舊影片；修復失敗或暫停時不刪除。",
+                    color = Color(0xFF9CAFC0),
+                    style = MaterialTheme.typography.bodySmall
+                )
             }
         }
 
