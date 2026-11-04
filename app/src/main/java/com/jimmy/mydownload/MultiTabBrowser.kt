@@ -25,6 +25,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -458,41 +459,7 @@ fun MultiTabBrowser(
     }
 
     BackHandler(visible && (fullscreenView != null || selected.canBack)) {
-        if (editingBookmark != null) {
-        AlertDialog(
-            onDismissRequest = { editingBookmark = null },
-            title = { Text("編輯書籤") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedTextField(
-                        value = editTitle, onValueChange = { editTitle = it },
-                        label = { Text("名稱") }, singleLine = true
-                    )
-                    OutlinedTextField(
-                        value = editCategory, onValueChange = { editCategory = it },
-                        label = { Text("分類，例如：影片、社群、常用") },
-                        singleLine = true
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    editingBookmark?.let { bookmark ->
-                        BrowserStore.updateBookmark(
-                            context, bookmark.url, editTitle, editCategory
-                        )
-                    }
-                    bookmarks = BrowserStore.bookmarks(context)
-                    editingBookmark = null
-                }) { Text("儲存") }
-            },
-            dismissButton = {
-                TextButton(onClick = { editingBookmark = null }) { Text("取消") }
-            }
-        )
-    }
-
-    if (fullscreenView != null) {
+        if (fullscreenView != null) {
             currentWebView()?.webChromeClient?.onHideCustomView()
         } else currentWebView()?.goBack()
     }
@@ -828,6 +795,40 @@ fun MultiTabBrowser(
                 }
             }
         }
+    }
+
+    if (editingBookmark != null) {
+        AlertDialog(
+            onDismissRequest = { editingBookmark = null },
+            title = { Text("編輯書籤") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(
+                        value = editTitle, onValueChange = { editTitle = it },
+                        label = { Text("名稱") }, singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = editCategory, onValueChange = { editCategory = it },
+                        label = { Text("分類，例如：影片、社群、常用") },
+                        singleLine = true
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    editingBookmark?.let { bookmark ->
+                        BrowserStore.updateBookmark(
+                            context, bookmark.url, editTitle, editCategory
+                        )
+                    }
+                    bookmarks = BrowserStore.bookmarks(context)
+                    editingBookmark = null
+                }) { Text("儲存") }
+            },
+            dismissButton = {
+                TextButton(onClick = { editingBookmark = null }) { Text("取消") }
+            }
+        )
     }
 
     if (fullscreenView != null) {
