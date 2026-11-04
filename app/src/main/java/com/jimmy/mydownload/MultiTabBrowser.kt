@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
@@ -159,6 +160,11 @@ fun MultiTabBrowser(
     var addressInput by remember { mutableStateOf("") }
     var selectedSheet by remember { mutableStateOf<BrowserLibrary?>(null) }
     var sheetSearch by remember { mutableStateOf("") }
+    var bookmarkCategory by remember { mutableStateOf("全部") }
+    var bookmarkSortByName by remember { mutableStateOf(false) }
+    var editingBookmark by remember { mutableStateOf<BrowserBookmark?>(null) }
+    var editTitle by remember { mutableStateOf("") }
+    var editCategory by remember { mutableStateOf("") }
     var bookmarks by remember { mutableStateOf(BrowserStore.bookmarks(context)) }
     var history by remember { mutableStateOf(BrowserStore.history(context)) }
     var fullscreenView by remember { mutableStateOf<View?>(null) }
@@ -452,7 +458,41 @@ fun MultiTabBrowser(
     }
 
     BackHandler(visible && (fullscreenView != null || selected.canBack)) {
-        if (fullscreenView != null) {
+        if (editingBookmark != null) {
+        AlertDialog(
+            onDismissRequest = { editingBookmark = null },
+            title = { Text("編輯書籤") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(
+                        value = editTitle, onValueChange = { editTitle = it },
+                        label = { Text("名稱") }, singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = editCategory, onValueChange = { editCategory = it },
+                        label = { Text("分類，例如：影片、社群、常用") },
+                        singleLine = true
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    editingBookmark?.let { bookmark ->
+                        BrowserStore.updateBookmark(
+                            context, bookmark.url, editTitle, editCategory
+                        )
+                    }
+                    bookmarks = BrowserStore.bookmarks(context)
+                    editingBookmark = null
+                }) { Text("儲存") }
+            },
+            dismissButton = {
+                TextButton(onClick = { editingBookmark = null }) { Text("取消") }
+            }
+        )
+    }
+
+    if (fullscreenView != null) {
             currentWebView()?.webChromeClient?.onHideCustomView()
         } else currentWebView()?.goBack()
     }
@@ -472,6 +512,11 @@ fun MultiTabBrowser(
                 placeholder = { Text("搜尋或輸入網址", style = MaterialTheme.typography.bodySmall) },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Go),
                 keyboardActions = KeyboardActions(onGo = { navigateInput() }),
+                trailingIcon = {
+                    IconButton(onClick = { navigateInput() }) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowForward, "開啟網址")
+                    }
+                },
                 shape = RoundedCornerShape(15.dp)
             )
             val saved = bookmarks.any { it.url == selected.url }
@@ -684,8 +729,35 @@ fun MultiTabBrowser(
                 )
                 val term = sheetSearch.trim()
                 if (selectedSheet == BrowserLibrary.BOOKMARKS) {
-                    val matches = bookmarks.filter { term.isEmpty() ||
-                        it.title.contains(term, true) || it.url.contains(term, true) }
+                    val categories = listOf("全部") +
+                        bookmarks.map { it.category }.distinct().sorted()
+                    Row(
+                        modifier = Modifier.fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(7.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        categories.forEach { category ->
+                            FilterChip(
+                                selected = bookmarkCategory == category,
+                                onClick = { bookmarkCategory = category },
+                                label = { Text(category) }
+                            )
+                        }
+                    }
+                    TextButton(
+                        onClick = { bookmarkSortByName = !bookmarkSortByName }
+                    ) {
+                        Text(if (bookmarkSortByName) "排序：名稱 ↑" else "排序：最近加入 ↓")
+                    }
+                    val filtered = bookmarks.filter {
+                        (bookmarkCategory == "全部" || it.category == bookmarkCategory) &&
+                            (term.isEmpty() || it.title.contains(term, true) ||
+                                it.url.contains(term, true) || it.category.contains(term, true))
+                    }
+                    val matches = if (bookmarkSortByName)
+                        filtered.sortedBy { it.title.lowercase() }
+                    else filtered.sortedByDescending { it.createdAt }
                     LazyColumn(
                         Modifier.fillMaxWidth().heightIn(max = 450.dp),
                         verticalArrangement = Arrangement.spacedBy(7.dp)
@@ -704,9 +776,15 @@ fun MultiTabBrowser(
                                 ) {
                                     Text(bookmark.title, maxLines = 1,
                                         overflow = TextOverflow.Ellipsis)
-                                    Text(bookmark.url, color = Color(0xFFB0C1CD),
+                                    Text(bookmark.category + " · " + bookmark.url,
+                                        color = Color(0xFFB0C1CD),
                                         maxLines = 1, style = MaterialTheme.typography.bodySmall)
                                 }
+                                IconButton(onClick = {
+                                    editingBookmark = bookmark
+                                    editTitle = bookmark.title
+                                    editCategory = bookmark.category
+                                }) { Icon(Icons.Default.Edit, "編輯書籤名稱及分類") }
                                 IconButton(onClick = {
                                     BrowserStore.toggleBookmark(context, bookmark.url, bookmark.title)
                                     bookmarks = BrowserStore.bookmarks(context)
