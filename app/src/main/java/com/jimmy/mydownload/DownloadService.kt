@@ -530,6 +530,126 @@ class DownloadService : Service() {
         coroutineContext.ensureActive()
     }
 
+    private fun repairProgress(item: DownloadRecord, stage: String, percent: Int) {
+        DownloadStore.patch(this, item.id) {
+            it.copy(repairStatus = stage, repairProgress = percent.coerceIn(0, 100))
+        }
+        getSystemService(NotificationManager::class.java)
+            .notify(NOTIFICATION_ID, notification(stage, percent))
+    }
+
+    /**
+     * Repair a previously completed raw TS or fragmented stream in place.
+     * Only local content:// URI is read. We never re-fetch the remote video.
+     * The original video is left untouched if conversion or saving fails.
+     */
+    private suspend fun repairMp4(item: DownloadRecord) {
+        val original = item.uri.takeIf { it.isNotBlank() }
+            ?: throw IOException("沒有可修復的原始影片")
+        val originalUri = Uri.parse(original)
+        val originalSize = runCatching {
+            contentResolver.query(
+                originalUri, arrayOf(OpenableColumns.SIZE), null, null, null
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) cursor.getLong(0) else -1L
+            } ?: -1L
+        }.getOrDefault(-1L)
+
+        // Copying the source and writing the MP4 consumes temporary storage.
+        // Give the user a clear error instead of silently filling app storage.
+        if (originalSize > 0L) {
+            val space = StatFs(filesDir.absolutePath).availableBytes
+            val required = originalSize * 2L + 64L * 1024L * 1024L
+            if (space < required) {
+                throw IOException("手機暫存空間不足。修復約需 " +
+                    (required / (1024L * 1024L)) + " MB，可先釋放空間")
+            }
+        }
+
+        val folder = tempFile(item.id).parentFile
+            ?: throw IOException("無法建立影片暫存目錄")
+        val source = File(folder, item.id.toString() + ".repair-source")
+        val mp4 = File(folder, item.id.toString() + ".repair.mp4")
+        source.delete()
+        mp4.delete()
+        try {
+            repairProgress(item, "讀取已下載影片", 2)
+            contentResolver.openInputStream(originalUri)?.use { input ->
+                FileOutputStream(source).use { output ->
+                    val buffer = ByteArray(131072)
+                    var readBytes = 0L
+                    var lastReport = 0L
+                    while (true) {
+                        coroutineContext.ensureActive()
+                        val size = input.read(buffer)
+                        if (size < 0) break
+                        output.write(buffer, 0, size)
+                        readBytes += size
+                        val now = SystemClock.elapsedRealtime()
+                        if (now - lastReport > 500L) {
+                            lastReport = now
+                            val pct = if (originalSize > 0) {
+                                (3L + readBytes * 20L / originalSize).toInt().coerceIn(3, 23)
+                            } else 12
+                            repairProgress(item, "複製原始影片 " +
+                                (readBytes / (1024L * 1024L)) + " MB", pct)
+                        }
+                    }
+                }
+            } ?: throw IOException("無法讀取已保存的原始影片")
+            if (source.length() == 0L) throw IOException("原始影片內容是空的")
+            coroutineContext.ensureActive()
+
+            repairProgress(item, "正在重建可快轉 MP4", 24)
+            remuxToMp4(
+                source, mp4, coroutineContext[Job],
+                progressMin = 25, progressMax = 88
+            ) { percentage ->
+                repairProgress(item, "重新封裝 MP4", percentage)
+            }
+
+            if (!mp4.isFile || mp4.length() < 1024L)
+                throw IOException("無法產生完整 MP4 檔案")
+            verifyMp4(mp4)
+            coroutineContext.ensureActive()
+
+            repairProgress(item, "儲存修復後的 MP4", 90)
+            val newUri = saveVideo(
+                item.copy(title = item.title + "_fixed"),
+                mp4, "mp4", "video/mp4", repairing = true
+            )
+            DownloadStore.patch(this, item.id) { record ->
+                record.copy(
+                    uri = newUri,
+                    originalUri = record.originalUri.ifBlank { original },
+                    status = "完成", progress = 100,
+                    error = "", savedExtension = "mp4",
+                    repairStatus = "MP4 修復完成，可使用新影片播放",
+                    repairProgress = 100
+                )
+            }
+        } finally {
+            // Original content URI is deliberately never deleted.
+            source.delete()
+            mp4.delete()
+        }
+    }
+
+    private fun verifyMp4(file: File) {
+        val extractor = MediaExtractor()
+        try {
+            extractor.setDataSource(file.absolutePath)
+            val video = (0 until extractor.trackCount).firstOrNull {
+                extractor.getTrackFormat(it)
+                    .getString(MediaFormat.KEY_MIME).orEmpty().startsWith("video/")
+            } ?: throw IOException("修復檔沒有影像軌")
+            extractor.selectTrack(video)
+            if (extractor.sampleTime < 0L) throw IOException("修復檔找不到可播放的影格")
+        } finally {
+            extractor.release()
+        }
+    }
+
     private fun remuxToMp4(
         input: File, output: File, job: Job?,
         progressMin: Int = 94, progressMax: Int = 97,
