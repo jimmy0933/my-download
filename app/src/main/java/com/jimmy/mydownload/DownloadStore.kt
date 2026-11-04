@@ -19,7 +19,8 @@ data class DownloadRecord(
     val uri: String = "",
     val checkpoint: Int = 0,
     val bytes: Long = 0,
-    val error: String = ""
+    val error: String = "",
+    val readyToFinalize: Boolean = false
 )
 
 object DownloadStore {
@@ -40,7 +41,8 @@ object DownloadStore {
         uri = j.optString("uri"),
         checkpoint = j.optInt("checkpoint"),
         bytes = j.optLong("bytes"),
-        error = j.optString("error")
+        error = j.optString("error"),
+        readyToFinalize = j.optBoolean("readyToFinalize", false)
     )
 
     private fun toJson(item: DownloadRecord) = JSONObject().apply {
@@ -57,6 +59,7 @@ object DownloadStore {
         put("checkpoint", item.checkpoint)
         put("bytes", item.bytes)
         put("error", item.error)
+        put("readyToFinalize", item.readyToFinalize)
     }
 
     fun read(context: Context): List<DownloadRecord> = synchronized(lock) {
@@ -125,7 +128,11 @@ object DownloadStore {
             if (item.status == "失敗" && item.uri.isBlank() &&
                 item.destinationTree.isNotBlank() && folderError) {
                 repaired++
-                item.copy(destinationTree = newTree, status = "待儲存", error = "")
+                item.copy(
+                    destinationTree = newTree,
+                    status = if (item.readyToFinalize) "待儲存" else "已暫停",
+                    error = ""
+                )
             } else item
         }
         if (repaired > 0) write(context, updated)
