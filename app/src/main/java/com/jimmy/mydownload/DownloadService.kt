@@ -466,11 +466,16 @@ class DownloadService : Service() {
         }
     }
 
-    private fun remuxToMp4(input: File, output: File) {
+    private fun remuxToMp4(input: File, output: File, job: Job?, onProgress: (Int) -> Unit) {
         val extractor = MediaExtractor()
         var muxer: MediaMuxer? = null
         var started = false
+        val startTime = SystemClock.elapsedRealtime()
+        var lastUpdate = 0L
+        var processedBytes = 0L
+        val expectedBytes = input.length().coerceAtLeast(1L)
         try {
+            job?.ensureActive()
             extractor.setDataSource(input.absolutePath)
             val writer = MediaMuxer(output.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
             muxer = writer
@@ -490,6 +495,9 @@ class DownloadService : Service() {
             val info = MediaCodec.BufferInfo()
             var total = 0
             while (true) {
+                job?.ensureActive()
+                if (SystemClock.elapsedRealtime() - startTime > 90_000L)
+                    throw IOException("MP4 整理逾時，改為儲存原始影片")
                 buffer.clear()
                 val size = extractor.readSampleData(buffer, 0)
                 if (size < 0) break
@@ -502,13 +510,21 @@ class DownloadService : Service() {
                     writer.writeSampleData(tracks.getValue(sourceTrack), buffer, info)
                     total++
                 }
-                extractor.advance()
+                processedBytes += size.toLong()
+                val now = SystemClock.elapsedRealtime()
+                if (now - lastUpdate > 500L) {
+                    lastUpdate = now
+                    onProgress((94 + (processedBytes.coerceAtMost(expectedBytes) * 3L /
+                        expectedBytes).toInt()).coerceIn(94, 97))
+                }
+                if (!extractor.advance()) break
             }
             if (total == 0) throw IOException("沒有可輸出的影片影格")
+            job?.ensureActive()
             writer.stop()
             started = false
         } finally {
-            if (started) runCatching { muxer?.stop() }
+            // Only the successful path may call stop(); aborting can hang.
             runCatching { muxer?.release() }
             extractor.release()
         }
