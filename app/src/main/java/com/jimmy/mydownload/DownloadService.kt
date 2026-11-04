@@ -393,11 +393,21 @@ class DownloadService : Service() {
     }
 
     /**
-     * Remux with observable progress and a bounded work budget.
-     * Never throw away the complete downloaded source if remuxing cannot finish.
+     * Remux with observable progress and user-controlled cancellation.
+     * No time-based abort: long videos may take as long as needed.
+     * Unsupported or malformed streams still surface real errors.
      */
     private suspend fun finalizeHls(item: DownloadRecord, partial: File, fragmented: Boolean) {
         coroutineContext.ensureActive()
+        if (!item.autoRepairMp4) {
+            val ext = if (fragmented) "mp4" else "ts"
+            val mime = if (fragmented) "video/mp4" else "video/mp2t"
+            finish(
+                item, partial, ext, mime,
+                "已依設定保留原始串流（未自動整理 MP4）。如需快轉索引，請到設定 → 影片修復手動選擇。"
+            )
+            return
+        }
         progress(item, "重新封裝 MP4（可暫停）", 94)
         val mp4 = File(partial.parentFile, item.id.toString() + ".mp4")
         // A previous interrupted remux may leave a partial MP4.
@@ -667,17 +677,11 @@ class DownloadService : Service() {
     ) {
         val extractor = MediaExtractor()
         var muxer: MediaMuxer? = null
-        var started = false
-        val startTime = SystemClock.elapsedRealtime()
         var lastUpdate = 0L
         var processedBytes = 0L
         val expectedBytes = input.length().coerceAtLeast(1L)
-        // A hard-coded 90 seconds causes large, valid transport streams to
-        // always fall back to raw TS. Scale the budget to video size, while
-        // keeping a bounded failure path on corrupt streams.
-        val mib = expectedBytes / (1024L * 1024L)
-        val remuxBudgetMs = (360_000L + mib.coerceAtMost(4096L) * 250L)
-            .coerceAtMost(1_200_000L)
+        // Do not impose a deadline on remuxing, either automatically or when
+        // the user explicitly repairs a completed video in Settings.
         try {
             job?.ensureActive()
             extractor.setDataSource(input.absolutePath)
@@ -694,14 +698,11 @@ class DownloadService : Service() {
             }
             if (tracks.isEmpty()) throw IOException("沒有可封裝的音訊或影像")
             writer.start()
-            started = true
             val buffer = ByteBuffer.allocateDirect(8 * 1024 * 1024)
             val info = MediaCodec.BufferInfo()
             var total = 0
             while (true) {
                 job?.ensureActive()
-                if (SystemClock.elapsedRealtime() - startTime > remuxBudgetMs)
-                    throw IOException("MP4 整理超過處理時間，改為保留原始影片")
                 buffer.clear()
                 val size = extractor.readSampleData(buffer, 0)
                 if (size < 0) break
@@ -727,7 +728,6 @@ class DownloadService : Service() {
             if (total == 0) throw IOException("沒有可輸出的影片影格")
             job?.ensureActive()
             writer.stop()
-            started = false
         } finally {
             // Only the successful path may call stop(); aborting can hang.
             runCatching { muxer?.release() }
