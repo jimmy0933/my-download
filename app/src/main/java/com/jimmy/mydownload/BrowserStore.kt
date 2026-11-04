@@ -6,7 +6,10 @@ import org.json.JSONObject
 import java.util.UUID
 
 data class BrowserTabRecord(val id: String, val url: String, val title: String)
-data class BrowserBookmark(val url: String, val title: String, val createdAt: Long)
+data class BrowserBookmark(
+    val url: String, val title: String, val createdAt: Long,
+    val category: String = "一般"
+)
 data class BrowserHistoryEntry(val url: String, val title: String, val visitedAt: Long)
 data class BrowserSession(val tabs: List<BrowserTabRecord>, val activeId: String)
 
@@ -81,7 +84,8 @@ object BrowserStore {
                 if (BrowserAddress.isWebUrl(url)) add(
                     BrowserBookmark(url, value.optString("title").ifBlank {
                         BrowserAddress.displayName(url)
-                    }, value.optLong("date"))
+                    }, value.optLong("date"),
+                    value.optString("category", "一般"))
                 )
             }
         }.distinctBy { it.url }
@@ -97,10 +101,31 @@ object BrowserStore {
             System.currentTimeMillis())) + old
         val json = JSONArray()
         updated.take(MAX_BOOKMARKS).forEach {
-            json.put(JSONObject().put("url", it.url).put("title", it.title).put("date", it.createdAt))
+            json.put(JSONObject().put("url", it.url).put("title", it.title)
+                .put("date", it.createdAt).put("category", it.category))
         }
         prefs(context).edit().putString(BOOKMARKS, json.toString()).apply()
         return !already
+    }
+
+    /** Rename and categorize an existing bookmark without changing its URL or date. */
+    @Synchronized
+    fun updateBookmark(context: Context, url: String, title: String, category: String) {
+        val entries = bookmarks(context)
+        if (entries.none { it.url == url }) return
+        val normalizedTitle = title.trim().take(120).ifBlank {
+            BrowserAddress.displayName(url)
+        }
+        val normalizedCategory = category.trim().take(30).ifBlank { "一般" }
+        val output = JSONArray()
+        entries.forEach { bookmark ->
+            val saved = if (bookmark.url == url)
+                bookmark.copy(title = normalizedTitle, category = normalizedCategory)
+            else bookmark
+            output.put(JSONObject().put("url", saved.url).put("title", saved.title)
+                .put("date", saved.createdAt).put("category", saved.category))
+        }
+        prefs(context).edit().putString(BOOKMARKS, output.toString()).apply()
     }
 
     @Synchronized
