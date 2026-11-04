@@ -33,12 +33,18 @@ fun DownloadSettingsScreen(adsBlocked: Boolean, onBlockChange: (Boolean) -> Unit
     var repairOptions by remember { mutableStateOf<List<DownloadRecord>>(emptyList()) }
     var selectedRepairId by remember { mutableLongStateOf(-1L) }
     var repairMenuExpanded by remember { mutableStateOf(false) }
+    var repairResult by remember { mutableStateOf("") }
 
     LaunchedEffect(Unit) {
         while (true) {
-            val eligible = DownloadStore.read(context)
-                .filter { it.isMp4RepairCandidate() }
-                .take(60)
+            val all = DownloadStore.read(context)
+            val previous = all.firstOrNull { it.id == selectedRepairId }
+            if (previous != null &&
+                previous.repairStatus.contains("修復完成") &&
+                !previous.isMp4RepairCandidate()) {
+                repairResult = previous.title + "：" + previous.repairStatus
+            }
+            val eligible = all.filter { it.isMp4RepairCandidate() }.take(60)
             repairOptions = eligible
             if (eligible.none { it.id == selectedRepairId }) {
                 selectedRepairId = eligible.firstOrNull()?.id ?: -1L
@@ -248,6 +254,10 @@ fun DownloadSettingsScreen(adsBlocked: Boolean, onBlockChange: (Boolean) -> Unit
                     color = Color(0xFF9CAFC0),
                     style = MaterialTheme.typography.bodySmall
                 )
+                if (repairResult.isNotBlank()) {
+                    Text(repairResult, color = Color(0xFF27DBB3),
+                        style = MaterialTheme.typography.bodySmall)
+                }
             }
         }
 
