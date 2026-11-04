@@ -62,6 +62,7 @@ class DownloadService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val jobs = ConcurrentHashMap<Long, Job>()
+    private val restartAfterStop = ConcurrentHashMap.newKeySet<Long>()
 
     override fun onCreate() {
         super.onCreate()
@@ -75,6 +76,7 @@ class DownloadService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val id = intent?.getLongExtra(EXTRA_ID, -1L) ?: -1L
         if (intent?.action == ACTION_PAUSE) {
+            restartAfterStop.remove(id)
             jobs[id]?.cancel()
             DownloadStore.patch(this, id) { it.copy(status = "已暫停") }
             if (jobs.isEmpty()) stopSelf()
@@ -82,7 +84,12 @@ class DownloadService : Service() {
         }
         if (intent?.action != ACTION_START || id < 0) return START_NOT_STICKY
         startForeground(NOTIFICATION_ID, notification("準備下載", 0))
-        if (jobs.containsKey(id)) return START_NOT_STICKY
+        jobs[id]?.let { existing ->
+            // A rapid Pause -> Continue can arrive before cancelled work finishes.
+            // Queue the restart rather than silently dropping the user's request.
+            if (existing.isCancelled || !existing.isActive) restartAfterStop.add(id)
+            return START_NOT_STICKY
+        }
         val job = scope.launch(start = CoroutineStart.LAZY) {
             try {
                 val record = DownloadStore.get(this@DownloadService, id) ?: return@launch
@@ -99,7 +106,9 @@ class DownloadService : Service() {
                 }
             } finally {
                 jobs.remove(id)
-                if (jobs.isEmpty()) stopSelf()
+                if (restartAfterStop.remove(id)) {
+                    start(this@DownloadService, id)
+                } else if (jobs.isEmpty()) stopSelf()
             }
         }
         if (jobs.putIfAbsent(id, job) == null) job.start()
@@ -116,9 +125,13 @@ class DownloadService : Service() {
             .setOngoing(percentage < 100)
             .build()
 
-    private fun progress(item: DownloadRecord, status: String, pct: Int, bytes: Long = 0L, checkpoint: Int = 0) {
+    private fun progress(
+        item: DownloadRecord, status: String, pct: Int,
+        bytes: Long? = null, checkpoint: Int? = null
+    ) {
         DownloadStore.patch(this, item.id) {
-            it.copy(status = status, progress = pct, bytes = bytes, checkpoint = checkpoint, error = "")
+            it.copy(status = status, progress = pct,
+                bytes = bytes ?: it.bytes, checkpoint = checkpoint ?: it.checkpoint, error = "")
         }
         getSystemService(NotificationManager::class.java)
             .notify(NOTIFICATION_ID, notification(item.title, pct))
@@ -134,7 +147,8 @@ class DownloadService : Service() {
         val partial = tempFile(item.id)
         // If bytes were already completely downloaded and only writing into the
         // selected SAF folder failed, do not download the whole MP4 again.
-        if (item.status == "待儲存" && partial.isFile && partial.length() > 0L) {
+        if ((item.readyToFinalize || item.status == "待儲存") &&
+            partial.isFile && partial.length() > 0L) {
             finish(item, partial, "mp4", "video/mp4")
             return
         }
@@ -190,6 +204,10 @@ class DownloadService : Service() {
                         throw IOException("MP4 下載不完整：" + current + "/" + expected)
                     }
                     if (partial.length() <= 0L) throw IOException("影片檔案為空")
+                    DownloadStore.patch(this, item.id) {
+                        it.copy(readyToFinalize = true, status = "待儲存",
+                            bytes = partial.length())
+                    }
                     finish(item, partial, "mp4", "video/mp4")
                     return
                 }
