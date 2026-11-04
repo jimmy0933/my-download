@@ -20,7 +20,11 @@ data class DownloadRecord(
     val checkpoint: Int = 0,
     val bytes: Long = 0,
     val error: String = "",
-    val readyToFinalize: Boolean = false
+    val readyToFinalize: Boolean = false,
+    val repairStatus: String = "",
+    val repairProgress: Int = 0,
+    val originalUri: String = "",
+    val savedExtension: String = ""
 )
 
 object DownloadStore {
@@ -42,7 +46,11 @@ object DownloadStore {
         checkpoint = j.optInt("checkpoint"),
         bytes = j.optLong("bytes"),
         error = j.optString("error"),
-        readyToFinalize = j.optBoolean("readyToFinalize", false)
+        readyToFinalize = j.optBoolean("readyToFinalize", false),
+        repairStatus = j.optString("repairStatus"),
+        repairProgress = j.optInt("repairProgress"),
+        originalUri = j.optString("originalUri"),
+        savedExtension = j.optString("savedExtension")
     )
 
     private fun toJson(item: DownloadRecord) = JSONObject().apply {
@@ -60,6 +68,10 @@ object DownloadStore {
         put("bytes", item.bytes)
         put("error", item.error)
         put("readyToFinalize", item.readyToFinalize)
+        put("repairStatus", item.repairStatus)
+        put("repairProgress", item.repairProgress)
+        put("originalUri", item.originalUri)
+        put("savedExtension", item.savedExtension)
     }
 
     fun read(context: Context): List<DownloadRecord> = synchronized(lock) {
