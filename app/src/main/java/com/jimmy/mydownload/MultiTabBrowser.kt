@@ -802,18 +802,26 @@ fun MultiTabBrowser(
                         verticalArrangement = Arrangement.spacedBy(7.dp)
                     ) {
                         items(matches, key = { it.url }) { visit ->
-                            Column(
+                            Row(
                                 Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
-                                    .background(Color(0xFF213548))
-                                    .clickable {
+                                    .background(Color(0xFF213548)),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(
+                                    Modifier.weight(1f).clickable {
                                         selectedSheet = null
                                         navigate(visit.url)
                                     }.padding(13.dp)
-                            ) {
-                                Text(visit.title.ifBlank { BrowserAddress.displayName(visit.url) },
-                                    maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(visit.url, color = Color(0xFFB0C1CD),
-                                    maxLines = 1, style = MaterialTheme.typography.bodySmall)
+                                ) {
+                                    Text(visit.title.ifBlank { BrowserAddress.displayName(visit.url) },
+                                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(visit.url, color = Color(0xFFB0C1CD),
+                                        maxLines = 1, style = MaterialTheme.typography.bodySmall)
+                                }
+                                IconButton(onClick = {
+                                    BrowserStore.removeHistory(context, visit.url)
+                                    history = BrowserStore.history(context)
+                                }) { Icon(Icons.Default.Delete, "刪除這筆紀錄") }
                             }
                         }
                     }
