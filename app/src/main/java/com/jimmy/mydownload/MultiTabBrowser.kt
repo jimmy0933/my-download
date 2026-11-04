@@ -506,7 +506,7 @@ fun MultiTabBrowser(
         ) {
             OutlinedTextField(
                 value = addressInput, onValueChange = { addressInput = it },
-                modifier = Modifier.weight(1f).height(53.dp),
+                modifier = Modifier.weight(1f).height(56.dp),
                 singleLine = true,
                 textStyle = MaterialTheme.typography.bodySmall,
                 placeholder = { Text("搜尋或輸入網址", style = MaterialTheme.typography.bodySmall) },
@@ -541,37 +541,39 @@ fun MultiTabBrowser(
                 Icon(Icons.Default.Bookmark, contentDescription = "書籤")
             }
         }
-        LazyRow(
+        Row(
             Modifier.fillMaxWidth().height(43.dp).padding(horizontal = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(5.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            items(tabs, key = { it.id }) { tab ->
-                Row(
-                    Modifier.widthIn(min = 90.dp, max = 144.dp)
-                        .height(35.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(if (tab.id == activeId) Color(0xFF294357) else BrowserPanel)
-                        .clickable { selectTab(tab) }
-                        .padding(start = 9.dp, end = 2.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        tab.title.ifBlank { BrowserAddress.displayName(tab.url) },
-                        Modifier.weight(1f, fill = false),
-                        style = MaterialTheme.typography.labelSmall,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis
-                    )
-                    IconButton(onClick = { closeTab(tab.id) }, modifier = Modifier.size(30.dp)) {
-                        Icon(Icons.Default.Close, "關閉分頁", modifier = Modifier.size(15.dp))
+            LazyRow(
+                modifier = Modifier.weight(1f),
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                items(tabs, key = { it.id }) { tab ->
+                    Row(
+                        Modifier.widthIn(min = 90.dp, max = 144.dp)
+                            .height(35.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(if (tab.id == activeId) Color(0xFF294357) else BrowserPanel)
+                            .clickable { selectTab(tab) }
+                            .padding(start = 9.dp, end = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            tab.title.ifBlank { BrowserAddress.displayName(tab.url) },
+                            Modifier.weight(1f, fill = false),
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis
+                        )
+                        IconButton(onClick = { closeTab(tab.id) }, modifier = Modifier.size(30.dp)) {
+                            Icon(Icons.Default.Close, "關閉分頁", modifier = Modifier.size(15.dp))
+                        }
                     }
                 }
             }
-            item {
-                IconButton(
-                    onClick = { addTab() },
-                    modifier = Modifier.size(35.dp)
-                ) { Icon(Icons.Default.Add, "新增分頁") }
+            IconButton(onClick = { addTab() }, modifier = Modifier.size(37.dp)) {
+                Icon(Icons.Default.Add, "新增分頁")
             }
         }
         Row(
