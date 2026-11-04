@@ -72,7 +72,7 @@ class DownloadService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val jobs = ConcurrentHashMap<Long, Job>()
-    private val restartAfterStop = ConcurrentHashMap.newKeySet<Long>()
+    private val restartAfterStop = ConcurrentHashMap<Long, String>()
 
     override fun onCreate() {
         super.onCreate()
@@ -103,7 +103,9 @@ class DownloadService : Service() {
         jobs[id]?.let { existing ->
             // A rapid Pause -> Continue can arrive before cancelled work finishes.
             // Queue the restart rather than silently dropping the user's request.
-            if (existing.isCancelled || !existing.isActive) restartAfterStop.add(id)
+            if (existing.isCancelled || !existing.isActive) {
+                restartAfterStop[id] = if (repairRequest) ACTION_REPAIR else ACTION_START
+            }
             return START_NOT_STICKY
         }
         val job = scope.launch(start = CoroutineStart.LAZY) {
@@ -122,20 +124,23 @@ class DownloadService : Service() {
                 }
             } catch (_: CancellationException) {
                 DownloadStore.patch(this@DownloadService, id) {
-                    if (repairRequest) it.copy(repairStatus = "已暫停修復")
+                    if (repairRequest) it.copy(repairStatus = "已暫停修復", repairProgress = 0)
                     else it.copy(status = "已暫停")
                 }
             } catch (e: Exception) {
                 DownloadStore.patch(this@DownloadService, id) {
                     if (repairRequest) it.copy(
-                        repairStatus = "修復失敗：" + (e.message ?: "未知原因")
+                        repairStatus = "修復失敗：" + (e.message ?: "未知原因"),
+                        repairProgress = 0
                     ) else it.copy(status = "失敗", error = e.message ?: "下載中斷")
                 }
             } finally {
                 jobs.remove(id)
-                if (restartAfterStop.remove(id)) {
-                    start(this@DownloadService, id)
-                } else if (jobs.isEmpty()) stopSelf()
+                when (restartAfterStop.remove(id)) {
+                    ACTION_REPAIR -> repair(this@DownloadService, id)
+                    ACTION_START -> start(this@DownloadService, id)
+                    else -> if (jobs.isEmpty()) stopSelf()
+                }
             }
         }
         if (jobs.putIfAbsent(id, job) == null) job.start()
