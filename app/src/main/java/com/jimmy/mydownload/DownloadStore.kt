@@ -24,8 +24,23 @@ data class DownloadRecord(
     val repairStatus: String = "",
     val repairProgress: Int = 0,
     val originalUri: String = "",
-    val savedExtension: String = ""
+    val savedExtension: String = "",
+    // Older records originally always auto-remuxed, so legacy default is true.
+    val autoRepairMp4: Boolean = true
 )
+
+
+/** Finished raw HLS files which can be remuxed locally without downloading again. */
+fun DownloadRecord.isMp4RepairCandidate(): Boolean {
+    if (kind != "hls" || status != "完成" || uri.isBlank() || originalUri.isNotBlank()) {
+        return false
+    }
+    return savedExtension == "ts" ||
+        error.contains("原始串流") ||
+        error.contains("MP4 整理") ||
+        error.contains("未自動整理") ||
+        (repairStatus.isNotBlank() && !repairStatus.contains("修復完成"))
+}
 
 object DownloadStore {
     private const val PREF = "download_history"
@@ -50,7 +65,8 @@ object DownloadStore {
         repairStatus = j.optString("repairStatus"),
         repairProgress = j.optInt("repairProgress"),
         originalUri = j.optString("originalUri"),
-        savedExtension = j.optString("savedExtension")
+        savedExtension = j.optString("savedExtension"),
+        autoRepairMp4 = j.optBoolean("autoRepairMp4", true)
     )
 
     private fun toJson(item: DownloadRecord) = JSONObject().apply {
@@ -72,6 +88,7 @@ object DownloadStore {
         put("repairProgress", item.repairProgress)
         put("originalUri", item.originalUri)
         put("savedExtension", item.savedExtension)
+        put("autoRepairMp4", item.autoRepairMp4)
     }
 
     fun read(context: Context): List<DownloadRecord> = synchronized(lock) {
@@ -106,7 +123,8 @@ object DownloadStore {
             referer = stream.referer,
             kind = stream.kind,
             label = stream.label,
-            destinationTree = DownloadSettings.folder(context)
+            destinationTree = DownloadSettings.folder(context),
+            autoRepairMp4 = DownloadSettings.autoRepairMp4(context)
         )
         save(context, item)
         return item
