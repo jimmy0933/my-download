@@ -170,7 +170,7 @@ fun RootScreen(shared: String) {
             }
         ) { padding ->
             Box(Modifier.fillMaxSize().padding(padding)) {
-                SiteBrowser(
+                MultiTabBrowser(
                     visible = tab == 0,
                     adBlockEnabled = adsBlocked,
                     modifier = if (tab == 0) Modifier.fillMaxSize() else Modifier.size(0.dp),
