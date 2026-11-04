@@ -10,6 +10,7 @@ object DownloadSettings {
     private const val PREF = "download_settings"
     private const val FOLDER = "destination_tree"
     private const val BLOCK = "block_ads"
+    private const val AUTO_REPAIR = "auto_repair_mp4"
 
     fun folder(context: Context): String =
         context.getSharedPreferences(PREF, Context.MODE_PRIVATE).getString(FOLDER, "").orEmpty()
@@ -55,6 +56,20 @@ object DownloadSettings {
     fun setAdBlockEnabled(context: Context, enabled: Boolean) {
         context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
             .edit().putBoolean(BLOCK, enabled).apply()
+    }
+
+    /**
+     * Opt-in for automatic MP4 remuxing after HLS download.
+     * Disabled by default so downloads finish without lengthy post-processing.
+     * The choice is snapshotted when a new download is queued.
+     */
+    fun autoRepairMp4(context: Context): Boolean =
+        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+            .getBoolean(AUTO_REPAIR, false)
+
+    fun setAutoRepairMp4(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+            .edit().putBoolean(AUTO_REPAIR, enabled).apply()
     }
 
     fun folderLabel(context: Context): String {
