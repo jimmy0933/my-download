@@ -573,7 +573,12 @@ class DownloadService : Service() {
 
         val folder = tempFile(item.id).parentFile
             ?: throw IOException("無法建立影片暫存目錄")
-        val source = File(folder, item.id.toString() + ".repair-source")
+        val sourceExtension = when {
+            item.savedExtension in setOf("ts", "mp4") -> item.savedExtension
+            contentResolver.getType(originalUri) == "video/mp2t" -> "ts"
+            else -> "mp4"
+        }
+        val source = File(folder, item.id.toString() + ".repair-source." + sourceExtension)
         val mp4 = File(folder, item.id.toString() + ".repair.mp4")
         source.delete()
         mp4.delete()
