@@ -10,7 +10,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.Wrench
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -152,7 +152,7 @@ fun DownloadSettingsScreen(adsBlocked: Boolean, onBlockChange: (Boolean) -> Unit
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Wrench, null, tint = Color(0xFF27DBB3))
+                    Icon(Icons.Default.Build, null, tint = Color(0xFF27DBB3))
                     Spacer(Modifier.width(9.dp))
                     Text(
                         "影片修復",
