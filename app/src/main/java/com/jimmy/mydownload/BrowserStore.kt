@@ -160,6 +160,16 @@ object BrowserStore {
     }
 
     @Synchronized
+    fun removeHistory(context: Context, url: String) {
+        val array = JSONArray()
+        history(context).filterNot { it.url == url }.forEach { entry ->
+            array.put(JSONObject().put("url", entry.url).put("title", entry.title)
+                .put("date", entry.visitedAt))
+        }
+        prefs(context).edit().putString(HISTORY, array.toString()).apply()
+    }
+
+    @Synchronized
     fun clearHistory(context: Context) {
         prefs(context).edit().remove(HISTORY).apply()
     }
