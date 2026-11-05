@@ -12,6 +12,13 @@ class Mp4RangesTest {
         assertEquals("16.2 MB", Mp4Ranges.label(17_000_000L))
     }
 
+    @Test fun xInitializationSegmentsAreNotCompleteVideos() {
+        assertEquals(false, Mp4Ranges.isPlausibleVideoSize(907L))
+        assertEquals(false, Mp4Ranges.isPlausibleVideoSize(1024L))
+        assertEquals(true, Mp4Ranges.isPlausibleVideoSize(5_000_000L))
+        assertEquals(true, Mp4Ranges.isPlausibleVideoSize(null))
+    }
+
     @Test fun missingContentRangeNeverDisplaysProbeAsZeroKbVideo() {
         assertNull(Mp4Ranges.totalForResponse(206, null, 1L))
         assertEquals("大小未知", Mp4Ranges.label(null))
