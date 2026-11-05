@@ -188,9 +188,7 @@ class DownloadService : Service() {
         progress(item, "連線中", 0, current)
         for (attempt in 0..1) {
             coroutineContext.ensureActive()
-            val request = Request.Builder().url(item.url)
-                .header("User-Agent", StreamResolver.USER_AGENT)
-                .header("Referer", item.referer)
+            val request = BrowserMediaRequest.builder(item.url, item.referer)
                 .apply { if (current > 0L) header("Range", "bytes=" + current + "-") }
                 .build()
             var restart = false
@@ -341,9 +339,7 @@ class DownloadService : Service() {
                 coroutineContext.ensureActive()
                 try {
                     java.io.RandomAccessFile(partial, "rw").use { it.setLength(before) }
-                    val request = Request.Builder().url(sources.list[index])
-                        .header("User-Agent", StreamResolver.USER_AGENT)
-                        .header("Referer", item.referer).build()
+                    val request = BrowserMediaRequest.builder(sources.list[index], item.referer).build()
                     StreamResolver.client.newCall(request).execute().use { response ->
                         if (!response.isSuccessful) throw IOException("片段 HTTP " + response.code)
                         FileOutputStream(partial, true).use { output ->
