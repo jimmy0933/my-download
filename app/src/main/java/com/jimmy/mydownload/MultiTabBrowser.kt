@@ -272,8 +272,21 @@ fun MultiTabBrowser(
             override fun shouldInterceptRequest(
                 view: WebView?, request: WebResourceRequest?
             ): WebResourceResponse? {
-                if (request == null || !DownloadSettings.adBlockEnabled(context)) return null
-                if (!AdPageFilter.blocks(request.url.toString())) return null
+                if (request == null) return null
+                val resource = request.url.toString()
+                if (BrowserVideoDiscovery.kind(resource) != null &&
+                    !AdPageFilter.blocks(resource)) {
+                    // WebView invokes interception off the UI thread. Only store
+                    // the URL on the WebView's UI thread, not from this callback.
+                    web.post {
+                        if (resource !in tab.mediaSources) {
+                            tab.mediaSources.add(0, resource)
+                            if (tab.mediaSources.size > 24) tab.mediaSources.removeAt(24)
+                        }
+                    }
+                }
+                if (!DownloadSettings.adBlockEnabled(context) ||
+                    !AdPageFilter.blocks(resource)) return null
                 return WebResourceResponse(
                     "text/plain", "UTF-8", ByteArrayInputStream(ByteArray(0))
                 )
@@ -397,6 +410,49 @@ fun MultiTabBrowser(
         if (browser == null) {
             // The active tab will be initialized with its recorded URL.
         } else browser.loadUrl(url)
+    }
+
+    fun offerDetectedVideo(video: VisibleVideo? = null) {
+        val page = selected.url
+        val title = selected.title.ifBlank { BrowserAddress.displayName(page) }
+        val fromPlayer = video?.url?.takeIf { BrowserVideoDiscovery.kind(it) != null }
+        if (fromPlayer != null) {
+            val kind = BrowserVideoDiscovery.kind(fromPlayer) ?: "mp4"
+            currentDetectedVideos(listOf(StreamChoice(
+                title, if (kind == "mp4") "MP4" else "HLS",
+                fromPlayer, kind, page
+            )))
+            return
+        }
+
+        val active = currentWebView()
+        if (active == null) {
+            discoveryMessage = "網頁尚未載入，請先開啟影片。"
+            return
+        }
+
+        val checkedId = selected.id
+        active.evaluateJavascript(BrowserVideoDiscovery.RESOURCE_SCAN_SCRIPT) { result ->
+            if (checkedId != activeId) return@evaluateJavascript
+            val fromPerformance = BrowserVideoDiscovery.decodeResourceList(result)
+            val all = (selected.mediaSources + fromPerformance)
+                .filter { BrowserVideoDiscovery.kind(it) != null }
+                .distinct().take(24)
+            if (all.isEmpty()) {
+                discoveryMessage = if (BrowserVideoDiscovery.isXPage(page))
+                    "已找到 X 影片播放器，但目前只看到網站內部串流（例如 blob:），沒有可直接下載的 MP4／M3U8。可以播放影片後再試；受 X 下載權限或保護限制的內容無法直接儲存。"
+                else "目前網頁沒有提供可直接下載的 MP4／M3U8。請先播放影片再試。"
+            } else {
+                currentDetectedVideos(all.mapIndexed { index, url ->
+                    val kind = BrowserVideoDiscovery.kind(url) ?: "mp4"
+                    StreamChoice(
+                        title,
+                        (if (kind == "mp4") "MP4" else "HLS") + " • 來源 " + (index + 1),
+                        url, kind, page
+                    )
+                })
+            }
+        }
     }
 
     fun navigateInput() {
