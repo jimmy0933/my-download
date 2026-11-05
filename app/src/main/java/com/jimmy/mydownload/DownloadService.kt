@@ -829,11 +829,8 @@ class DownloadService : Service() {
                 extractor.sampleSize <= 0L) {
                 throw IOException("MP4 沒有可播放的影格，可能只有影片初始化資料")
             }
-            val format = extractor.getTrackFormat(video)
-            if (format.containsKey(MediaFormat.KEY_DURATION) &&
-                format.getLong(MediaFormat.KEY_DURATION) <= 0L) {
-                throw IOException("MP4 沒有有效影片長度")
-            }
+            // HLS TS/fMP4 may not carry a container-level duration even when
+            // valid frames exist. Media samples, not duration metadata, decide.
         } finally {
             extractor.release()
         }
