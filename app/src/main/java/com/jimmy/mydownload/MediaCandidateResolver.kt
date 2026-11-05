@@ -36,10 +36,14 @@ object MediaCandidateResolver {
             .find(path)?.groupValues?.get(1)?.plus("P")
     }
 
-    fun group(url: String): String {
+    fun mediaId(url: String): String? {
         val path = runCatching { URI(url).path.orEmpty() }.getOrDefault("")
-        val id = Regex("""/(?:ext_tw_video|amplify_video|tweet_video|tv_video)/(\d+)""")
+        return Regex("""/(?:ext_tw_video|amplify_video|tweet_video|tv_video)/(\d+)""")
             .find(path)?.groupValues?.get(1)
+    }
+
+    fun group(url: String): String {
+        val id = mediaId(url)
         return if (id == null) runCatching { URI(url).host.orEmpty() }.getOrDefault("影片")
         else "影片 ID …" + id.takeLast(7)
     }
@@ -75,7 +79,7 @@ object MediaCandidateResolver {
         withContext(Dispatchers.IO) {
             val urls = inputs.map { it.url }
                 .filter { BrowserVideoDiscovery.kind(it) != null }
-                .distinct().take(14)
+                .distinct().take(10)
             val title = StreamResolver.safeTitle(inputs.firstOrNull()?.title ?: "影片")
             val choices = mutableListOf<StreamChoice>()
             val failures = mutableListOf<String>()
