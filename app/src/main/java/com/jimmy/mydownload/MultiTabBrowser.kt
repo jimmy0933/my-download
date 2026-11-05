@@ -250,7 +250,13 @@ fun MultiTabBrowser(
                     scanResults = VideoPositions()
                     videoElements = VisibleVideos()
                 }
-                tab.mediaSources.clear()
+                // X uses in-page navigation and may reuse a cached player
+                // after changing the post URL. Keep recently observed media
+                // requests within the same site so detection still works.
+                if (!(BrowserVideoDiscovery.isXPage(tab.url) &&
+                        BrowserVideoDiscovery.isXPage(url))) {
+                    tab.mediaSources.clear()
+                }
                 saveSession()
             }
             tab.canBack = web.canGoBack()
@@ -435,20 +441,25 @@ fun MultiTabBrowser(
         active.evaluateJavascript(BrowserVideoDiscovery.RESOURCE_SCAN_SCRIPT) { result ->
             if (checkedId != activeId) return@evaluateJavascript
             val fromPerformance = BrowserVideoDiscovery.decodeResourceList(result)
-            val all = (selected.mediaSources + fromPerformance)
+            val discovered = (selected.mediaSources + fromPerformance)
                 .filter { BrowserVideoDiscovery.kind(it) != null }
-                .distinct().take(24)
+                .distinct()
+            val associated = video?.mediaId?.takeIf { it.isNotBlank() }?.let { id ->
+                discovered.filter { MediaCandidateResolver.mediaId(it) == id }
+            }.orEmpty()
+            // Prefer the clicked player's media ID when X exposes a thumbnail.
+            // Never mix candidates from a different video when the ID matches.
+            val all = (if (associated.isNotEmpty()) associated else discovered).take(10)
             if (all.isEmpty()) {
                 discoveryMessage = if (BrowserVideoDiscovery.isXPage(page))
                     "已找到 X 影片播放器，但目前只看到網站內部串流（例如 blob:），沒有可直接下載的 MP4／M3U8。可以播放影片後再試；受 X 下載權限或保護限制的內容無法直接儲存。"
                 else "目前網頁沒有提供可直接下載的 MP4／M3U8。請先播放影片再試。"
             } else {
-                currentDetectedVideos(all.mapIndexed { index, url ->
+                currentDetectedVideos(all.map { url ->
                     val kind = BrowserVideoDiscovery.kind(url) ?: "mp4"
                     StreamChoice(
-                        title,
-                        (if (kind == "mp4") "MP4" else "HLS") + " • 來源 " + (index + 1),
-                        url, kind, page
+                        title, kind.uppercase(), url, kind, page,
+                        MediaCandidateResolver.group(url)
                     )
                 })
             }
