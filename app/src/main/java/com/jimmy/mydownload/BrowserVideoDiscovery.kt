@@ -10,7 +10,8 @@ import java.net.URI
 data class VisibleVideo(
     val url: String,
     val right: Float,
-    val top: Float
+    val top: Float,
+    val mediaId: String = ""
 )
 data class VisibleVideos(
     val viewportWidth: Float = 1f,
@@ -51,7 +52,10 @@ object BrowserVideoDiscovery {
                 val right = item.optDouble("right", -1.0).toFloat()
                 val top = item.optDouble("top", -1.0).toFloat()
                 if (right < 0 || top < 0 || !right.isFinite() || !top.isFinite()) continue
-                add(VisibleVideo(item.optString("src"), right, top))
+                add(VisibleVideo(
+                    item.optString("src"), right, top,
+                    item.optString("mediaId").takeIf { it.matches(Regex("""\d{6,22}""")) }.orEmpty()
+                ))
             }
         })
     }.getOrDefault(VisibleVideos())
@@ -85,7 +89,13 @@ object BrowserVideoDiscovery {
         rect.bottom <= 0 || rect.top >= innerHeight) continue;
     const raw = video.currentSrc || video.src ||
         (video.querySelector('source') && video.querySelector('source').src) || '';
-    found.videos.push({src: raw, right: rect.right, top: rect.top});
+    const article = video.closest('article');
+    const thumb = video.poster ||
+      (article && Array.from(article.querySelectorAll('img[src*="twimg.com"]'))
+        .map(img => img.src)
+        .find(src => /(?:ext_tw_video_thumb|amplify_video_thumb|tweet_video_thumb)\/\d+/.test(src))) || '';
+    const mediaId = ((/(?:ext_tw_video_thumb|amplify_video_thumb|tweet_video_thumb)\/(\d+)/.exec(thumb)) || [,''])[1];
+    found.videos.push({src: raw, right: rect.right, top: rect.top, mediaId});
     if (found.videos.length >= 30) break;
   }
   return JSON.stringify(found);
