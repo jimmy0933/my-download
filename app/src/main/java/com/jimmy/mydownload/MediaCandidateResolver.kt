@@ -13,9 +13,13 @@ import java.util.concurrent.TimeUnit
 
 /** Reuses only cookies matching the media URL host; never forwards x.com cookies elsewhere. */
 object BrowserMediaRequest {
-    fun builder(url: String, referer: String): Request.Builder {
+    fun builder(url: String, referer: String, userAgent: String = ""): Request.Builder {
         val request = Request.Builder().url(url)
-            .header("User-Agent", StreamResolver.USER_AGENT).header("Accept", "*/*")
+            .header(
+                "User-Agent",
+                userAgent.takeIf { it.isNotBlank() && it.length < 1000 }
+                    ?: StreamResolver.USER_AGENT
+            ).header("Accept", "*/*")
         if (BrowserAddress.isWebUrl(referer)) request.header("Referer", referer)
         val cookies = runCatching { CookieManager.getInstance().getCookie(url) }.getOrNull()
         if (!cookies.isNullOrBlank()) request.header("Cookie", cookies)
@@ -83,7 +87,9 @@ object MediaCandidateResolver {
                 val kind = BrowserVideoDiscovery.kind(url) ?: continue
                 val group = group(url)
                 try {
-                    val request = BrowserMediaRequest.builder(url, referer).apply {
+                    val sourceAgent = inputs.firstOrNull { it.url == url }
+                        ?.userAgent.orEmpty()
+                    val request = BrowserMediaRequest.builder(url, referer, sourceAgent).apply {
                         if (kind == "mp4") header("Range", "bytes=0-0")
                     }.build()
                     client.newCall(request).execute().use { response ->
@@ -104,7 +110,8 @@ object MediaCandidateResolver {
                             val quality = resolution(url) ?: "畫質未知"
                             choices += StreamChoice(
                                 title, "$quality · MP4", url, "mp4", referer,
-                                "MP4 · $quality · " + Mp4Ranges.label(totalSize(response)) + " · $group"
+                                "MP4 · $quality · " + Mp4Ranges.label(totalSize(response)) + " · $group",
+                                sourceAgent
                             )
                         } else {
                             val text = playlist(response)
@@ -128,7 +135,8 @@ object MediaCandidateResolver {
                                 choices += variant.copy(
                                     label = "$quality · HLS",
                                     detail = "HLS · $quality · 大小未知 · $group" +
-                                        if (audioSeparate) " · 音訊可能獨立，建議 MP4" else ""
+                                        if (audioSeparate) " · 音訊可能獨立，建議 MP4" else "",
+                                    userAgent = sourceAgent
                                 )
                             }
                         }
