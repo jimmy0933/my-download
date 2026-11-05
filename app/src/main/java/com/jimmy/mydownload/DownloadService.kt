@@ -319,25 +319,27 @@ class DownloadService : Service() {
     }
 
     private fun verifyMp4Downloaded(partial: File) {
-        if (!partial.isFile || partial.length() < 16L) {
-            throw IOException("來源只回傳少量資料，沒有取得完整 MP4")
+        val size = partial.takeIf { it.isFile }?.length() ?: 0L
+        if (!Mp4Ranges.isPlausibleVideoSize(size)) {
+            throw IOException("MP4 只有 " + Mp4Ranges.label(size) +
+                "，很可能只是 X 播放器的初始化片段，非完整影片。請返回 X 選擇 HLS 來源。")
         }
         val header = ByteArray(12)
         partial.inputStream().use { input ->
-            var bytes = 0
-            while (bytes < header.size) {
-                val count = input.read(header, bytes, header.size - bytes)
-                if (count < 0) break
-                bytes += count
+            var offset = 0
+            while (offset < 12) {
+                val n = input.read(header, offset, 12 - offset)
+                if (n < 0) break
+                offset += n
             }
-            if (bytes < 12) throw IOException("無法讀取 MP4 標頭")
+            if (offset != 12) throw IOException("MP4 標頭不完整")
         }
         val atom = String(header, 4, 4, Charsets.US_ASCII)
-        if (atom !in setOf("ftyp", "styp", "moov", "free")) {
-            throw IOException("下載來源不是可辨識的 MP4，請返回 X 重新偵測影片")
+        if (atom !in setOf("ftyp", "styp")) {
+            throw IOException("MP4 回應沒有有效容器標頭")
         }
+        verifyMp4(partial)
     }
-
     private data class Segments(val list: List<String>, val fragmented: Boolean)
 
     private fun parseSegments(
@@ -815,7 +817,15 @@ class DownloadService : Service() {
                     .getString(MediaFormat.KEY_MIME).orEmpty().startsWith("video/")
             } ?: throw IOException("修復檔沒有影像軌")
             extractor.selectTrack(video)
-            if (extractor.sampleTime < 0L) throw IOException("修復檔找不到可播放的影格")
+            if (extractor.sampleTrackIndex < 0 || extractor.sampleTime < 0L ||
+                extractor.sampleSize <= 0L) {
+                throw IOException("MP4 沒有可播放的影格，可能只有影片初始化資料")
+            }
+            val format = extractor.getTrackFormat(video)
+            if (format.containsKey(MediaFormat.KEY_DURATION) &&
+                format.getLong(MediaFormat.KEY_DURATION) <= 0L) {
+                throw IOException("MP4 沒有有效影片長度")
+            }
         } finally {
             extractor.release()
         }
