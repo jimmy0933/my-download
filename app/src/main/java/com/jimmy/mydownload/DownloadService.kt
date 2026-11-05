@@ -340,7 +340,9 @@ class DownloadService : Service() {
 
     private data class Segments(val list: List<String>, val fragmented: Boolean)
 
-    private fun parseSegments(text: String, base: String, referer: String): Segments {
+    private fun parseSegments(
+        text: String, base: String, referer: String, userAgent: String = ""
+    ): Segments {
         if (!text.trimStart().startsWith("#EXTM3U")) throw IOException("M3U8 內容格式錯誤")
         if (text.contains("#EXT-X-KEY:", true) || text.contains("#EXT-X-SESSION-KEY:", true)) {
             throw IOException("加密 HLS 不支援")
@@ -354,7 +356,8 @@ class DownloadService : Service() {
             val next = if (token.isNullOrBlank()) best.url else
                 best.url.toHttpUrl().newBuilder().addQueryParameter("access_token", token)
                     .build().toString()
-            return parseSegments(StreamResolver.fetchText(next, referer), next, referer)
+            return parseSegments(StreamResolver.fetchText(next, referer, userAgent),
+                next, referer, userAgent)
         }
         val token = runCatching { base.toHttpUrl().queryParameter("access_token") }.getOrNull()
         fun absolute(raw: String): String {
@@ -410,8 +413,8 @@ class DownloadService : Service() {
                 DownloadStore.save(this, item)
             }
         }
-        val manifest = StreamResolver.fetchText(item.url, item.referer)
-        val sources = parseSegments(manifest, item.url, item.referer)
+        val manifest = StreamResolver.fetchText(item.url, item.referer, item.userAgent)
+        val sources = parseSegments(manifest, item.url, item.referer, item.userAgent)
         val saved = DownloadStore.get(this, item.id) ?: item
         val count = if (partial.exists()) saved.checkpoint.coerceIn(0, sources.list.size) else 0
         val bytesSaved = if (partial.exists()) saved.bytes.coerceAtLeast(0) else 0L
@@ -427,7 +430,7 @@ class DownloadService : Service() {
                 coroutineContext.ensureActive()
                 try {
                     java.io.RandomAccessFile(partial, "rw").use { it.setLength(before) }
-                    val request = BrowserMediaRequest.builder(sources.list[index], item.referer).build()
+                    val request = BrowserMediaRequest.builder(sources.list[index], item.referer, item.userAgent).build()
                     StreamResolver.client.newCall(request).execute().use { response ->
                         if (!response.isSuccessful) throw IOException("片段 HTTP " + response.code)
                         FileOutputStream(partial, true).use { output ->
