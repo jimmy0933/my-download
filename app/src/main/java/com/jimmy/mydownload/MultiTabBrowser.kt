@@ -817,6 +817,84 @@ fun MultiTabBrowser(
         }
     }
 
+    if (showTabs) {
+        ModalBottomSheet(
+            onDismissRequest = { showTabs = false },
+            containerColor = BrowserPanel
+        ) {
+            Column(
+                Modifier.fillMaxWidth().padding(horizontal = 18.dp)
+                    .padding(bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "分頁 (" + tabs.size + ")",
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Button(onClick = {
+                        addTab()?.let { showTabs = false }
+                    }) {
+                        Icon(Icons.Default.Add, contentDescription = null)
+                        Spacer(Modifier.width(5.dp))
+                        Text("新增")
+                    }
+                }
+                LazyColumn(
+                    Modifier.fillMaxWidth().heightIn(max = 490.dp),
+                    verticalArrangement = Arrangement.spacedBy(7.dp)
+                ) {
+                    items(tabs, key = { it.id }) { tab ->
+                        Row(
+                            Modifier.fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(
+                                    if (activeId == tab.id) Color(0xFF2B4B5C)
+                                    else Color(0xFF203548)
+                                ),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(
+                                Modifier.weight(1f).clickable {
+                                    selectTab(tab)
+                                    showTabs = false
+                                }.padding(13.dp)
+                            ) {
+                                Text(
+                                    tab.title.ifBlank { BrowserAddress.displayName(tab.url) },
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    tab.url,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color(0xFFB1C2CC),
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            IconButton(onClick = { closeTab(tab.id) }) {
+                                Icon(Icons.Default.Close, "關閉分頁")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (discoveryMessage.isNotBlank()) {
+        AlertDialog(
+            onDismissRequest = { discoveryMessage = "" },
+            title = { Text("影片偵測結果") },
+            text = { Text(discoveryMessage) },
+            confirmButton = {
+                TextButton(onClick = { discoveryMessage = "" }) { Text("確定") }
+            }
+        )
+    }
+
     if (selectedSheet != null) {
         ModalBottomSheet(
             onDismissRequest = { selectedSheet = null },
