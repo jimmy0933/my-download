@@ -548,26 +548,37 @@ fun MultiTabBrowser(
     }
 
     Column(modifier.background(BrowserNavy)) {
-        // Address bar + bookmark action, compact enough to leave most of the screen
-        // to the website and not cover the page's own playback buttons.
+        // Single compact browser toolbar. Tabs, navigation actions, downloads
+        // and settings live in sheets/menus rather than covering the website.
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 3.dp),
+            Modifier.fillMaxWidth().height(54.dp).padding(horizontal = 3.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            IconButton(
+                onClick = { currentWebView()?.goBack() },
+                enabled = selected.canBack,
+                modifier = Modifier.size(35.dp)
+            ) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, "上一頁",
+                    modifier = Modifier.size(21.dp))
+            }
             OutlinedTextField(
                 value = addressInput, onValueChange = { addressInput = it },
-                modifier = Modifier.weight(1f).height(56.dp),
+                modifier = Modifier.weight(1f).height(49.dp),
                 singleLine = true,
                 textStyle = MaterialTheme.typography.bodySmall,
-                placeholder = { Text("搜尋或輸入網址", style = MaterialTheme.typography.bodySmall) },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Go),
+                placeholder = { Text("網址或搜尋", style = MaterialTheme.typography.bodySmall) },
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Uri, imeAction = ImeAction.Go
+                ),
                 keyboardActions = KeyboardActions(onGo = { navigateInput() }),
                 trailingIcon = {
-                    IconButton(onClick = { navigateInput() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowForward, "開啟網址")
+                    IconButton(onClick = { navigateInput() }, modifier = Modifier.size(35.dp)) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowForward, "前往網址",
+                            modifier = Modifier.size(19.dp))
                     }
                 },
-                shape = RoundedCornerShape(15.dp)
+                shape = RoundedCornerShape(13.dp)
             )
             val saved = bookmarks.any { it.url == selected.url }
             IconButton(
@@ -575,84 +586,93 @@ fun MultiTabBrowser(
                 onClick = {
                     BrowserStore.toggleBookmark(context, selected.url, selected.title)
                     bookmarks = BrowserStore.bookmarks(context)
-                }
+                },
+                modifier = Modifier.size(37.dp)
             ) {
                 Icon(
                     if (saved) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
-                    contentDescription = if (saved) "移除書籤" else "加入書籤",
-                    tint = if (saved) BrowserGreen else Color.White
+                    contentDescription = if (saved) "取消書籤" else "加入書籤",
+                    tint = if (saved) BrowserGreen else Color.White,
+                    modifier = Modifier.size(21.dp)
                 )
             }
-            IconButton(onClick = {
-                bookmarks = BrowserStore.bookmarks(context)
-                sheetSearch = ""
-                selectedSheet = BrowserLibrary.BOOKMARKS
-            }) {
-                Icon(Icons.Default.Bookmark, contentDescription = "書籤")
-            }
-        }
-        Row(
-            Modifier.fillMaxWidth().height(43.dp).padding(horizontal = 6.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            LazyRow(
-                modifier = Modifier.weight(1f),
-                horizontalArrangement = Arrangement.spacedBy(5.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                items(tabs, key = { it.id }) { tab ->
-                    Row(
-                        Modifier.widthIn(min = 90.dp, max = 144.dp)
-                            .height(35.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(if (tab.id == activeId) Color(0xFF294357) else BrowserPanel)
-                            .clickable { selectTab(tab) }
-                            .padding(start = 9.dp, end = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            tab.title.ifBlank { BrowserAddress.displayName(tab.url) },
-                            Modifier.weight(1f, fill = false),
-                            style = MaterialTheme.typography.labelSmall,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis
-                        )
-                        IconButton(onClick = { closeTab(tab.id) }, modifier = Modifier.size(30.dp)) {
-                            Icon(Icons.Default.Close, "關閉分頁", modifier = Modifier.size(15.dp))
-                        }
-                    }
+            IconButton(onClick = { showTabs = true }, modifier = Modifier.size(37.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Layers, "切換分頁", modifier = Modifier.size(20.dp))
+                    Text(tabs.size.toString(), fontSize = 11.sp, color = BrowserGreen)
                 }
             }
-            IconButton(onClick = { addTab() }, modifier = Modifier.size(37.dp)) {
-                Icon(Icons.Default.Add, "新增分頁")
-            }
-        }
-        Row(
-            Modifier.fillMaxWidth().height(41.dp).padding(horizontal = 4.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            IconButton(onClick = { currentWebView()?.goBack() }, enabled = selected.canBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, "上一頁")
-            }
-            IconButton(onClick = { currentWebView()?.goForward() }, enabled = selected.canForward) {
-                Icon(Icons.AutoMirrored.Filled.ArrowForward, "下一頁")
-            }
-            IconButton(onClick = { navigate(BrowserAddress.BLANK_TAB) }) {
-                Icon(Icons.Default.Home, "新分頁首頁")
-            }
-            IconButton(onClick = { currentWebView()?.reload() },
-                enabled = selected.url != BrowserAddress.BLANK_TAB) {
-                Icon(Icons.Default.Refresh, "重新整理")
-            }
-            IconButton(onClick = {
-                history = BrowserStore.history(context)
-                sheetSearch = ""
-                selectedSheet = BrowserLibrary.HISTORY
-            }) {
-                Icon(Icons.Default.History, "歷史紀錄")
-            }
-            IconButton(onClick = { currentSettings() }) {
-                Icon(Icons.Default.Settings, "設定")
+            Box {
+                IconButton(
+                    onClick = { showBrowserMenu = true }, modifier = Modifier.size(36.dp)
+                ) {
+                    Icon(Icons.Default.MoreVert, "瀏覽器選單", modifier = Modifier.size(22.dp))
+                }
+                DropdownMenu(
+                    expanded = showBrowserMenu,
+                    onDismissRequest = { showBrowserMenu = false }
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("新增分頁") },
+                        onClick = { showBrowserMenu = false; addTab() },
+                        leadingIcon = { Icon(Icons.Default.Add, null) }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("前進") },
+                        enabled = selected.canForward,
+                        onClick = {
+                            showBrowserMenu = false
+                            currentWebView()?.goForward()
+                        },
+                        leadingIcon = { Icon(Icons.AutoMirrored.Filled.ArrowForward, null) }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("重新整理") },
+                        onClick = {
+                            showBrowserMenu = false
+                            currentWebView()?.reload()
+                        },
+                        leadingIcon = { Icon(Icons.Default.Refresh, null) }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("新分頁首頁") },
+                        onClick = {
+                            showBrowserMenu = false
+                            navigate(BrowserAddress.BLANK_TAB)
+                        },
+                        leadingIcon = { Icon(Icons.Default.Home, null) }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("我的書籤") },
+                        onClick = {
+                            showBrowserMenu = false
+                            bookmarks = BrowserStore.bookmarks(context)
+                            sheetSearch = ""
+                            selectedSheet = BrowserLibrary.BOOKMARKS
+                        },
+                        leadingIcon = { Icon(Icons.Default.Bookmark, null) }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("瀏覽紀錄") },
+                        onClick = {
+                            showBrowserMenu = false
+                            history = BrowserStore.history(context)
+                            sheetSearch = ""
+                            selectedSheet = BrowserLibrary.HISTORY
+                        },
+                        leadingIcon = { Icon(Icons.Default.History, null) }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("下載管理") },
+                        onClick = { showBrowserMenu = false; currentDownloads() },
+                        leadingIcon = { Icon(Icons.Default.Download, null) }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("設定") },
+                        onClick = { showBrowserMenu = false; currentSettings() },
+                        leadingIcon = { Icon(Icons.Default.Settings, null) }
+                    )
+                }
             }
         }
         if (selected.progress in 1..99) {
