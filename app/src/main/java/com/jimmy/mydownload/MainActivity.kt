@@ -35,6 +35,7 @@ import androidx.core.content.ContextCompat
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
+import java.io.IOException
 
 private val Navy = Color(0xFF091421)
 private val Panel = Color(0xFF142333)
@@ -76,7 +77,21 @@ private fun startDownload(context: android.content.Context, stream: StreamChoice
 }
 
 private fun openVideo(context: android.content.Context, item: DownloadRecord) {
-    val uri = DownloadStore.contentUri(item) ?: return
+    val uri = DownloadStore.contentUri(item)
+        ?: throw IOException("影片沒有儲存位置，請重新下載")
+    // Check old downloads too. Earlier versions saved 907-byte X MP4
+    // initialization fragments with a misleading 100% status.
+    if (item.kind == "mp4") {
+        val size = runCatching {
+            context.contentResolver.openFileDescriptor(uri, "r")?.use { it.statSize }
+        }.getOrNull()?.takeIf { it >= 0L }
+        if (!Mp4Ranges.isPlausibleVideoSize(size)) {
+            throw IOException(
+                "影片只有 " + Mp4Ranges.label(size) +
+                    "，不是完整 MP4。請回到 X 重新偵測並選擇 HLS 來源。"
+            )
+        }
+    }
     val mime = context.contentResolver.getType(uri)
         ?: if (item.savedExtension == "ts") "video/mp2t" else "video/*"
     context.startActivity(Intent(Intent.ACTION_VIEW).apply {
@@ -323,9 +338,19 @@ fun RootScreen(shared: String) {
                                             "完成" -> {
                                                 TextButton(onClick = {
                                                     runCatching { openVideo(context, item) }
-                                                        .onFailure {
+                                                        .onFailure { problem ->
+                                                            if (problem is IOException) {
+                                                                DownloadStore.patch(context, item.id) {
+                                                                    it.copy(status = "失敗",
+                                                                        error = problem.message ?: "影片檔案無效",
+                                                                        progress = 0)
+                                                                }
+                                                                downloads = DownloadStore.read(context)
+                                                            }
                                                             scope.launch {
-                                                                snackbar.showSnackbar("找不到可播放的 App")
+                                                                snackbar.showSnackbar(
+                                                                    problem.message ?: "無法播放影片"
+                                                                )
                                                             }
                                                         }
                                                 }) { Text("播放") }
