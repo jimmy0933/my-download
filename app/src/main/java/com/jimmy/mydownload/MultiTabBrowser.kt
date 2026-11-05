@@ -43,6 +43,8 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -81,6 +83,7 @@ private class TabViewState(record: BrowserTabRecord) {
     var canForward by mutableStateOf(false)
     var progress by mutableIntStateOf(100)
     var scrollY: Int = 0
+    val mediaSources = mutableStateListOf<String>()
     fun record() = BrowserTabRecord(id, url, title)
 }
 
@@ -139,11 +142,15 @@ fun MultiTabBrowser(
     adBlockEnabled: Boolean,
     modifier: Modifier = Modifier,
     onDownload: (String) -> Unit,
+    onDetectedVideos: (List<StreamChoice>) -> Unit,
+    onDownloads: () -> Unit,
     onSettings: () -> Unit
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
     val currentDownload by rememberUpdatedState(onDownload)
+    val currentDetectedVideos by rememberUpdatedState(onDetectedVideos)
+    val currentDownloads by rememberUpdatedState(onDownloads)
     val currentSettings by rememberUpdatedState(onSettings)
     val blockAds by rememberUpdatedState(adBlockEnabled)
 
@@ -173,6 +180,10 @@ fun MultiTabBrowser(
     var scanResults by remember { mutableStateOf(VideoPositions()) }
     var viewportWidth by remember { mutableIntStateOf(0) }
     var viewportHeight by remember { mutableIntStateOf(0) }
+    var videoElements by remember { mutableStateOf(VisibleVideos()) }
+    var showTabs by remember { mutableStateOf(false) }
+    var showBrowserMenu by remember { mutableStateOf(false) }
+    var discoveryMessage by remember { mutableStateOf("") }
 
     fun saveSession() {
         BrowserStore.saveSession(context, tabs.map { it.record() }, activeId)
@@ -181,6 +192,7 @@ fun MultiTabBrowser(
     fun selectTab(tab: TabViewState) {
         activeId = tab.id
         scanResults = VideoPositions()
+        videoElements = VisibleVideos()
         saveSession()
     }
 
@@ -234,7 +246,11 @@ fun MultiTabBrowser(
             if (!BrowserAddress.isWebUrl(url) && url != BrowserAddress.BLANK_TAB) return
             if (tab.url != url) {
                 tab.url = url
-                if (tab.id == activeId) scanResults = VideoPositions()
+                if (tab.id == activeId) {
+                    scanResults = VideoPositions()
+                    videoElements = VisibleVideos()
+                }
+                tab.mediaSources.clear()
                 saveSession()
             }
             tab.canBack = web.canGoBack()
