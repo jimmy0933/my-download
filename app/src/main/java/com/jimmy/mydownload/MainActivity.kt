@@ -118,17 +118,23 @@ fun RootScreen(shared: String) {
     var resolving by remember { mutableStateOf(false) }
     var resolveError by remember { mutableStateOf("") }
     var choices by remember { mutableStateOf<List<StreamChoice>>(emptyList()) }
+    var candidateSources by remember { mutableStateOf<List<StreamChoice>>(emptyList()) }
+    var sourceFailures by remember { mutableStateOf<List<String>>(emptyList()) }
+    var currentRequest by remember { mutableIntStateOf(0) }
     var downloads by remember { mutableStateOf<List<DownloadRecord>>(emptyList()) }
 
     fun showDownload(link: String) {
         if (!link.startsWith("https://", true)) return
+        val seq = ++currentRequest
         selectedLink = link
         resolving = true
         resolveError = ""
         choices = emptyList()
+        candidateSources = emptyList()
+        sourceFailures = emptyList()
         scope.launch {
             val result = runCatching { StreamResolver.inspect(link) }
-            if (selectedLink == link) {
+            if (currentRequest == seq && selectedLink == link) {
                 resolving = false
                 result.onSuccess { choices = it }
                     .onFailure { resolveError = it.message ?: "影片解析失敗" }
@@ -138,10 +144,34 @@ fun RootScreen(shared: String) {
 
     fun showDetectedChoices(found: List<StreamChoice>) {
         if (found.isEmpty()) return
-        selectedLink = found.first().referer
-        resolving = false
+        val seq = ++currentRequest
+        val pageUrl = found.first().referer
+        selectedLink = pageUrl
+        resolving = true
         resolveError = ""
-        choices = found
+        choices = emptyList()
+        candidateSources = found
+        sourceFailures = emptyList()
+        scope.launch {
+            val result = runCatching {
+                MediaCandidateResolver.inspect(found, pageUrl)
+            }
+            if (currentRequest == seq && selectedLink == pageUrl) {
+                resolving = false
+                result.onSuccess { info ->
+                    choices = info.choices
+                    sourceFailures = info.failures
+                    if (info.choices.isEmpty()) {
+                        resolveError = "沒有可直接下載的影片來源。" +
+                            if (info.failures.isNotEmpty())
+                                "\n" + info.failures.take(4).joinToString("\n")
+                            else " 請先播放影片再試。"
+                    }
+                }.onFailure { error ->
+                    resolveError = error.message ?: "來源驗證失敗"
+                }
+            }
+        }
     }
 
     LaunchedEffect(Unit) {
@@ -347,19 +377,37 @@ fun RootScreen(shared: String) {
                     Text("下載此影片", style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold)
                     Text(
-                        selectedLink.orEmpty(), maxLines = 2,
+                        selectedLink.orEmpty().substringBefore('?'), maxLines = 2,
                         overflow = TextOverflow.Ellipsis, color = Soft,
                         style = MaterialTheme.typography.bodySmall
                     )
+                    if (candidateSources.isNotEmpty()) {
+                        Text(
+                            if (resolving) "正在驗證來源與畫質…"
+                            else "已找到 ${choices.size} 種可下載格式，優先顯示 MP4。",
+                            color = Soft, style = MaterialTheme.typography.bodySmall
+                        )
+                    }
                     if (resolving) {
                         LinearProgressIndicator(Modifier.fillMaxWidth())
                         Text("正在取得畫質選項…", color = Soft)
                     }
                     if (resolveError.isNotBlank()) {
                         Text(resolveError, color = Color(0xFFFFBC92))
-                        OutlinedButton(onClick = { selectedLink?.let { showDownload(it) } }) {
-                            Text("重試")
+                        OutlinedButton(onClick = {
+                            if (candidateSources.isNotEmpty())
+                                showDetectedChoices(candidateSources)
+                            else selectedLink?.let { showDownload(it) }
+                        }) {
+                            Text("重新偵測")
                         }
+                    }
+                    if (choices.isNotEmpty() && sourceFailures.isNotEmpty()) {
+                        Text(
+                            "另有來源無法使用：" + sourceFailures.take(2).joinToString("；"),
+                            color = Color(0xFFFFBC92),
+                            style = MaterialTheme.typography.bodySmall
+                        )
                     }
                     choices.forEach { stream ->
                         Card(
@@ -381,8 +429,11 @@ fun RootScreen(shared: String) {
                             ) {
                                 Column(Modifier.weight(1f)) {
                                     Text(stream.label, color = Green, fontWeight = FontWeight.Bold)
-                                    Text(stream.title, maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis, color = Soft)
+                                    Text(
+                                        stream.detail.ifBlank { stream.title },
+                                        maxLines = 3, color = Soft,
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
                                 }
                                 Text("下載 ↓", color = Green)
                             }
