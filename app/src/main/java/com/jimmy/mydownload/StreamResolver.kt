@@ -39,8 +39,7 @@ object StreamResolver {
             }
         }
         try {
-            client.newCall(Request.Builder().url(url)
-                .header("User-Agent", USER_AGENT).build()).execute().use {
+            client.newCall(BrowserMediaRequest.builder(url, url).build()).execute().use {
                 if (!it.isSuccessful) throw IOException("網址回應 HTTP " + it.code)
                 val finalUrl = it.request.url.toString()
                 val type = it.header("Content-Type").orEmpty().lowercase()
@@ -126,10 +125,7 @@ object StreamResolver {
     }
 
     fun fetchText(url: String, referer: String): String {
-        val request = Request.Builder().url(url)
-            .header("User-Agent", USER_AGENT)
-            .header("Referer", referer)
-            .build()
+        val request = BrowserMediaRequest.builder(url, referer).build()
         client.newCall(request).execute().use {
             if (!it.isSuccessful) throw IOException("讀取串流失敗 HTTP " + it.code)
             return readText(it, 4_000_000)
