@@ -13,7 +13,8 @@ data class StreamChoice(
     val label: String,
     val url: String,
     val kind: String,
-    val referer: String
+    val referer: String,
+    val detail: String = ""
 )
 
 object StreamResolver {
