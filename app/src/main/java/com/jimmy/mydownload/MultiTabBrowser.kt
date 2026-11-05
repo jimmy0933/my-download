@@ -245,6 +245,7 @@ fun MultiTabBrowser(
         fun updateUrl(url: String) {
             if (!BrowserAddress.isWebUrl(url) && url != BrowserAddress.BLANK_TAB) return
             if (tab.url != url) {
+                val previousWasX = BrowserVideoDiscovery.isXPage(tab.url)
                 tab.url = url
                 if (tab.id == activeId) {
                     scanResults = VideoPositions()
@@ -253,8 +254,7 @@ fun MultiTabBrowser(
                 // X uses in-page navigation and may reuse a cached player
                 // after changing the post URL. Keep recently observed media
                 // requests within the same site so detection still works.
-                if (!(BrowserVideoDiscovery.isXPage(tab.url) &&
-                        BrowserVideoDiscovery.isXPage(url))) {
+                if (!previousWasX || !BrowserVideoDiscovery.isXPage(url)) {
                     tab.mediaSources.clear()
                 }
                 saveSession()
