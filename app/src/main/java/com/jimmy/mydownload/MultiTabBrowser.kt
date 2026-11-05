@@ -748,6 +748,53 @@ fun MultiTabBrowser(
                     }
                 }
             }
+            // Native download badges beside each visible HTML5 video. These
+            // don't modify the site's DOM or intercept taps outside the badge.
+            if (visible && viewportWidth > 0 && videoElements.viewportWidth > 0f) {
+                val ratio = viewportWidth.toFloat() / videoElements.viewportWidth
+                val badgeWidth = with(density) { 37.dp.roundToPx() }
+                val badgeHeight = with(density) { 35.dp.roundToPx() }
+                val margin = with(density) { 7.dp.roundToPx() }
+                videoElements.videos.forEach { video ->
+                    val x = (video.right * ratio - badgeWidth - margin).roundToInt()
+                        .coerceIn(0, (viewportWidth - badgeWidth).coerceAtLeast(0))
+                    val y = (video.top * ratio + margin).roundToInt()
+                    if (y >= 0 && y + badgeHeight <= viewportHeight) {
+                        Box(
+                            Modifier.offset { IntOffset(x, y) }
+                                .size(37.dp, 35.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color(0xEA27DBB3))
+                                .clickable { offerDetectedVideo(video) },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                Icons.Default.Download,
+                                contentDescription = "偵測並下載這部影片",
+                                tint = BrowserNavy,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                    }
+                }
+            }
+            // X can change its player implementation. Always provide a visible
+            // manual discovery entrance, even if video tags are not exposed.
+            if (visible && BrowserVideoDiscovery.isXPage(selected.url) &&
+                videoElements.videos.isEmpty()) {
+                Button(
+                    onClick = { offerDetectedVideo() },
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(10.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = BrowserGreen, contentColor = BrowserNavy
+                    )
+                ) {
+                    Icon(Icons.Default.Download, contentDescription = null,
+                        modifier = Modifier.size(19.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("偵測影片", fontSize = 13.sp)
+                }
+            }
             val direct = selected.url
             if (Av01BrowserLinks.isVideoLink(direct) ||
                 (BrowserAddress.isWebUrl(direct) &&
