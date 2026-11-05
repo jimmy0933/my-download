@@ -421,12 +421,14 @@ fun MultiTabBrowser(
     fun offerDetectedVideo(video: VisibleVideo? = null) {
         val page = selected.url
         val title = selected.title.ifBlank { BrowserAddress.displayName(page) }
+        val webUserAgent = currentWebView()?.settings?.userAgentString.orEmpty()
         val fromPlayer = video?.url?.takeIf { BrowserVideoDiscovery.kind(it) != null }
         if (fromPlayer != null) {
             val kind = BrowserVideoDiscovery.kind(fromPlayer) ?: "mp4"
             currentDetectedVideos(listOf(StreamChoice(
                 title, if (kind == "mp4") "MP4" else "HLS",
-                fromPlayer, kind, page
+                fromPlayer, kind, page,
+                MediaCandidateResolver.group(fromPlayer), webUserAgent
             )))
             return
         }
@@ -459,7 +461,7 @@ fun MultiTabBrowser(
                     val kind = BrowserVideoDiscovery.kind(url) ?: "mp4"
                     StreamChoice(
                         title, kind.uppercase(), url, kind, page,
-                        MediaCandidateResolver.group(url)
+                        MediaCandidateResolver.group(url), webUserAgent
                     )
                 })
             }
