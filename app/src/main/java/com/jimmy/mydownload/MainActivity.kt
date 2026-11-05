@@ -313,6 +313,10 @@ fun RootScreen(shared: String) {
                                     )
                                     Text(item.status + " · " + item.progress + "%",
                                         color = Soft, style = MaterialTheme.typography.bodySmall)
+                                    if (item.status == "完成" && item.bytes > 0L) {
+                                        Text("已儲存 " + Mp4Ranges.label(item.bytes),
+                                            color = Soft, style = MaterialTheme.typography.bodySmall)
+                                    }
                                     if (item.error.isNotBlank()) {
                                         Text(item.error, color = Color(0xFFFFBC92),
                                             style = MaterialTheme.typography.bodySmall)
