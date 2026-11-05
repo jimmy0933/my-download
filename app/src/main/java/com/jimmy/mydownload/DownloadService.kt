@@ -177,77 +177,165 @@ class DownloadService : Service() {
 
     private suspend fun downloadMp4(item: DownloadRecord) {
         val partial = tempFile(item.id)
-        // If bytes were already completely downloaded and only writing into the
-        // selected SAF folder failed, do not download the whole MP4 again.
         if ((item.readyToFinalize || item.status == "待儲存") &&
             partial.isFile && partial.length() > 0L) {
+            verifyMp4Downloaded(partial)
             finish(item, partial, "mp4", "video/mp4")
             return
         }
-        var current = partial.takeIf { it.exists() }?.length() ?: 0L
-        progress(item, "連線中", 0, current)
-        for (attempt in 0..1) {
+
+        var current = if (partial.isFile) partial.length() else 0L
+        val isXMedia = runCatching {
+            val host = URL(item.url).host.lowercase()
+            host == "video.twimg.com"
+        }.getOrDefault(false)
+        progress(item, "正在連線影片來源", 0, current)
+
+        // X's CDN may serve 206 chunks even if a request asked for the remaining
+        // file. Keep requesting the next range until Content-Range says all
+        // bytes have arrived. Other servers may return a complete HTTP 200.
+        var lastTotal: Long? = null
+        for (requestNumber in 0 until 1024) {
             coroutineContext.ensureActive()
-            val request = BrowserMediaRequest.builder(item.url, item.referer)
-                .apply { if (current > 0L) header("Range", "bytes=" + current + "-") }
-                .build()
+            val request = BrowserMediaRequest.builder(item.url, item.referer, item.userAgent)
+                .apply {
+                    if (current > 0L || isXMedia) {
+                        header("Range", "bytes=" + current + "-")
+                    }
+                }.build()
+
             var restart = false
+            var finished = false
             StreamResolver.client.newCall(request).execute().use { response ->
-                if (response.code == 416 && current > 0L) {
-                    restart = true
+                if (response.code == 416) {
+                    val total = Mp4Ranges.totalFor416(response.header("Content-Range"))
+                    if (total != null && total == current && partial.isFile) {
+                        verifyMp4Downloaded(partial)
+                        finished = true
+                    } else {
+                        restart = true
+                    }
                 } else {
                     if (response.code != 200 && response.code != 206) {
-                        throw IOException("MP4 HTTP " + response.code)
+                        val detail = if (response.code == 401 || response.code == 403)
+                            "（X 影片可能已過期或站方不允許直接下載，請回到貼文播放後重新偵測）"
+                        else ""
+                        throw IOException("MP4 來源 HTTP " + response.code + detail)
                     }
-                    val append = response.code == 206 && current > 0L
-                    if (append) {
-                        val header = response.header("Content-Range").orEmpty()
-                        val start = Regex("""bytes\s+(\d+)-""")
-                            .find(header)?.groupValues?.get(1)?.toLongOrNull()
-                        if (start != current) throw IOException("MP4 續傳位置不一致")
-                    } else {
-                        current = 0L
+                    val mime = response.header("Content-Type").orEmpty().lowercase()
+                    if (mime.contains("text/html") || mime.contains("application/json")) {
+                        throw IOException("下載網址回傳網頁而不是 MP4 影片")
                     }
-                    val body = response.body ?: throw IOException("空白影片回應")
-                    val expected = body.contentLength().takeIf { it >= 0 }?.plus(current) ?: -1L
+                    val range = if (response.code == 206)
+                        Mp4Ranges.parse(response.header("Content-Range")) else null
+                    if (response.code == 206 && range == null) {
+                        throw IOException("影片伺服器沒有提供完整的 Content-Range，無法確保下載完整")
+                    }
+                    if (range != null && range.start != current) {
+                        throw IOException("影片伺服器的續傳位置不一致：" +
+                            range.start + " / " + current)
+                    }
+                    val append = current > 0L && response.code == 206
+                    if (!append) current = 0L
+                    val body = response.body ?: throw IOException("影片伺服器回傳空白內容")
+                    val total = Mp4Ranges.totalForResponse(
+                        response.code,
+                        response.header("Content-Range"),
+                        body.contentLength().takeIf { it > 0L }
+                    )
+                    lastTotal = total
                     var updated = 0L
+                    var fetched = 0L
                     FileOutputStream(partial, append).use { output ->
                         body.byteStream().use { input ->
-                            val bytes = ByteArray(65536)
+                            val buffer = ByteArray(65536)
                             while (true) {
                                 coroutineContext.ensureActive()
-                                val n = input.read(bytes)
-                                if (n < 0) break
-                                output.write(bytes, 0, n)
-                                current += n
+                                val count = input.read(buffer)
+                                if (count < 0) break
+                                output.write(buffer, 0, count)
+                                current += count
+                                fetched += count
                                 val now = SystemClock.elapsedRealtime()
-                                if (now - updated > 500) {
+                                if (now - updated > 400L) {
                                     updated = now
-                                    val percent = if (expected > 0L)
-                                        ((current * 94) / expected).toInt().coerceIn(0, 94) else 0
-                                    progress(item, "下載中", percent, current)
+                                    val percent = if (total != null && total > 0L)
+                                        (current * 93L / total).toInt().coerceIn(0, 93) else 0
+                                    progress(
+                                        item,
+                                        "下載中 " + (current / 1024L) + " KB" +
+                                            if (total != null) " / " + (total / 1024L) + " KB"
+                                            else "",
+                                        percent, current
+                                    )
                                 }
                             }
                         }
                     }
-                    if (expected > 0 && current != expected) {
-                        throw IOException("MP4 下載不完整：" + current + "/" + expected)
+                    if (fetched <= 0L) throw IOException("來源未回傳任何 MP4 影片資料")
+                    if (range != null) {
+                        if (fetched != range.length) {
+                            throw IOException("MP4 分段資料不完整：" +
+                                fetched + " / " + range.length)
+                        }
+                        if (total != null && current > total) {
+                            throw IOException("MP4 接收資料超過影片總大小")
+                        }
+                        if (total != null && current == total) {
+                            finished = true
+                        } else if (fetched < 1024L) {
+                            throw IOException("伺服器只回傳 " + fetched +
+                                " bytes，無法取得完整影片")
+                        }
+                    } else {
+                        if (total != null && current != total) {
+                            throw IOException("MP4 下載不完整：" + current + " / " + total)
+                        }
+                        finished = true
                     }
-                    if (partial.length() <= 0L) throw IOException("影片檔案為空")
-                    DownloadStore.patch(this, item.id) {
-                        it.copy(readyToFinalize = true, status = "待儲存",
-                            bytes = partial.length())
-                    }
-                    finish(item, partial, "mp4", "video/mp4")
-                    return
                 }
             }
+
             if (restart) {
                 partial.delete()
                 current = 0L
+                if (requestNumber > 0) throw IOException("來源不接受續傳，請重新偵測影片")
+                continue
+            }
+            if (finished) {
+                verifyMp4Downloaded(partial)
+                DownloadStore.patch(this, item.id) {
+                    it.copy(readyToFinalize = true, status = "待儲存",
+                        bytes = partial.length(), progress = 94)
+                }
+                finish(item, partial, "mp4", "video/mp4")
+                return
             }
         }
-        throw IOException("來源不接受續傳，請重新加入下載")
+        throw IOException("影片分段下載次數過多，已保存 " +
+            (partial.length() / 1024L) + " KB" +
+            (lastTotal?.let { " / " + (it / 1024L) + " KB" } ?: "") +
+            "，可以按「繼續」再下載")
+    }
+
+    private fun verifyMp4Downloaded(partial: File) {
+        if (!partial.isFile || partial.length() < 16L) {
+            throw IOException("來源只回傳少量資料，沒有取得完整 MP4")
+        }
+        val header = ByteArray(12)
+        partial.inputStream().use { input ->
+            var bytes = 0
+            while (bytes < header.size) {
+                val count = input.read(header, bytes, header.size - bytes)
+                if (count < 0) break
+                bytes += count
+            }
+            if (bytes < 12) throw IOException("無法讀取 MP4 標頭")
+        }
+        val atom = String(header, 4, 4, Charsets.US_ASCII)
+        if (atom !in setOf("ftyp", "styp", "moov", "free")) {
+            throw IOException("下載來源不是可辨識的 MP4，請返回 X 重新偵測影片")
+        }
     }
 
     private data class Segments(val list: List<String>, val fragmented: Boolean)
