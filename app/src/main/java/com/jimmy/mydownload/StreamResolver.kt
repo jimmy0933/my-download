@@ -14,7 +14,8 @@ data class StreamChoice(
     val url: String,
     val kind: String,
     val referer: String,
-    val detail: String = ""
+    val detail: String = "",
+    val userAgent: String = ""
 )
 
 object StreamResolver {
@@ -124,8 +125,8 @@ object StreamResolver {
         return listOf(StreamChoice(title, "HLS 原始畫質", baseUrl, "hls", referer))
     }
 
-    fun fetchText(url: String, referer: String): String {
-        val request = BrowserMediaRequest.builder(url, referer).build()
+    fun fetchText(url: String, referer: String, userAgent: String = ""): String {
+        val request = BrowserMediaRequest.builder(url, referer, userAgent).build()
         client.newCall(request).execute().use {
             if (!it.isSuccessful) throw IOException("讀取串流失敗 HTTP " + it.code)
             return readText(it, 4_000_000)
