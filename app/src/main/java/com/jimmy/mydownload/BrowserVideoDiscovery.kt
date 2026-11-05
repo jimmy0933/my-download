@@ -31,12 +31,10 @@ object BrowserVideoDiscovery {
         val uri = URI(url)
         if (!uri.scheme.equals("https", true) || uri.host.isNullOrBlank() ||
             uri.userInfo != null) return@runCatching null
-        when (uri.path.orEmpty().lowercase().substringAfterLast('/')) {
-            else -> when {
-                uri.path.orEmpty().lowercase().endsWith(".mp4") -> "mp4"
-                uri.path.orEmpty().lowercase().endsWith(".m3u8") -> "hls"
-                else -> null
-            }
+        when {
+            uri.path.orEmpty().lowercase().endsWith(".mp4") -> "mp4"
+            uri.path.orEmpty().lowercase().endsWith(".m3u8") -> "hls"
+            else -> null
         }
     }.getOrNull()
 
@@ -57,6 +55,25 @@ object BrowserVideoDiscovery {
             }
         })
     }.getOrDefault(VisibleVideos())
+
+    fun decodeResourceList(raw: String): List<String> = runCatching {
+        val data = JSONArray(JSONArray("[" + raw + "]").getString(0))
+        buildList {
+            for (i in 0 until minOf(30, data.length())) {
+                val address = data.optString(i)
+                if (kind(address) != null && address !in this) add(address)
+            }
+        }
+    }.getOrDefault(emptyList())
+
+    // Media players may use blob: URLs for <video>. These entries only expose
+    // already-loaded network media resources, without making new API calls.
+    val RESOURCE_SCAN_SCRIPT = """
+(() => JSON.stringify(performance.getEntriesByType('resource')
+  .map(entry => entry.name)
+  .filter(url => /^https:\/\//.test(url) && /\.(?:mp4|m3u8)(?:[?#]|$)/i.test(url))
+  .slice(-30)))()
+""".trimIndent()
 
     val SCAN_SCRIPT = """
 (() => {
