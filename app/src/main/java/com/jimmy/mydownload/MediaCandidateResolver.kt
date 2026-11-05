@@ -48,17 +48,12 @@ object MediaCandidateResolver {
         else "影片 ID …" + id.takeLast(7)
     }
 
-    private fun sizeLabel(size: Long?): String {
-        if (size == null || size <= 0) return "大小未知"
-        return if (size >= 1024L * 1024L) String.format(
-            java.util.Locale.US, "%.1f MB", size.toDouble() / (1024 * 1024)
-        ) else (size / 1024L).toString() + " KB"
-    }
-
     private fun totalSize(response: Response): Long? =
-        Regex("""/(\d+)$""").find(response.header("Content-Range").orEmpty())
-            ?.groupValues?.get(1)?.toLongOrNull()
-            ?: response.body?.contentLength()?.takeIf { it > 0L }
+        Mp4Ranges.totalForResponse(
+            response.code,
+            response.header("Content-Range"),
+            response.body?.contentLength()?.takeIf { it > 0L }
+        )
 
     private fun playlist(response: Response): String {
         val input = response.body?.byteStream() ?: throw IOException("播放清單為空")
@@ -100,10 +95,16 @@ object MediaCandidateResolver {
                         if (mime.contains("text/html") || mime.contains("application/json"))
                             throw IOException("回傳網頁而非影片")
                         if (kind == "mp4") {
+                            // Range probe is only one byte. Never report that
+                            // one byte as the complete movie size.
+                            if (response.code == 206 &&
+                                Mp4Ranges.parse(response.header("Content-Range")) == null) {
+                                throw IOException("影片伺服器未回傳可驗證的 Content-Range")
+                            }
                             val quality = resolution(url) ?: "畫質未知"
                             choices += StreamChoice(
                                 title, "$quality · MP4", url, "mp4", referer,
-                                "MP4 · $quality · " + sizeLabel(totalSize(response)) + " · $group"
+                                "MP4 · $quality · " + Mp4Ranges.label(totalSize(response)) + " · $group"
                             )
                         } else {
                             val text = playlist(response)
