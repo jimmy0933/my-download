@@ -107,6 +107,13 @@ object MediaCandidateResolver {
                                 Mp4Ranges.parse(response.header("Content-Range")) == null) {
                                 throw IOException("影片伺服器未回傳可驗證的 Content-Range")
                             }
+                            val size = totalSize(response)
+                            if (!Mp4Ranges.isPlausibleVideoSize(size)) {
+                                throw IOException(
+                                    "來源只有 " + Mp4Ranges.label(size) +
+                                    "，可能是影片初始化片段而非完整 MP4；請改選 HLS"
+                                )
+                            }
                             val quality = resolution(url) ?: "畫質未知"
                             choices += StreamChoice(
                                 title, "$quality · MP4", url, "mp4", referer,
