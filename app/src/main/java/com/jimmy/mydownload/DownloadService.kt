@@ -372,6 +372,7 @@ class DownloadService : Service() {
         }
         val segments = mutableListOf<String>()
         var fragmented = false
+        var mediaSegments = 0
         for (line in text.lines().map(String::trim)) {
             if (line.startsWith("#EXT-X-MAP:", true)) {
                 val init = Regex("""URI="([^"]+)"""").find(line)?.groupValues?.get(1)
@@ -379,11 +380,14 @@ class DownloadService : Service() {
                 segments += absolute(init)
                 fragmented = true
             } else if (line.isNotBlank() && !line.startsWith("#")) {
+                mediaSegments++
                 segments += absolute(line)
                 if (line.substringBefore('?').endsWith(".m4s", true)) fragmented = true
             }
         }
-        if (segments.isEmpty()) throw IOException("播放清單沒有片段")
+        if (mediaSegments == 0) {
+            throw IOException("HLS 只有初始化資料，沒有實際的影片片段")
+        }
         if (segments.size > 20000) throw IOException("影片片段數量過多")
         return Segments(segments, fragmented)
     }
@@ -489,6 +493,8 @@ class DownloadService : Service() {
     private suspend fun finalizeHls(item: DownloadRecord, partial: File, fragmented: Boolean) {
         coroutineContext.ensureActive()
         if (!item.autoRepairMp4) {
+            // Do not call an initialization-only fMP4 or TS a completed movie.
+            verifyMp4(partial)
             val ext = if (fragmented) "mp4" else "ts"
             val mime = if (fragmented) "video/mp4" else "video/mp2t"
             finish(
@@ -516,11 +522,13 @@ class DownloadService : Service() {
         }
         coroutineContext.ensureActive()
         if (indexed) {
+            verifyMp4(mp4)
             finish(item, mp4, "mp4", "video/mp4")
             partial.delete()
             mp4.delete()
         } else {
             mp4.delete()
+            verifyMp4(partial)
             val extension = if (fragmented) "mp4" else "ts"
             val kind = if (fragmented) "video/mp4" else "video/mp2t"
             val note = "MP4 整理無法完成，已保留原始串流。" +
@@ -537,7 +545,7 @@ class DownloadService : Service() {
         val uri = saveVideo(item, file, ext, mime)
         DownloadStore.patch(this, item.id) {
             it.copy(status = "完成", progress = 100, uri = uri,
-                error = note, bytes = 0L, checkpoint = 0,
+                error = note, bytes = file.length(), checkpoint = 0,
                 readyToFinalize = false, savedExtension = ext)
         }
         file.delete()
