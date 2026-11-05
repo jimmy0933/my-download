@@ -9,6 +9,13 @@ data class Mp4Range(val start: Long, val end: Long, val total: Long?) {
 }
 
 object Mp4Ranges {
+    // Tiny X MP4 responses can contain only ftyp/moov initialization data
+    // without any video frames. Never present these as complete movies.
+    const val MIN_PLAUSIBLE_MP4_BYTES = 16L * 1024L
+
+    fun isPlausibleVideoSize(size: Long?): Boolean =
+        size == null || size >= MIN_PLAUSIBLE_MP4_BYTES
+
     private val RANGE = Regex("""(?i)bytes\s+(\d+)-(\d+)/(\d+|\*)""")
     private val UNSATISFIABLE = Regex("""(?i)bytes\s+\*/(\d+)""")
 
