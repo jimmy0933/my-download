@@ -513,20 +513,31 @@ fun MultiTabBrowser(
     LaunchedEffect(selected.id, selected.url) {
         addressInput = if (selected.url == BrowserAddress.BLANK_TAB) "" else selected.url
         scanResults = VideoPositions()
+        videoElements = VisibleVideos()
     }
 
     LaunchedEffect(visible, selected.id) {
         while (visible) {
             val browser = currentWebView()
-            if (browser != null && Av01BrowserLinks.isSiteLink(selected.url) &&
-                !Av01BrowserLinks.isVideoLink(selected.url) && viewportWidth > 0
-            ) {
+            if (browser != null && selected.url != BrowserAddress.BLANK_TAB &&
+                viewportWidth > 0) {
                 val checkedId = selected.id
-                browser.evaluateJavascript(AV01_TILE_SCAN) { result ->
-                    if (activeId == checkedId) scanResults = decodeVideoPositions(result)
+                if (Av01BrowserLinks.isSiteLink(selected.url) &&
+                    !Av01BrowserLinks.isVideoLink(selected.url)) {
+                    browser.evaluateJavascript(AV01_TILE_SCAN) { result ->
+                        if (activeId == checkedId) scanResults = decodeVideoPositions(result)
+                    }
+                } else scanResults = VideoPositions()
+                browser.evaluateJavascript(BrowserVideoDiscovery.SCAN_SCRIPT) { result ->
+                    if (activeId == checkedId) {
+                        videoElements = BrowserVideoDiscovery.decode(result)
+                    }
                 }
-            } else scanResults = VideoPositions()
-            delay(800L)
+            } else {
+                scanResults = VideoPositions()
+                videoElements = VisibleVideos()
+            }
+            delay(950L)
         }
     }
 
