@@ -371,7 +371,9 @@ fun RootScreen(shared: String) {
                 containerColor = Panel
             ) {
                 Column(
-                    Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, bottom = 30.dp),
+                    Modifier.fillMaxWidth().heightIn(max = 640.dp)
+                        .verticalScroll(androidx.compose.foundation.rememberScrollState())
+                        .padding(start = 20.dp, end = 20.dp, bottom = 30.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Text("下載此影片", style = MaterialTheme.typography.titleLarge,
@@ -400,6 +402,17 @@ fun RootScreen(shared: String) {
                             else selectedLink?.let { showDownload(it) }
                         }) {
                             Text("重新偵測")
+                        }
+                    }
+                    if (candidateSources.isNotEmpty() && choices.isNotEmpty()) {
+                        val groups = choices.map { MediaCandidateResolver.group(it.url) }.distinct()
+                        if (groups.size > 1) {
+                            Text(
+                                "本頁偵測到不同影片（" + groups.size +
+                                    " 組），請依每筆來源的影片 ID 和解析度選擇。",
+                                color = Color(0xFFFFCB83),
+                                style = MaterialTheme.typography.bodySmall
+                            )
                         }
                     }
                     if (choices.isNotEmpty() && sourceFailures.isNotEmpty()) {
