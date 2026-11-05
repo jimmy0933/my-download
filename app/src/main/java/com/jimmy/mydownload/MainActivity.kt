@@ -136,6 +136,14 @@ fun RootScreen(shared: String) {
         }
     }
 
+    fun showDetectedChoices(found: List<StreamChoice>) {
+        if (found.isEmpty()) return
+        selectedLink = found.first().referer
+        resolving = false
+        resolveError = ""
+        choices = found
+    }
+
     LaunchedEffect(Unit) {
         while (true) {
             downloads = DownloadStore.read(context)
@@ -153,7 +161,9 @@ fun RootScreen(shared: String) {
             containerColor = Navy,
             snackbarHost = { SnackbarHost(snackbar) },
             bottomBar = {
-                NavigationBar(containerColor = Panel) {
+                // Browsing uses a single compact toolbar; keep download/settings
+                // navigation in the overflow menu rather than shrinking the web page.
+                if (tab != 0) NavigationBar(containerColor = Panel) {
                     NavigationBarItem(
                         selected = tab == 0, onClick = { tab = 0 },
                         icon = { Icon(Icons.Default.Language, null) }, label = { Text("瀏覽網站") }
@@ -175,6 +185,8 @@ fun RootScreen(shared: String) {
                     adBlockEnabled = adsBlocked,
                     modifier = if (tab == 0) Modifier.fillMaxSize() else Modifier.size(0.dp),
                     onDownload = { showDownload(it) },
+                    onDetectedVideos = { showDetectedChoices(it) },
+                    onDownloads = { tab = 1 },
                     onSettings = { tab = 2 }
                 )
                 if (tab == 1) {
