@@ -415,6 +415,13 @@ fun RootScreen(shared: String) {
                     )
                     if (candidateSources.isNotEmpty()) {
                         Text(
+                            "影片檔名：" + StreamResolver.safeTitle(candidateSources.first().title),
+                            color = Green,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Text(
                             if (resolving) "正在驗證來源與畫質…"
                             else "已找到 ${choices.size} 種可下載格式，優先顯示 MP4。",
                             color = Soft, style = MaterialTheme.typography.bodySmall
