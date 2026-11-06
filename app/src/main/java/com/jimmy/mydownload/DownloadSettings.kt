@@ -15,6 +15,21 @@ data class XDisplayOptions(
     val hideBottomNavigation: Boolean = false
 )
 
+/**
+ * Normalized viewport position. Fractions keep the floating download button in
+ * the same relative place when the device rotates or the window size changes.
+ */
+data class FloatingDownloadPosition(
+    val xFraction: Float = 1f,
+    val yFraction: Float = 1f
+) {
+    fun movedBy(dx: Float, dy: Float, availableWidth: Int, availableHeight: Int) =
+        FloatingDownloadPosition(
+            (xFraction + if (availableWidth > 0) dx / availableWidth else 0f).coerceIn(0f, 1f),
+            (yFraction + if (availableHeight > 0) dy / availableHeight else 0f).coerceIn(0f, 1f)
+        )
+}
+
 object DownloadSettings {
     private const val PREF = "download_settings"
     private const val FOLDER = "destination_tree"
@@ -25,6 +40,8 @@ object DownloadSettings {
     private const val X_HIDE_VIEWS = "x_hide_views"
     private const val X_HIDE_SHARE = "x_hide_share"
     private const val X_HIDE_BOTTOM = "x_hide_bottom_navigation"
+    private const val FLOAT_BUTTON_X = "floating_download_x"
+    private const val FLOAT_BUTTON_Y = "floating_download_y"
 
     fun folder(context: Context): String =
         context.getSharedPreferences(PREF, Context.MODE_PRIVATE).getString(FOLDER, "").orEmpty()
@@ -104,6 +121,22 @@ object DownloadSettings {
             .putBoolean(X_HIDE_VIEWS, options.hideViews)
             .putBoolean(X_HIDE_SHARE, options.hideShare)
             .putBoolean(X_HIDE_BOTTOM, options.hideBottomNavigation)
+            .apply()
+    }
+
+    fun floatingDownloadPosition(context: Context): FloatingDownloadPosition {
+        val prefs = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+        fun normalized(key: String): Float {
+            val fraction = prefs.getFloat(key, 1f)
+            return if (fraction.isFinite()) fraction.coerceIn(0f, 1f) else 1f
+        }
+        return FloatingDownloadPosition(normalized(FLOAT_BUTTON_X), normalized(FLOAT_BUTTON_Y))
+    }
+
+    fun setFloatingDownloadPosition(context: Context, position: FloatingDownloadPosition) {
+        context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit()
+            .putFloat(FLOAT_BUTTON_X, position.xFraction.coerceIn(0f, 1f))
+            .putFloat(FLOAT_BUTTON_Y, position.yFraction.coerceIn(0f, 1f))
             .apply()
     }
 
