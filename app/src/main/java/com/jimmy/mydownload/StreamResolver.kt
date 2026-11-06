@@ -159,5 +159,5 @@ object StreamResolver {
         .substringBeforeLast('.').ifBlank { "影片" }
 
     fun safeTitle(title: String): String =
-        title.replace(Regex("""[\\/:*?"<>|]"""), "_").take(90).ifBlank { "影片" }
+        VideoTitle.cleanText(title).ifBlank { "影片" }
 }
