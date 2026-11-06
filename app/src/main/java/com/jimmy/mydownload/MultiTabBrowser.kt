@@ -453,57 +453,111 @@ private val X_VIDEO_FULLSCREEN_SCRIPT = """
   if (!/^(?:www\.)?(?:x\.com|twitter\.com)$/.test(location.hostname)) return 'not-x';
   const requested = __ENABLED__;
   const state = window.__mydownloadVideoFullscreen ||
-    (window.__mydownloadVideoFullscreen = {player:null,video:null,playerStyle:null,videoStyle:null});
+    (window.__mydownloadVideoFullscreen = {
+      enabled: false, path: location.pathname,
+      player: null, video: null, playerStyle: null, videoStyle: null,
+      sync: null, listenersAdded: false
+    });
+
   const restore = () => {
     if (state.player) {
       if (state.playerStyle === null) state.player.removeAttribute('style');
-      else state.player.setAttribute('style',state.playerStyle);
+      else state.player.setAttribute('style', state.playerStyle);
       state.player.removeAttribute('data-mydownload-fullscreen');
     }
     if (state.video) {
       if (state.videoStyle === null) state.video.removeAttribute('style');
-      else state.video.setAttribute('style',state.videoStyle);
+      else state.video.setAttribute('style', state.videoStyle);
     }
     state.player = null; state.video = null;
+    state.playerStyle = null; state.videoStyle = null;
   };
-  if (!requested) {restore(); return 'exited';}
-  const videos = Array.from(document.querySelectorAll('video')).filter(v => {
-    const r = v.getBoundingClientRect();
-    return r.width > 80 && r.height > 60 && r.bottom > 0 && r.top < innerHeight;
-  });
-  videos.sort((a,b) => {
-    const x=a.getBoundingClientRect(), y=b.getBoundingClientRect();
-    return y.width*y.height-x.width*x.height;
-  });
-  const video = videos[0];
-  if (!video) {restore(); return 'no-video';}
+  if (!requested) {
+    state.enabled = false;
+    restore();
+    return 'exited';
+  }
+  state.enabled = true;
+
+  // When X moves to another post, release the previous fixed player BEFORE
+  // choosing the next. Otherwise the previous player always looks visible and
+  // the new video stays at its off-screen carousel position.
+  if (state.path !== location.pathname) {
+    restore();
+    state.path = location.pathname;
+  }
+
+  const candidates = Array.from(document.querySelectorAll('video')).map(video => {
+    const rect = video.getBoundingClientRect();
+    const visible = rect.width >= 80 && rect.height >= 60 &&
+      rect.right > 0 && rect.left < innerWidth &&
+      rect.bottom > 0 && rect.top < innerHeight;
+    const playing = video.readyState >= 2 && !video.paused && !video.ended;
+    return {video, rect, visible, playing};
+  }).filter(item => item.visible || item.playing);
+
+  // Prefer the active playing video to offscreen/preloaded videos. X reuses
+  // DOM nodes, and some swipes do not change the page URL.
+  candidates.sort((a,b) =>
+    Number(b.playing) - Number(a.playing) ||
+    Number(b.visible) - Number(a.visible) ||
+    Math.abs((a.rect.top+a.rect.bottom)/2 - innerHeight/2) -
+      Math.abs((b.rect.top+b.rect.bottom)/2 - innerHeight/2)
+  );
+  const video = candidates[0]?.video;
+  if (!video) {
+    // Keep fullscreen enabled through the short loading gap between videos.
+    // The periodic browser scan will bind the next video without a reload.
+    return 'waiting';
+  }
   const player = video.closest('[data-testid="videoPlayer"]') ||
     video.closest('[data-testid="videoComponent"]') ||
     video.parentElement;
-  if (!player) {restore(); return 'no-player';}
+  if (!player) return 'waiting';
+
   if (state.player !== player || state.video !== video) {
     restore();
-    state.player = player;
-    state.video = video;
+    state.player = player; state.video = video;
     state.playerStyle = player.getAttribute('style');
     state.videoStyle = video.getAttribute('style');
   }
-  player.setAttribute('data-mydownload-fullscreen','true');
-  const important = (element,key,value) => element.style.setProperty(key,value,'important');
-  important(player,'position','fixed');
-  important(player,'top','0');
-  important(player,'left','0');
-  important(player,'right','0');
-  important(player,'bottom','0');
-  important(player,'width','100vw');
-  important(player,'height','100dvh');
-  important(player,'z-index','2147483640');
-  important(player,'background-color','#000');
-  important(player,'overflow','hidden');
-  important(video,'width','100%');
-  important(video,'height','100%');
-  important(video,'max-height','100%');
-  important(video,'object-fit','contain');
+  player.setAttribute('data-mydownload-fullscreen', 'true');
+  const important = (element, key, value) =>
+    element.style.setProperty(key, value, 'important');
+  important(player, 'position', 'fixed');
+  important(player, 'inset', '0');
+  important(player, 'top', '0');
+  important(player, 'left', '0');
+  important(player, 'width', '100vw');
+  important(player, 'height', '100dvh');
+  important(player, 'margin', '0');
+  important(player, 'transform', 'none');
+  important(player, 'translate', 'none');
+  important(player, 'z-index', '2147483640');
+  important(player, 'background-color', '#000');
+  important(player, 'overflow', 'hidden');
+  important(video, 'width', '100%');
+  important(video, 'height', '100%');
+  important(video, 'max-height', '100%');
+  important(video, 'object-fit', 'contain');
+
+  // When X starts another video inside the same viewer, schedule a rebind.
+  // Installing once prevents accumulating listeners on the site's SPA.
+  state.sync = () => {
+    if (state.enabled) requestAnimationFrame(() => {
+      // Calling the same idempotent script neither loads nor seeks the page.
+      if (state.enabled) window.__mydownloadVideoFullscreenApply?.();
+    });
+  };
+  if (!state.listenersAdded) {
+    state.listenersAdded = true;
+    document.addEventListener('playing', e => {
+      if (e.target?.tagName === 'VIDEO') state.sync?.();
+    }, true);
+    document.addEventListener('loadedmetadata', e => {
+      if (e.target?.tagName === 'VIDEO') state.sync?.();
+    }, true);
+  }
   return 'fullscreen';
 })()
 """.trimIndent()
