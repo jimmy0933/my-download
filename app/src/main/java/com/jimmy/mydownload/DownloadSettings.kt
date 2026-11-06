@@ -60,6 +60,7 @@ object DownloadSettings {
     private const val X_HIDE_BOTTOM_SHARE = "x_hide_bottom_share"
     private const val FLOAT_BUTTON_X = "floating_download_x"
     private const val FLOAT_BUTTON_Y = "floating_download_y"
+    private const val FLOAT_BUTTON_OPACITY = "floating_download_opacity"
 
     fun folder(context: Context): String =
         context.getSharedPreferences(PREF, Context.MODE_PRIVATE).getString(FOLDER, "").orEmpty()
@@ -167,6 +168,17 @@ object DownloadSettings {
             return if (fraction.isFinite()) fraction.coerceIn(0f, 1f) else 1f
         }
         return FloatingDownloadPosition(normalized(FLOAT_BUTTON_X), normalized(FLOAT_BUTTON_Y))
+    }
+
+    /** Applies to all video download overlays, not just X. */
+    fun floatingButtonOpacityPercent(context: Context): Int =
+        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+            .getInt(FLOAT_BUTTON_OPACITY, 85).coerceIn(20, 100)
+
+    fun setFloatingButtonOpacityPercent(context: Context, percent: Int) {
+        context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit()
+            .putInt(FLOAT_BUTTON_OPACITY, percent.coerceIn(20, 100))
+            .apply()
     }
 
     fun setFloatingDownloadPosition(context: Context, position: FloatingDownloadPosition) {
