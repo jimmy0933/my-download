@@ -21,6 +21,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
+import kotlin.math.roundToInt
 
 @Composable
 private fun XVisibilitySetting(
@@ -190,6 +191,36 @@ fun DownloadSettingsScreen(
                     color = Color(0xFFB4C8D5), style = MaterialTheme.typography.bodySmall
                 )
                 HorizontalDivider(color = Color(0xFF304458))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("X 文字大小", style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                    Text("${xDisplayOptions.fontSizePercent}%", color = Color(0xFF27DBB3),
+                        style = MaterialTheme.typography.titleMedium)
+                }
+                Slider(
+                    value = xDisplayOptions.fontSizePercent.toFloat(),
+                    onValueChange = { amount ->
+                        onXDisplayChange(
+                            xDisplayOptions.copy(
+                                fontSizePercent = ((amount / 10f).roundToInt() * 10)
+                                    .coerceIn(80, 160)
+                            )
+                        )
+                    },
+                    valueRange = 80f..160f, steps = 7
+                )
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("較小 80%", color = Color(0xFF9CAFC0),
+                        style = MaterialTheme.typography.bodySmall)
+                    TextButton(onClick = {
+                        onXDisplayChange(xDisplayOptions.copy(fontSizePercent = 100))
+                    }) { Text("恢復 100%") }
+                    Text("較大 160%", color = Color(0xFF9CAFC0),
+                        style = MaterialTheme.typography.bodySmall)
+                }
+                Text("僅調整 X 網頁文字，不改變 App 選單大小。變更後返回網頁即可套用。",
+                    color = Color(0xFF9CAFC0), style = MaterialTheme.typography.bodySmall)
+                HorizontalDivider(color = Color(0xFF304458))
                 XVisibilitySetting(
                     title = "隱藏回覆按鈕",
                     description = "隱藏貼文底下的回覆圖示及數字，不會刪除回覆內容。",
@@ -232,14 +263,67 @@ fun DownloadSettingsScreen(
                     }
                 )
                 HorizontalDivider(color = Color(0xFF304458))
+                Text("底部導覽列", style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold)
                 XVisibilitySetting(
-                    title = "隱藏 X 底部導覽列",
-                    description = "隱藏手機版最下方的首頁、搜尋、通知、訊息列；App 自己的工具列不受影響。",
+                    title = "隱藏整排底部導覽列",
+                    description = "一次隱藏整排；以下個別選項會保留，重新顯示時仍有效。",
                     hidden = xDisplayOptions.hideBottomNavigation,
                     onHiddenChange = {
                         onXDisplayChange(xDisplayOptions.copy(hideBottomNavigation = it))
                     }
                 )
+                HorizontalDivider(color = Color(0xFF304458))
+                XVisibilitySetting(
+                    title = "隱藏 Home／首頁",
+                    description = "只隱藏底部首頁按鈕。",
+                    hidden = xDisplayOptions.hideBottomHome,
+                    onHiddenChange = {
+                        onXDisplayChange(xDisplayOptions.copy(hideBottomHome = it))
+                    }
+                )
+                XVisibilitySetting(
+                    title = "隱藏搜尋",
+                    description = "只隱藏底部搜尋／Explore 按鈕。",
+                    hidden = xDisplayOptions.hideBottomSearch,
+                    onHiddenChange = {
+                        onXDisplayChange(xDisplayOptions.copy(hideBottomSearch = it))
+                    }
+                )
+                XVisibilitySetting(
+                    title = "隱藏 Grok",
+                    description = "只隱藏底部 Grok 按鈕。",
+                    hidden = xDisplayOptions.hideBottomGrok,
+                    onHiddenChange = {
+                        onXDisplayChange(xDisplayOptions.copy(hideBottomGrok = it))
+                    }
+                )
+                XVisibilitySetting(
+                    title = "隱藏聊天",
+                    description = "只隱藏底部聊天／訊息按鈕。",
+                    hidden = xDisplayOptions.hideBottomChat,
+                    onHiddenChange = {
+                        onXDisplayChange(xDisplayOptions.copy(hideBottomChat = it))
+                    }
+                )
+                XVisibilitySetting(
+                    title = "隱藏通知",
+                    description = "只隱藏底部通知按鈕。",
+                    hidden = xDisplayOptions.hideBottomNotifications,
+                    onHiddenChange = {
+                        onXDisplayChange(xDisplayOptions.copy(hideBottomNotifications = it))
+                    }
+                )
+                XVisibilitySetting(
+                    title = "隱藏底部分享",
+                    description = "只隱藏底部工具列／媒體檢視器的分享按鈕，不影響下載鈕。",
+                    hidden = xDisplayOptions.hideBottomShare,
+                    onHiddenChange = {
+                        onXDisplayChange(xDisplayOptions.copy(hideBottomShare = it))
+                    }
+                )
+                Text("部分 X 版本可能調整按鈕位置；此功能僅隱藏畫面元素，不影響帳號設定。",
+                    color = Color(0xFF9CAFC0), style = MaterialTheme.typography.bodySmall)
             }
         }
 
