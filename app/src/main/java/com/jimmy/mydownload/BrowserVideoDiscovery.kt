@@ -131,6 +131,4 @@ object BrowserVideoDiscovery {
   return JSON.stringify(found);
 })()
 """.trimIndent()
-})()
-""".trimIndent()
 }
