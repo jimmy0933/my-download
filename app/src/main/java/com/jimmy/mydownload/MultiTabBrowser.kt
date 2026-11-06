@@ -439,7 +439,7 @@ private val X_MEDIA_PINCH_ZOOM_SCRIPT = """
       e.preventDefault(); e.stopPropagation(); reset();
     }
   }, {capture:true});
-  window.__mydownloadMediaZoom = {ensure};
+  window.__mydownloadMediaZoom = {ensure, isZoomed: () => state.scale > 1.01};
 })()
 """.trimIndent()
 
@@ -604,7 +604,7 @@ private val X_VIDEO_DOUBLE_TAP_SEEK_SCRIPT = """
   };
   document.addEventListener('touchstart', e => {
     if (e.touches.length !== 1 || !viewer() ||
-        !validTarget(e) || window.__mydownloadMediaZoom?.scale > 1) {
+        !validTarget(e) || window.__mydownloadMediaZoom?.isZoomed?.()) {
       tapStart = null;
       if (e.touches.length > 1) lastTap = null;
       return;
