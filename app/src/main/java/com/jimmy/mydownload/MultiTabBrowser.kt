@@ -1048,8 +1048,8 @@ fun MultiTabBrowser(
                 !Av01BrowserLinks.isVideoLink(selected.url) && viewportWidth > 0
             ) {
                 val scale = viewportWidth.toFloat() / scanResults.width
-                val width = with(density) { 72.dp.roundToPx() }
-                val height = with(density) { 31.dp.roundToPx() }
+                val width = with(density) { 36.dp.roundToPx() }
+                val height = with(density) { 34.dp.roundToPx() }
                 val margin = with(density) { 4.dp.roundToPx() }
                 scanResults.tiles.forEach { tile ->
                     val x = (tile.right * scale - width - margin).roundToInt()
@@ -1058,14 +1058,18 @@ fun MultiTabBrowser(
                     if (y >= 0 && y + height < viewportHeight) {
                         Box(
                             Modifier.offset { IntOffset(x, y) }
-                                .size(width = 72.dp, height = 31.dp)
+                                .size(width = 36.dp, height = 34.dp)
                                 .clip(RoundedCornerShape(10.dp))
                                 .background(Color(0xEA27DBB3))
+                                .alpha(downloadButtonOpacityPercent.coerceIn(20, 100) / 100f)
                                 .clickable { currentDownload(tile.url) },
                             contentAlignment = Alignment.Center
                         ) {
-                            Text("↓ 下載", fontSize = 12.sp, fontWeight = FontWeight.Bold,
-                                color = BrowserNavy)
+                            Icon(
+                                Icons.Default.Download,
+                                contentDescription = "下載影片",
+                                tint = BrowserNavy, modifier = Modifier.size(21.dp)
+                            )
                         }
                     }
                 }
@@ -1088,6 +1092,7 @@ fun MultiTabBrowser(
                                 .size(37.dp, 35.dp)
                                 .clip(RoundedCornerShape(12.dp))
                                 .background(Color(0xEA27DBB3))
+                                .alpha(downloadButtonOpacityPercent.coerceIn(20, 100) / 100f)
                                 .clickable { offerDetectedVideo(video) },
                             contentAlignment = Alignment.Center
                         ) {
@@ -1113,13 +1118,9 @@ fun MultiTabBrowser(
                 (VideoTitle.isXStatus(direct) || videoElements.videos.isEmpty())
             if (visible && (directDownload || showXDownload)) {
                 MovableDownloadButton(
-                    text = when {
-                        directDownload -> "下載影片"
-                        VideoTitle.isXStatus(direct) -> "下載此影片"
-                        else -> "偵測影片"
-                    },
                     containerWidth = viewportWidth,
                     containerHeight = viewportHeight,
+                    opacityPercent = downloadButtonOpacityPercent,
                     position = floatingDownloadPosition,
                     onMove = { floatingDownloadPosition = it },
                     onMoveFinished = { position ->
@@ -1405,9 +1406,9 @@ fun MultiTabBrowser(
                     )
                     if (BrowserVideoDiscovery.isXPage(selected.url)) {
                         MovableDownloadButton(
-                            text = "下載影片",
                             containerWidth = fullscreenWidth,
                             containerHeight = fullscreenHeight,
+                            opacityPercent = downloadButtonOpacityPercent,
                             position = floatingDownloadPosition,
                             onMove = { floatingDownloadPosition = it },
                             onMoveFinished = { position ->
