@@ -107,13 +107,27 @@ jobs:
             exit 1
           fi
 
+          # GitHub sometimes returns HTTP 500 while replacing an existing asset.
+          # Retry the release API operation without rebuilding the signed APK.
+          retry_gh() {
+            local attempt
+            for attempt in 1 2 3 4 5; do
+              if "$@"; then return 0; fi
+              if [[ "$attempt" -eq 5 ]]; then
+                echo "::error::GitHub Release operation failed after 5 attempts."
+                return 1
+              fi
+              sleep "$((attempt * 3))"
+            done
+          }
+
           if gh release view latest >/dev/null 2>&1; then
-            gh release upload latest my-download-latest.apk --clobber
-            gh release edit latest --target "$GITHUB_SHA" \
+            retry_gh gh release upload latest my-download-latest.apk --clobber
+            retry_gh gh release edit latest --target "$GITHUB_SHA" \
               --title "My Download 最新 APK" \
               --notes "$(printf 'Commit: %s\nSigner SHA256: %s\nversionCode: %s\n' "$GITHUB_SHA" "$SIGNER_SHA256" "$GITHUB_RUN_NUMBER")"
           else
-            gh release create latest my-download-latest.apk \
+            retry_gh gh release create latest my-download-latest.apk \
               --target "$GITHUB_SHA" \
               --title "My Download 最新 APK" \
               --notes "$(printf 'Commit: %s\nSigner SHA256: %s\nversionCode: %s\n' "$GITHUB_SHA" "$SIGNER_SHA256" "$GITHUB_RUN_NUMBER")" \
