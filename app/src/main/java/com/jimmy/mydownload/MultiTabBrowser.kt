@@ -94,6 +94,26 @@ private data class VideoPosition(val url: String, val right: Float, val top: Flo
 private data class VideoPositions(val width: Float = 1f, val tiles: List<VideoPosition> = emptyList())
 
 /** Read-only scan: no event handlers or HTML in the site are modified. */
+private val X_HIDE_COMPOSE_BUTTON_SCRIPT = """
+(() => {
+  // Cosmetic change, scoped to X. Leave replies, reposts and video controls intact.
+  if (!/^(?:www\\.)?(?:x\\.com|twitter\\.com)$/.test(location.hostname)) return;
+  if (document.getElementById('mydownload-hide-x-compose')) return;
+  const style = document.createElement('style');
+  style.id = 'mydownload-hide-x-compose';
+  style.textContent = \`
+    [data-testid="SideNav_NewTweet_Button"],
+    [data-testid="FloatingActionButton"],
+    [data-testid="FloatingActionButtonContainer"],
+    a[href="/compose/post"], a[href^="/compose/post?"],
+    a[href="/compose/tweet"], a[href^="/compose/tweet?"] {
+      display: none !important;
+    }
+  \`;
+  (document.head || document.documentElement).appendChild(style);
+})()
+""".trimIndent()
+
 private val AV01_TILE_SCAN = """
 (() => {
   let result = {width: innerWidth, tiles: []};
@@ -376,6 +396,11 @@ fun MultiTabBrowser(
                 }
                 if (url != null && tab.restoreTarget == url) {
                     restoreScroll(web, tab, url)
+                }
+                // X is a dynamic site: persistent CSS also hides compose buttons
+                // added later by React, without removing other interactive elements.
+                if (url != null && BrowserVideoDiscovery.isXPage(url)) {
+                    view?.evaluateJavascript(X_HIDE_COMPOSE_BUTTON_SCRIPT, null)
                 }
                 saveSession()
             }
@@ -760,16 +785,23 @@ fun MultiTabBrowser(
                         leadingIcon = { Icon(Icons.Default.History, null) }
                     )
                     DropdownMenuItem(
-                        text = { Text("下載管理") },
-                        onClick = { showBrowserMenu = false; currentDownloads() },
-                        leadingIcon = { Icon(Icons.Default.Download, null) }
-                    )
-                    DropdownMenuItem(
                         text = { Text("設定") },
                         onClick = { showBrowserMenu = false; currentSettings() },
                         leadingIcon = { Icon(Icons.Default.Settings, null) }
                     )
                 }
+            }
+            // Rightmost shortcut; adding it also gives the URL field more compact width.
+            IconButton(
+                onClick = { currentDownloads() },
+                modifier = Modifier.size(39.dp)
+            ) {
+                Icon(
+                    Icons.Default.Download,
+                    contentDescription = "下載管理",
+                    tint = BrowserGreen,
+                    modifier = Modifier.size(23.dp)
+                )
             }
         }
         if (selected.progress in 1..99) {
