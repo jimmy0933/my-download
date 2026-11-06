@@ -541,23 +541,6 @@ private val X_VIDEO_FULLSCREEN_SCRIPT = """
   important(video, 'max-height', '100%');
   important(video, 'object-fit', 'contain');
 
-  // When X starts another video inside the same viewer, schedule a rebind.
-  // Installing once prevents accumulating listeners on the site's SPA.
-  state.sync = () => {
-    if (state.enabled) requestAnimationFrame(() => {
-      // Calling the same idempotent script neither loads nor seeks the page.
-      if (state.enabled) window.__mydownloadVideoFullscreenApply?.();
-    });
-  };
-  if (!state.listenersAdded) {
-    state.listenersAdded = true;
-    document.addEventListener('playing', e => {
-      if (e.target?.tagName === 'VIDEO') state.sync?.();
-    }, true);
-    document.addEventListener('loadedmetadata', e => {
-      if (e.target?.tagName === 'VIDEO') state.sync?.();
-    }, true);
-  }
   return 'fullscreen';
 })()
 """.trimIndent()
@@ -1160,6 +1143,11 @@ fun MultiTabBrowser(
                 if (BrowserVideoDiscovery.isXPage(selected.url)) {
                     browser.evaluateJavascript(xDisplayScript(currentXOptions), null)
                     browser.evaluateJavascript(X_MEDIA_PINCH_ZOOM_SCRIPT, null)
+                    // X updates video nodes during vertical swipes without a reload.
+                    // Re-select and recenter the playing video on each scan.
+                    if (browserVideoFullscreen) {
+                        browser.evaluateJavascript(xVideoFullscreenScript(true), null)
+                    }
                 }
                 browser.evaluateJavascript(BrowserVideoDiscovery.SCAN_SCRIPT) { result ->
                     if (activeId == checkedId) {
