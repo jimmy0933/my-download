@@ -19,6 +19,7 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -51,6 +52,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -74,6 +76,71 @@ import kotlin.math.roundToInt
 private val BrowserNavy = Color(0xFF091421)
 private val BrowserPanel = Color(0xFF142333)
 private val BrowserGreen = Color(0xFF27DBB3)
+
+
+/**
+ * A movable overlay, not an element inside the site's HTML. A tap still downloads,
+ * while an intentional drag updates the saved normalized position.
+ */
+@Composable
+private fun BoxScope.MovableDownloadButton(
+    text: String,
+    containerWidth: Int,
+    containerHeight: Int,
+    position: FloatingDownloadPosition,
+    onMove: (FloatingDownloadPosition) -> Unit,
+    onMoveFinished: (FloatingDownloadPosition) -> Unit,
+    onClick: () -> Unit
+) {
+    val density = LocalDensity.current
+    val edge = with(density) { 10.dp.roundToPx() }
+    var buttonWidth by remember { mutableIntStateOf(0) }
+    var buttonHeight by remember { mutableIntStateOf(0) }
+    val availableX = (containerWidth - buttonWidth - edge * 2).coerceAtLeast(0)
+    val availableY = (containerHeight - buttonHeight - edge * 2).coerceAtLeast(0)
+    val posX = edge + (position.xFraction.coerceIn(0f, 1f) * availableX).roundToInt()
+    val posY = edge + (position.yFraction.coerceIn(0f, 1f) * availableY).roundToInt()
+    val latestPosition by rememberUpdatedState(position)
+    val latestOnMove by rememberUpdatedState(onMove)
+    val latestOnFinished by rememberUpdatedState(onMoveFinished)
+
+    Box(
+        modifier = Modifier.align(Alignment.TopStart)
+            .offset { IntOffset(posX, posY) }
+            .onSizeChanged { size ->
+                buttonWidth = size.width
+                buttonHeight = size.height
+            }
+            .pointerInput(availableX, availableY) {
+                var dragPosition = latestPosition
+                detectDragGestures(
+                    onDragStart = { dragPosition = latestPosition },
+                    onDragEnd = { latestOnFinished(dragPosition) },
+                    onDragCancel = { latestOnFinished(dragPosition) }
+                ) { change, amount ->
+                    change.consume()
+                    dragPosition = dragPosition.movedBy(
+                        amount.x, amount.y, availableX, availableY
+                    )
+                    latestOnMove(dragPosition)
+                }
+            }
+    ) {
+        Button(
+            onClick = onClick,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = BrowserGreen, contentColor = BrowserNavy
+            ),
+            elevation = ButtonDefaults.buttonElevation(defaultElevation = 7.dp),
+            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
+        ) {
+            Icon(Icons.Default.Download, contentDescription = null,
+                modifier = Modifier.size(19.dp))
+            Spacer(Modifier.width(5.dp))
+            Text(text, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        }
+    }
+}
 
 private class TabViewState(record: BrowserTabRecord) {
     val id: String = record.id
@@ -208,6 +275,9 @@ fun MultiTabBrowser(
     val currentSettings by rememberUpdatedState(onSettings)
     val blockAds by rememberUpdatedState(adBlockEnabled)
     val currentXOptions by rememberUpdatedState(xDisplayOptions)
+    var floatingDownloadPosition by remember(context) {
+        mutableStateOf(DownloadSettings.floatingDownloadPosition(context))
+    }
 
     val session = remember(context) { BrowserStore.loadSession(context) }
     val tabs = remember(context) {
@@ -952,44 +1022,36 @@ fun MultiTabBrowser(
                     }
                 }
             }
-            // X can change its player implementation. Always provide a visible
-            // manual discovery entrance, even if video tags are not exposed.
-            if (visible && BrowserVideoDiscovery.isXPage(selected.url) &&
-                (VideoTitle.isXStatus(selected.url) || videoElements.videos.isEmpty())) {
-                Button(
-                    onClick = { offerDetectedVideo(videoElements.videos.firstOrNull()) },
-                    modifier = Modifier.align(Alignment.BottomEnd).padding(10.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = BrowserGreen, contentColor = BrowserNavy
-                    )
-                ) {
-                    Icon(Icons.Default.Download, contentDescription = null,
-                        modifier = Modifier.size(19.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text(
-                        if (VideoTitle.isXStatus(selected.url)) "下載此影片" else "偵測影片",
-                        fontSize = 13.sp
-                    )
-                }
-            }
+            // A single movable download shortcut is shared by X posts, X feed
+            // video discovery, AV01 detail pages and directly-opened video URLs.
             val direct = selected.url
-            if (Av01BrowserLinks.isVideoLink(direct) ||
+            val directDownload = Av01BrowserLinks.isVideoLink(direct) ||
                 (BrowserAddress.isWebUrl(direct) &&
                     direct.substringBefore('?').let {
                         it.endsWith(".mp4", true) || it.endsWith(".m3u8", true)
                     })
-            ) {
-                Button(
-                    onClick = { currentDownload(direct) },
-                    modifier = Modifier.align(Alignment.BottomEnd).padding(14.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = BrowserGreen, contentColor = BrowserNavy
-                    )
-                ) {
-                    Icon(Icons.Default.Download, null)
-                    Spacer(Modifier.width(5.dp))
-                    Text("下載影片")
-                }
+            val showXDownload = BrowserVideoDiscovery.isXPage(direct) &&
+                (VideoTitle.isXStatus(direct) || videoElements.videos.isEmpty())
+            if (visible && (directDownload || showXDownload)) {
+                MovableDownloadButton(
+                    text = when {
+                        directDownload -> "下載影片"
+                        VideoTitle.isXStatus(direct) -> "下載此影片"
+                        else -> "偵測影片"
+                    },
+                    containerWidth = viewportWidth,
+                    containerHeight = viewportHeight,
+                    position = floatingDownloadPosition,
+                    onMove = { floatingDownloadPosition = it },
+                    onMoveFinished = { position ->
+                        floatingDownloadPosition = position
+                        DownloadSettings.setFloatingDownloadPosition(context, position)
+                    },
+                    onClick = {
+                        if (directDownload) currentDownload(direct)
+                        else offerDetectedVideo(videoElements.videos.firstOrNull())
+                    }
+                )
             }
         }
     }
@@ -1243,7 +1305,12 @@ fun MultiTabBrowser(
         ) {
             val shown = fullscreenView
             if (shown != null) {
-                Box(Modifier.fillMaxSize().background(Color.Black)) {
+                var fullscreenWidth by remember { mutableIntStateOf(0) }
+                var fullscreenHeight by remember { mutableIntStateOf(0) }
+                Box(Modifier.fillMaxSize().background(Color.Black).onSizeChanged {
+                    fullscreenWidth = it.width
+                    fullscreenHeight = it.height
+                }) {
                     AndroidView(
                         modifier = Modifier.fillMaxSize(),
                         factory = {
@@ -1258,21 +1325,22 @@ fun MultiTabBrowser(
                         onRelease = { it.removeAllViews() }
                     )
                     if (BrowserVideoDiscovery.isXPage(selected.url)) {
-                        Button(
+                        MovableDownloadButton(
+                            text = "下載影片",
+                            containerWidth = fullscreenWidth,
+                            containerHeight = fullscreenHeight,
+                            position = floatingDownloadPosition,
+                            onMove = { floatingDownloadPosition = it },
+                            onMoveFinished = { position ->
+                                floatingDownloadPosition = position
+                                DownloadSettings.setFloatingDownloadPosition(context, position)
+                            },
                             onClick = {
                                 val currentVideo = videoElements.videos.firstOrNull()
                                 currentWebView()?.webChromeClient?.onHideCustomView()
                                 offerDetectedVideo(currentVideo)
-                            },
-                            modifier = Modifier.align(Alignment.TopEnd).padding(16.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = BrowserGreen, contentColor = BrowserNavy
-                            )
-                        ) {
-                            Icon(Icons.Default.Download, null)
-                            Spacer(Modifier.width(5.dp))
-                            Text("下載影片")
-                        }
+                            }
+                        )
                     }
                 }
             }
