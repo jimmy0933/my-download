@@ -241,8 +241,8 @@ private val X_DISPLAY_SCRIPT = """
   );
   // X's media page can be a full-screen route, not a role=dialog modal.
   // Detect the *visible seekbar* without touching player event handlers.
-  const mediaRoute = /\\/status\\/\\d+\\/(?:photo|video)\\/\\d+\\/?$/.test(location.pathname) ||
-    /^\\/i\\/status\\/\\d+\\/?$/.test(location.pathname);
+  const mediaRoute = /\/status\/\d+\/(?:photo|video)\/\d+\/?$/.test(location.pathname) ||
+    /^\/i\/status\/\d+\/?$/.test(location.pathname);
   const modal = !!document.querySelector('#layers [role="dialog"]:has(video,[data-testid="videoPlayer"])');
   const liveVideo = Array.from(document.querySelectorAll('video')).some(node => {
     const rect = node.getBoundingClientRect();
