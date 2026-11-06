@@ -202,6 +202,40 @@ private val X_DISPLAY_SCRIPT = """
     mediaDialog + ' h2',
     mediaDialog + ' [role="heading"]'
   );
+  // Mobile X uses AppTabBar anchors. Restrict these selectors to mobile
+  // navigation containers so post links and the desktop side menu remain.
+  const mobileBar = ':is([data-testid="BottomBar"],[data-testid="BottomNav"],' +
+    '[data-testid="AppTabBar"],nav[aria-label="Bottom navigation"],' +
+    'nav[aria-label="Bottom Navigation"],nav:has([data-testid^="AppTabBar_"]))';
+  const mobileButtons = [];
+  const hideInMobileBar = (enabled, matches) => {
+    if (enabled) matches.forEach(match => mobileButtons.push(mobileBar + ' ' + match));
+  };
+  hideInMobileBar(flags[7], [
+    'a[data-testid="AppTabBar_Home_Link"]', 'a[href="/home"]'
+  ]);
+  hideInMobileBar(flags[8], [
+    'a[data-testid="AppTabBar_Explore_Link"]', 'a[href="/explore"]', 'a[href^="/search"]'
+  ]);
+  hideInMobileBar(flags[9], [
+    'a[data-testid="AppTabBar_Grok_Link"]', 'a[href^="/i/grok"]', 'a[href^="/grok"]'
+  ]);
+  hideInMobileBar(flags[10], [
+    'a[data-testid="AppTabBar_DirectMessage_Link"]',
+    'a[data-testid="AppTabBar_Chat_Link"]',
+    'a[href^="/messages"]', 'a[href^="/i/chat"]', 'a[href^="/i/dm"]'
+  ]);
+  hideInMobileBar(flags[11], [
+    'a[data-testid="AppTabBar_Notifications_Link"]', 'a[href^="/notifications"]'
+  ]);
+  hideInMobileBar(flags[12], [
+    '[data-testid="share"]', 'button[aria-label="Share"]',
+    'button[aria-label="分享"]'
+  ]);
+  // Photo/video viewer share controls can appear outside AppTabBar.
+  if (flags[12]) selectors.push(
+    '#layers [role="dialog"]:has([data-testid="tweetPhoto"],video) [data-testid="share"]'
+  );
   const id = 'mydownload-x-display';
   let style = document.getElementById(id);
   if (!style) {
@@ -209,7 +243,10 @@ private val X_DISPLAY_SCRIPT = """
     style.id = id;
     (document.head || document.documentElement).appendChild(style);
   }
-  const css = selectors.join(',\n') + ' { display: none !important; }';
+  const css = selectors.join(',\n') + ' { display: none !important; }' +
+    (mobileButtons.length ?
+      '\n@media (max-width: 900px) { ' + mobileButtons.join(',\n') +
+      ' { display: none !important; } }' : '');
   if (style.textContent !== css) style.textContent = css;
 })()
 """.trimIndent()
@@ -218,7 +255,10 @@ private fun xDisplayScript(options: XDisplayOptions): String {
     val flags = listOf(
         options.hideReply, options.hideRepost, options.hideViews,
         options.hideShare, options.hideBottomNavigation,
-        options.hideMediaDescription, options.hideMediaTitle
+        options.hideMediaDescription, options.hideMediaTitle,
+        options.hideBottomHome, options.hideBottomSearch,
+        options.hideBottomGrok, options.hideBottomChat,
+        options.hideBottomNotifications, options.hideBottomShare
     ).joinToString(",") { it.toString() }
     return X_DISPLAY_SCRIPT.replace("__FLAGS__", flags)
 }
@@ -414,8 +454,14 @@ fun MultiTabBrowser(
         web.settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
         CookieManager.getInstance().setAcceptCookie(true)
         CookieManager.getInstance().setAcceptThirdPartyCookies(web, true)
+        web.settings.textZoom = if (BrowserVideoDiscovery.isXPage(tab.url))
+            currentXOptions.fontSizePercent.coerceIn(80, 160) else 100
 
         fun updateUrl(url: String) {
+            // X font-size setting follows SPA navigation and never affects other sites.
+            val textZoom = if (BrowserVideoDiscovery.isXPage(url))
+                currentXOptions.fontSizePercent.coerceIn(80, 160) else 100
+            if (web.settings.textZoom != textZoom) web.settings.textZoom = textZoom
             if (!BrowserAddress.isWebUrl(url) && url != BrowserAddress.BLANK_TAB) return
             if (tab.url != url) {
                 val previousWasX = BrowserVideoDiscovery.isXPage(tab.url)
@@ -757,8 +803,17 @@ fun MultiTabBrowser(
 
     // Settings return without reloading X: refresh the stylesheet immediately.
     LaunchedEffect(visible, selected.id, selected.url, xDisplayOptions) {
-        if (visible && BrowserVideoDiscovery.isXPage(selected.url)) {
-            currentWebView()?.evaluateJavascript(xDisplayScript(xDisplayOptions), null)
+        if (visible) {
+            currentWebView()?.let { browser ->
+                val textZoom = if (BrowserVideoDiscovery.isXPage(selected.url))
+                    xDisplayOptions.fontSizePercent.coerceIn(80, 160) else 100
+                if (browser.settings.textZoom != textZoom) {
+                    browser.settings.textZoom = textZoom
+                }
+                if (BrowserVideoDiscovery.isXPage(selected.url)) {
+                    browser.evaluateJavascript(xDisplayScript(xDisplayOptions), null)
+                }
+            }
         }
     }
 
