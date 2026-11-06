@@ -94,23 +94,55 @@ private data class VideoPosition(val url: String, val right: Float, val top: Flo
 private data class VideoPositions(val width: Float = 1f, val tiles: List<VideoPosition> = emptyList())
 
 /** Read-only scan: no event handlers or HTML in the site are modified. */
-private val X_HIDE_COMPOSE_BUTTON_SCRIPT = """
+private val X_DISPLAY_SCRIPT = """
 (() => {
-  // Cosmetic change, scoped to X. Leave replies, reposts and video controls intact.
+  // Only restyle X/Twitter. No network hooks or changes to post/media handlers.
   if (!/^(?:www\.)?(?:x\.com|twitter\.com)$/.test(location.hostname)) return;
-  if (document.getElementById('mydownload-hide-x-compose')) return;
-  const style = document.createElement('style');
-  style.id = 'mydownload-hide-x-compose';
-  style.textContent = [
+  const flags = [__FLAGS__];
+  const selectors = [
     '[data-testid="SideNav_NewTweet_Button"]',
     '[data-testid="FloatingActionButton"]',
     '[data-testid="FloatingActionButtonContainer"]',
+    '[data-testid="FloatingActionButtons_Tweet_Button"]',
     'a[href="/compose/post"]', 'a[href^="/compose/post?"]',
     'a[href="/compose/tweet"]', 'a[href^="/compose/tweet?"]'
-  ].join(', ') + ' { display: none !important; }';
-  (document.head || document.documentElement).appendChild(style);
+  ];
+  if (flags[0]) selectors.push('[data-testid="reply"]');
+  if (flags[1]) selectors.push('[data-testid="retweet"]', '[data-testid="unretweet"]');
+  if (flags[2]) selectors.push(
+    '[data-testid="tweet"] [data-testid="impressions"]',
+    '[data-testid="tweet"] [data-testid="analyticsButton"]',
+    '[data-testid="tweet"] [data-testid="analytics"]',
+    '[data-testid="tweet"] [data-testid="viewCount"]',
+    '[data-testid="tweet"] [role="group"] > div:has(> a[href$="/analytics"])',
+    '[aria-modal="true"] [role="group"] > div:has(> a[href$="/analytics"])',
+    '[data-testid="tweet"] a[href$="/analytics"]'
+  );
+  if (flags[3]) selectors.push('[data-testid="share"]');
+  if (flags[4]) selectors.push(
+    '#layers nav:has(a[href="/home"]):has(a[href^="/notifications"])',
+    '[data-testid="BottomBar"]',
+    'nav[aria-label="Bottom navigation"]'
+  );
+  const id = 'mydownload-x-display';
+  let style = document.getElementById(id);
+  if (!style) {
+    style = document.createElement('style');
+    style.id = id;
+    (document.head || document.documentElement).appendChild(style);
+  }
+  const css = selectors.join(',\n') + ' { display: none !important; }';
+  if (style.textContent !== css) style.textContent = css;
 })()
 """.trimIndent()
+
+private fun xDisplayScript(options: XDisplayOptions): String {
+    val flags = listOf(
+        options.hideReply, options.hideRepost, options.hideViews,
+        options.hideShare, options.hideBottomNavigation
+    ).joinToString(",") { it.toString() }
+    return X_DISPLAY_SCRIPT.replace("__FLAGS__", flags)
+}
 
 private val AV01_TILE_SCAN = """
 (() => {
@@ -161,6 +193,7 @@ private enum class BrowserLibrary { BOOKMARKS, HISTORY }
 fun MultiTabBrowser(
     visible: Boolean,
     adBlockEnabled: Boolean,
+    xDisplayOptions: XDisplayOptions,
     modifier: Modifier = Modifier,
     onDownload: (String) -> Unit,
     onDetectedVideos: (List<StreamChoice>) -> Unit,
@@ -174,6 +207,7 @@ fun MultiTabBrowser(
     val currentDownloads by rememberUpdatedState(onDownloads)
     val currentSettings by rememberUpdatedState(onSettings)
     val blockAds by rememberUpdatedState(adBlockEnabled)
+    val currentXOptions by rememberUpdatedState(xDisplayOptions)
 
     val session = remember(context) { BrowserStore.loadSession(context) }
     val tabs = remember(context) {
@@ -398,7 +432,7 @@ fun MultiTabBrowser(
                 // X is a dynamic site: persistent CSS also hides compose buttons
                 // added later by React, without removing other interactive elements.
                 if (url != null && BrowserVideoDiscovery.isXPage(url)) {
-                    view?.evaluateJavascript(X_HIDE_COMPOSE_BUTTON_SCRIPT, null)
+                    view?.evaluateJavascript(xDisplayScript(currentXOptions), null)
                 }
                 saveSession()
             }
@@ -635,6 +669,13 @@ fun MultiTabBrowser(
         videoElements = VisibleVideos()
     }
 
+    // Settings return without reloading X: refresh the stylesheet immediately.
+    LaunchedEffect(visible, selected.id, selected.url, xDisplayOptions) {
+        if (visible && BrowserVideoDiscovery.isXPage(selected.url)) {
+            currentWebView()?.evaluateJavascript(xDisplayScript(xDisplayOptions), null)
+        }
+    }
+
     LaunchedEffect(visible, selected.id) {
         while (visible) {
             val browser = currentWebView()
@@ -647,6 +688,11 @@ fun MultiTabBrowser(
                         if (activeId == checkedId) scanResults = decodeVideoPositions(result)
                     }
                 } else scanResults = VideoPositions()
+                // Dynamic X pages reuse the document while navigating posts.
+                // Reinstate CSS if React recreates its head or mobile navigation.
+                if (BrowserVideoDiscovery.isXPage(selected.url)) {
+                    browser.evaluateJavascript(xDisplayScript(currentXOptions), null)
+                }
                 browser.evaluateJavascript(BrowserVideoDiscovery.SCAN_SCRIPT) { result ->
                     if (activeId == checkedId) {
                         videoElements = BrowserVideoDiscovery.decode(result)
