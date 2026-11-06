@@ -83,6 +83,9 @@ private class TabViewState(record: BrowserTabRecord) {
     var canForward by mutableStateOf(false)
     var progress by mutableIntStateOf(100)
     var scrollY: Int = 0
+    val scrollByUrl = mutableMapOf<String, BrowserScrollPoint>()
+    var restoreTarget: String? = null
+    var restoreSequence: Int = 0
     val mediaSources = mutableStateListOf<String>()
     fun record() = BrowserTabRecord(id, url, title)
 }
@@ -189,7 +192,43 @@ fun MultiTabBrowser(
         BrowserStore.saveSession(context, tabs.map { it.record() }, activeId)
     }
 
+    fun captureScroll(web: WebView, tab: TabViewState) {
+        val page = tab.url
+        if (!BrowserAddress.isWebUrl(page) || tab.restoreTarget == page) return
+        val nativeY = web.scrollY.coerceAtLeast(0)
+        web.evaluateJavascript(BrowserScroll.CAPTURE_SCRIPT) { response ->
+            if (tab.url != page || tab.restoreTarget == page) return@evaluateJavascript
+            val point = BrowserScroll.decode(response, nativeY)
+            if (point.hasPosition() || tab.progress == 100) {
+                tab.scrollByUrl[page] = point
+                tab.scrollY = point.native
+            }
+        }
+    }
+
+    fun restoreScroll(web: WebView, tab: TabViewState, url: String) {
+        val point = tab.scrollByUrl[url] ?: return
+        val token = ++tab.restoreSequence
+        listOf(220L, 750L, 1700L).forEachIndexed { index, millis ->
+            web.postDelayed({
+                if (tab.restoreSequence != token || tab.url != url) return@postDelayed
+                if (web.url != url && web.url?.substringBefore('#') != url.substringBefore('#'))
+                    return@postDelayed
+                if (point.native > 0) web.scrollTo(0, point.native)
+                if (point.page > 0 || point.panel > 0) {
+                    web.evaluateJavascript(BrowserScroll.restoreScript(point), null)
+                }
+                if (index == 2 && tab.restoreTarget == url) tab.restoreTarget = null
+            }, millis)
+        }
+    }
+
     fun selectTab(tab: TabViewState) {
+        val oldTab = tabs.firstOrNull { it.id == activeId }
+        val oldWeb = webViews[activeId]
+        if (oldTab != null && oldWeb != null && oldTab.id != tab.id) {
+            captureScroll(oldWeb, oldTab)
+        }
         activeId = tab.id
         scanResults = VideoPositions()
         videoElements = VisibleVideos()
@@ -246,7 +285,17 @@ fun MultiTabBrowser(
             if (!BrowserAddress.isWebUrl(url) && url != BrowserAddress.BLANK_TAB) return
             if (tab.url != url) {
                 val previousWasX = BrowserVideoDiscovery.isXPage(tab.url)
+                val oldPage = tab.url
+                if (BrowserAddress.isWebUrl(oldPage) && tab.scrollY > 0) {
+                    val saved = tab.scrollByUrl[oldPage]
+                    if (saved == null || saved.native < tab.scrollY) {
+                        tab.scrollByUrl[oldPage] = (saved ?: BrowserScrollPoint())
+                            .copy(native = tab.scrollY)
+                    }
+                }
+                tab.scrollY = 0
                 tab.url = url
+                if (tab.restoreTarget == url) restoreScroll(web, tab, url)
                 if (tab.id == activeId) {
                     scanResults = VideoPositions()
                     videoElements = VisibleVideos()
@@ -325,9 +374,8 @@ fun MultiTabBrowser(
                 if (url != null && BrowserAddress.isWebUrl(url)) {
                     BrowserStore.recordVisit(context, url, tab.title)
                 }
-                if (tab.id == activeId && tab.scrollY > 0 && url != BrowserAddress.BLANK_TAB) {
-                    val previous = tab.scrollY
-                    web.postDelayed({ if (web.scrollY == 0) web.scrollTo(0, previous) }, 250)
+                if (url != null && tab.restoreTarget == url) {
+                    restoreScroll(web, tab, url)
                 }
                 saveSession()
             }
@@ -378,7 +426,15 @@ fun MultiTabBrowser(
             }
         }
 
-        web.setOnScrollChangeListener { _, _, y, _, _ -> tab.scrollY = y }
+        web.setOnScrollChangeListener { _, _, y, _, _ ->
+            if (tab.restoreTarget != tab.url) {
+                tab.scrollY = y.coerceAtLeast(0)
+                if (y > 0 && BrowserAddress.isWebUrl(tab.url)) {
+                    val existing = tab.scrollByUrl[tab.url] ?: BrowserScrollPoint()
+                    tab.scrollByUrl[tab.url] = existing.copy(native = y)
+                }
+            }
+        }
         web.setOnLongClickListener {
             val target = web.hitTestResult?.extra.orEmpty()
             if (Av01BrowserLinks.isVideoLink(target)) {
@@ -395,17 +451,33 @@ fun MultiTabBrowser(
                 Toast.makeText(context, "目前下載管理支援影片檔案", Toast.LENGTH_SHORT).show()
             }
         })
-        if (initialLoad) web.loadUrl(tab.url)
+        if (initialLoad) {
+            if (tab.scrollByUrl[tab.url]?.hasPosition() == true) tab.restoreTarget = tab.url
+            web.loadUrl(tab.url)
+        }
         return web
     }
 
     fun currentWebView(): WebView? = webViews[activeId]
+
+    fun goBackPreservingScroll() {
+        val web = currentWebView() ?: return
+        if (!web.canGoBack()) return
+        captureScroll(web, selected)
+        val list = web.copyBackForwardList()
+        val target = if (list.currentIndex > 0)
+            list.getItemAtIndex(list.currentIndex - 1)?.url else null
+        selected.restoreTarget = target?.takeIf { BrowserAddress.isWebUrl(it) }
+        web.goBack()  // Reuse WebView's history: never loadUrl() for Back.
+    }
 
     fun navigate(url: String) {
         if (url != BrowserAddress.BLANK_TAB && !BrowserAddress.isWebUrl(url)) {
             Toast.makeText(context, "請輸入有效的網站網址", Toast.LENGTH_SHORT).show()
             return
         }
+        currentWebView()?.let { captureScroll(it, selected) }
+        selected.restoreTarget = null
         selected.url = url
         selected.title = if (url == BrowserAddress.BLANK_TAB) "新分頁"
         else BrowserAddress.displayName(url)
@@ -420,7 +492,18 @@ fun MultiTabBrowser(
 
     fun offerDetectedVideo(video: VisibleVideo? = null) {
         val page = selected.url
-        val title = selected.title.ifBlank { BrowserAddress.displayName(page) }
+        val title = if (BrowserVideoDiscovery.isXPage(page)) {
+            VideoTitle.preferred(
+                video?.postText.orEmpty().ifBlank { videoElements.pageText },
+                selected.title,
+                video?.postUrl.orEmpty().ifBlank {
+                    videoElements.pagePostUrl.ifBlank { page }
+                },
+                video?.mediaId.orEmpty()
+            )
+        } else StreamResolver.safeTitle(
+            selected.title.ifBlank { BrowserAddress.displayName(page) }
+        )
         val webUserAgent = currentWebView()?.settings?.userAgentString.orEmpty()
         val fromPlayer = video?.url?.takeIf { BrowserVideoDiscovery.kind(it) != null }
         if (fromPlayer != null) {
@@ -510,7 +593,7 @@ fun MultiTabBrowser(
             active.onResume()
             // Only four expensive WebView instances remain resident. Old tabs
             // persist URL/title and reload lazily when opened again.
-            while (webViews.size > 4) {
+            while (webViews.size > 8) {
                 val victimId = webViews.keys.firstOrNull { it != selected.id } ?: break
                 val victim = webViews.remove(victimId) ?: break
                 (victim.parent as? ViewGroup)?.removeView(victim)
@@ -546,6 +629,7 @@ fun MultiTabBrowser(
                         videoElements = BrowserVideoDiscovery.decode(result)
                     }
                 }
+                captureScroll(browser, selected)
             } else {
                 scanResults = VideoPositions()
                 videoElements = VisibleVideos()
@@ -557,7 +641,7 @@ fun MultiTabBrowser(
     BackHandler(visible && (fullscreenView != null || selected.canBack)) {
         if (fullscreenView != null) {
             currentWebView()?.webChromeClient?.onHideCustomView()
-        } else currentWebView()?.goBack()
+        } else goBackPreservingScroll()
     }
 
     Column(modifier.background(BrowserNavy)) {
@@ -568,7 +652,7 @@ fun MultiTabBrowser(
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(
-                onClick = { currentWebView()?.goBack() },
+                onClick = { goBackPreservingScroll() },
                 enabled = selected.canBack,
                 modifier = Modifier.size(35.dp)
             ) {
@@ -763,7 +847,8 @@ fun MultiTabBrowser(
             }
             // Native download badges beside each visible HTML5 video. These
             // don't modify the site's DOM or intercept taps outside the badge.
-            if (visible && viewportWidth > 0 && videoElements.viewportWidth > 0f) {
+            if (visible && viewportWidth > 0 && videoElements.viewportWidth > 0f &&
+                !VideoTitle.isXStatus(selected.url)) {
                 val ratio = viewportWidth.toFloat() / videoElements.viewportWidth
                 val badgeWidth = with(density) { 37.dp.roundToPx() }
                 val badgeHeight = with(density) { 35.dp.roundToPx() }
@@ -794,9 +879,9 @@ fun MultiTabBrowser(
             // X can change its player implementation. Always provide a visible
             // manual discovery entrance, even if video tags are not exposed.
             if (visible && BrowserVideoDiscovery.isXPage(selected.url) &&
-                videoElements.videos.isEmpty()) {
+                (VideoTitle.isXStatus(selected.url) || videoElements.videos.isEmpty())) {
                 Button(
-                    onClick = { offerDetectedVideo() },
+                    onClick = { offerDetectedVideo(videoElements.videos.firstOrNull()) },
                     modifier = Modifier.align(Alignment.BottomEnd).padding(10.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = BrowserGreen, contentColor = BrowserNavy
@@ -805,7 +890,10 @@ fun MultiTabBrowser(
                     Icon(Icons.Default.Download, contentDescription = null,
                         modifier = Modifier.size(19.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("偵測影片", fontSize = 13.sp)
+                    Text(
+                        if (VideoTitle.isXStatus(selected.url)) "下載此影片" else "偵測影片",
+                        fontSize = 13.sp
+                    )
                 }
             }
             val direct = selected.url
