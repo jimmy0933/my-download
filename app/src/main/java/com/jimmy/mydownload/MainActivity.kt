@@ -128,6 +128,7 @@ fun RootScreen(shared: String) {
     val snackbar = remember { SnackbarHostState() }
     var tab by rememberSaveable { mutableIntStateOf(if (shared.isNotBlank()) 1 else 0) }
     var adsBlocked by remember { mutableStateOf(DownloadSettings.adBlockEnabled(context)) }
+    var xDisplayOptions by remember { mutableStateOf(DownloadSettings.xDisplayOptions(context)) }
     var manualUrl by rememberSaveable { mutableStateOf(shared) }
 
     var selectedLink by remember { mutableStateOf<String?>(null) }
@@ -229,6 +230,7 @@ fun RootScreen(shared: String) {
                 MultiTabBrowser(
                     visible = tab == 0,
                     adBlockEnabled = adsBlocked,
+                    xDisplayOptions = xDisplayOptions,
                     modifier = if (tab == 0) Modifier.fillMaxSize() else Modifier.size(0.dp),
                     onDownload = { showDownload(it) },
                     onDetectedVideos = { showDetectedChoices(it) },
@@ -389,6 +391,11 @@ fun RootScreen(shared: String) {
                         onBlockChange = {
                             adsBlocked = it
                             DownloadSettings.setAdBlockEnabled(context, it)
+                        },
+                        xDisplayOptions = xDisplayOptions,
+                        onXDisplayChange = { options ->
+                            xDisplayOptions = options
+                            DownloadSettings.setXDisplayOptions(context, options)
                         }
                     )
                 }
