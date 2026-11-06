@@ -191,6 +191,17 @@ private val X_DISPLAY_SCRIPT = """
     '[data-testid="BottomBar"]',
     'nav[aria-label="Bottom navigation"]'
   );
+  // Limit caption/title filtering to a media viewer dialog, never the feed.
+  // CSS survives React's in-place gallery swipes without rebuilding the WebView.
+  const mediaDialog = '#layers [role="dialog"]:has([data-testid="swipe-to-dismiss"],[data-testid="tweetPhoto"],[data-testid="videoPlayer"],video)';
+  if (flags[5]) selectors.push(
+    mediaDialog + ' [data-testid="tweetText"]'
+  );
+  if (flags[6]) selectors.push(
+    mediaDialog + ' h1',
+    mediaDialog + ' h2',
+    mediaDialog + ' [role="heading"]'
+  );
   const id = 'mydownload-x-display';
   let style = document.getElementById(id);
   if (!style) {
@@ -206,7 +217,8 @@ private val X_DISPLAY_SCRIPT = """
 private fun xDisplayScript(options: XDisplayOptions): String {
     val flags = listOf(
         options.hideReply, options.hideRepost, options.hideViews,
-        options.hideShare, options.hideBottomNavigation
+        options.hideShare, options.hideBottomNavigation,
+        options.hideMediaDescription, options.hideMediaTitle
     ).joinToString(",") { it.toString() }
     return X_DISPLAY_SCRIPT.replace("__FLAGS__", flags)
 }
@@ -408,6 +420,7 @@ fun MultiTabBrowser(
             if (tab.url != url) {
                 val previousWasX = BrowserVideoDiscovery.isXPage(tab.url)
                 val oldPage = tab.url
+                val gallerySwipe = XMediaNavigation.samePostViewer(oldPage, url)
                 if (BrowserAddress.isWebUrl(oldPage) && tab.scrollY > 0) {
                     val saved = tab.scrollByUrl[oldPage]
                     if (saved == null || saved.native < tab.scrollY) {
@@ -415,10 +428,12 @@ fun MultiTabBrowser(
                             .copy(native = tab.scrollY)
                     }
                 }
-                tab.scrollY = 0
+                if (!gallerySwipe) tab.scrollY = 0
                 tab.url = url
                 if (tab.restoreTarget == url) restoreScroll(web, tab, url)
-                if (tab.id == activeId) {
+                if (tab.id == activeId && !gallerySwipe) {
+                    // An X gallery swipe changes the URL but not the WebView/DOM.
+                    // Keep the current media rendered until the next scan completes.
                     scanResults = VideoPositions()
                     videoElements = VisibleVideos()
                 }
@@ -610,6 +625,7 @@ fun MultiTabBrowser(
         else BrowserAddress.displayName(url)
         selected.scrollY = 0
         scanResults = VideoPositions()
+        videoElements = VisibleVideos()
         saveSession()
         val browser = currentWebView()
         if (browser == null) {
@@ -734,9 +750,9 @@ fun MultiTabBrowser(
     }
 
     LaunchedEffect(selected.id, selected.url) {
+        // Keep the address bar in sync without clearing media on each gallery swipe.
+        // updateUrl() and selectTab() already reset the scan for real navigation.
         addressInput = if (selected.url == BrowserAddress.BLANK_TAB) "" else selected.url
-        scanResults = VideoPositions()
-        videoElements = VisibleVideos()
     }
 
     // Settings return without reloading X: refresh the stylesheet immediately.

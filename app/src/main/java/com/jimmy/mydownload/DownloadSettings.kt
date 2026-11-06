@@ -12,7 +12,9 @@ data class XDisplayOptions(
     val hideRepost: Boolean = false,
     val hideViews: Boolean = false,
     val hideShare: Boolean = false,
-    val hideBottomNavigation: Boolean = false
+    val hideBottomNavigation: Boolean = false,
+    val hideMediaDescription: Boolean = false,
+    val hideMediaTitle: Boolean = false
 )
 
 /**
@@ -40,6 +42,8 @@ object DownloadSettings {
     private const val X_HIDE_VIEWS = "x_hide_views"
     private const val X_HIDE_SHARE = "x_hide_share"
     private const val X_HIDE_BOTTOM = "x_hide_bottom_navigation"
+    private const val X_HIDE_MEDIA_DESCRIPTION = "x_hide_media_description"
+    private const val X_HIDE_MEDIA_TITLE = "x_hide_media_title"
     private const val FLOAT_BUTTON_X = "floating_download_x"
     private const val FLOAT_BUTTON_Y = "floating_download_y"
 
@@ -110,7 +114,9 @@ object DownloadSettings {
             hideRepost = prefs.getBoolean(X_HIDE_REPOST, false),
             hideViews = prefs.getBoolean(X_HIDE_VIEWS, false),
             hideShare = prefs.getBoolean(X_HIDE_SHARE, false),
-            hideBottomNavigation = prefs.getBoolean(X_HIDE_BOTTOM, false)
+            hideBottomNavigation = prefs.getBoolean(X_HIDE_BOTTOM, false),
+            hideMediaDescription = prefs.getBoolean(X_HIDE_MEDIA_DESCRIPTION, false),
+            hideMediaTitle = prefs.getBoolean(X_HIDE_MEDIA_TITLE, false)
         )
     }
 
@@ -121,6 +127,8 @@ object DownloadSettings {
             .putBoolean(X_HIDE_VIEWS, options.hideViews)
             .putBoolean(X_HIDE_SHARE, options.hideShare)
             .putBoolean(X_HIDE_BOTTOM, options.hideBottomNavigation)
+            .putBoolean(X_HIDE_MEDIA_DESCRIPTION, options.hideMediaDescription)
+            .putBoolean(X_HIDE_MEDIA_TITLE, options.hideMediaTitle)
             .apply()
     }
 

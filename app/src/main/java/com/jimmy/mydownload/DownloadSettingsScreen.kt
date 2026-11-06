@@ -216,6 +216,23 @@ fun DownloadSettingsScreen(
                 )
                 HorizontalDivider(color = Color(0xFF304458))
                 XVisibilitySetting(
+                    title = "觀看圖片／影片時隱藏文字說明",
+                    description = "只隱藏 X 媒體檢視器裡的貼文內文，其他貼文仍正常顯示。",
+                    hidden = xDisplayOptions.hideMediaDescription,
+                    onHiddenChange = {
+                        onXDisplayChange(xDisplayOptions.copy(hideMediaDescription = it))
+                    }
+                )
+                XVisibilitySetting(
+                    title = "觀看圖片／影片時隱藏標題",
+                    description = "只隱藏媒體檢視器中的標題，保留圖片、影片與關閉等操作。",
+                    hidden = xDisplayOptions.hideMediaTitle,
+                    onHiddenChange = {
+                        onXDisplayChange(xDisplayOptions.copy(hideMediaTitle = it))
+                    }
+                )
+                HorizontalDivider(color = Color(0xFF304458))
+                XVisibilitySetting(
                     title = "隱藏 X 底部導覽列",
                     description = "隱藏手機版最下方的首頁、搜尋、通知、訊息列；App 自己的工具列不受影響。",
                     hidden = xDisplayOptions.hideBottomNavigation,
