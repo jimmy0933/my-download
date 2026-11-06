@@ -1,6 +1,7 @@
 package com.jimmy.mydownload
 
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Message
@@ -41,6 +42,8 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Refresh
@@ -68,6 +71,9 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import kotlinx.coroutines.delay
 import org.json.JSONArray
 import org.json.JSONObject
@@ -437,6 +443,74 @@ private val X_MEDIA_PINCH_ZOOM_SCRIPT = """
 })()
 """.trimIndent()
 
+/**
+ * Fullscreen is a CSS presentation change of the live player's container.
+ * It never moves the <video> element, creates a WebView, or navigates away,
+ * so playback time and X's playback controls can continue uninterrupted.
+ */
+private val X_VIDEO_FULLSCREEN_SCRIPT = """
+(() => {
+  if (!/^(?:www\.)?(?:x\.com|twitter\.com)$/.test(location.hostname)) return 'not-x';
+  const requested = __ENABLED__;
+  const state = window.__mydownloadVideoFullscreen ||
+    (window.__mydownloadVideoFullscreen = {player:null,video:null,playerStyle:null,videoStyle:null});
+  const restore = () => {
+    if (state.player) {
+      if (state.playerStyle === null) state.player.removeAttribute('style');
+      else state.player.setAttribute('style',state.playerStyle);
+      state.player.removeAttribute('data-mydownload-fullscreen');
+    }
+    if (state.video) {
+      if (state.videoStyle === null) state.video.removeAttribute('style');
+      else state.video.setAttribute('style',state.videoStyle);
+    }
+    state.player = null; state.video = null;
+  };
+  if (!requested) {restore(); return 'exited';}
+  const videos = Array.from(document.querySelectorAll('video')).filter(v => {
+    const r = v.getBoundingClientRect();
+    return r.width > 80 && r.height > 60 && r.bottom > 0 && r.top < innerHeight;
+  });
+  videos.sort((a,b) => {
+    const x=a.getBoundingClientRect(), y=b.getBoundingClientRect();
+    return y.width*y.height-x.width*x.height;
+  });
+  const video = videos[0];
+  if (!video) {restore(); return 'no-video';}
+  const player = video.closest('[data-testid="videoPlayer"]') ||
+    video.closest('[data-testid="videoComponent"]') ||
+    video.parentElement;
+  if (!player) {restore(); return 'no-player';}
+  if (state.player !== player || state.video !== video) {
+    restore();
+    state.player = player;
+    state.video = video;
+    state.playerStyle = player.getAttribute('style');
+    state.videoStyle = video.getAttribute('style');
+  }
+  player.setAttribute('data-mydownload-fullscreen','true');
+  const important = (element,key,value) => element.style.setProperty(key,value,'important');
+  important(player,'position','fixed');
+  important(player,'top','0');
+  important(player,'left','0');
+  important(player,'right','0');
+  important(player,'bottom','0');
+  important(player,'width','100vw');
+  important(player,'height','100dvh');
+  important(player,'z-index','2147483640');
+  important(player,'background-color','#000');
+  important(player,'overflow','hidden');
+  important(video,'width','100%');
+  important(video,'height','100%');
+  important(video,'max-height','100%');
+  important(video,'object-fit','contain');
+  return 'fullscreen';
+})()
+""".trimIndent()
+
+private fun xVideoFullscreenScript(enabled: Boolean): String =
+    X_VIDEO_FULLSCREEN_SCRIPT.replace("__ENABLED__", enabled.toString())
+
 private val AV01_TILE_SCAN = """
 (() => {
   let result = {width: innerWidth, tiles: []};
@@ -496,6 +570,7 @@ fun MultiTabBrowser(
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
+    var browserVideoFullscreen by remember { mutableStateOf(false) }
     val currentDownload by rememberUpdatedState(onDownload)
     val currentDetectedVideos by rememberUpdatedState(onDetectedVideos)
     val currentDownloads by rememberUpdatedState(onDownloads)
@@ -514,6 +589,8 @@ fun MultiTabBrowser(
     }
     var activeId by remember(context) { mutableStateOf(session.activeId) }
     val selected = tabs.firstOrNull { it.id == activeId } ?: tabs.first()
+    // Explicit fullscreen state is per active browser page, not a new tab.
+    LaunchedEffect(selected.id) { browserVideoFullscreen = false }
     val host = remember(context) { FrameLayout(context) }
     // Access-order LRU. A maximum of four live WebViews prevents memory exhaustion.
     val webViews = remember(context) { LinkedHashMap<String, WebView>(16, 0.75f, true) }
@@ -828,6 +905,21 @@ fun MultiTabBrowser(
 
     fun currentWebView(): WebView? = webViews[activeId]
 
+    fun setVideoFullscreen(enabled: Boolean) {
+        if (browserVideoFullscreen == enabled) return
+        val web = currentWebView() ?: return
+        if (!BrowserVideoDiscovery.isXPage(selected.url)) return
+        if (enabled) {
+            web.evaluateJavascript(xVideoFullscreenScript(true)) { result ->
+                if (result == "\"fullscreen\"") browserVideoFullscreen = true
+                else Toast.makeText(context, "未偵測到可全螢幕播放的影片", Toast.LENGTH_SHORT).show()
+            }
+        } else {
+            browserVideoFullscreen = false
+            web.evaluateJavascript(xVideoFullscreenScript(false), null)
+        }
+    }
+
     fun goBackPreservingScroll() {
         val web = currentWebView() ?: return
         if (!web.canGoBack()) return
@@ -1029,16 +1121,43 @@ fun MultiTabBrowser(
         }
     }
 
-    BackHandler(visible && (fullscreenView != null || selected.canBack)) {
-        if (fullscreenView != null) {
-            currentWebView()?.webChromeClient?.onHideCustomView()
-        } else goBackPreservingScroll()
+    // Hide system bars only while playing in fullscreen, restore them on exit.
+    DisposableEffect(context, browserVideoFullscreen, fullscreenView) {
+        val window = (context as? Activity)?.window
+        val controller = window?.let { WindowCompat.getInsetsController(it, it.decorView) }
+        if (browserVideoFullscreen || fullscreenView != null) {
+            controller?.hide(WindowInsetsCompat.Type.systemBars())
+            controller?.systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        } else controller?.show(WindowInsetsCompat.Type.systemBars())
+        onDispose {
+            if (browserVideoFullscreen || fullscreenView != null) {
+                controller?.show(WindowInsetsCompat.Type.systemBars())
+            }
+        }
+    }
+
+    // Keep fullscreen bound to the existing WebView, without a loadUrl/reload.
+    LaunchedEffect(visible, browserVideoFullscreen, selected.id, selected.url) {
+        if (visible && BrowserVideoDiscovery.isXPage(selected.url)) {
+            currentWebView()?.evaluateJavascript(
+                xVideoFullscreenScript(browserVideoFullscreen), null
+            )
+        }
+    }
+
+    BackHandler(visible && (browserVideoFullscreen || fullscreenView != null || selected.canBack)) {
+        when {
+            fullscreenView != null -> currentWebView()?.webChromeClient?.onHideCustomView()
+            browserVideoFullscreen -> setVideoFullscreen(false)
+            else -> goBackPreservingScroll()
+        }
     }
 
     Column(modifier.background(BrowserNavy)) {
-        // Single compact browser toolbar. Tabs, navigation actions, downloads
-        // and settings live in sheets/menus rather than covering the website.
-        Row(
+        // Switching fullscreen only changes layout; AndroidView still owns the
+        // same live host/WebView instance and retains playback state.
+        if (!browserVideoFullscreen) Row(
             Modifier.fillMaxWidth().height(54.dp).padding(horizontal = 3.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -1183,6 +1302,29 @@ fun MultiTabBrowser(
             }
         ) {
             AndroidView(factory = { host }, modifier = Modifier.fillMaxSize())
+            // X's native page may omit a fullscreen control, especially in
+            // landscape. Keep one available on the video itself in both layouts.
+            val xVideoVisible = BrowserVideoDiscovery.isXPage(selected.url) &&
+                videoElements.videos.isNotEmpty()
+            if (visible && (xVideoVisible || browserVideoFullscreen)) {
+                Box(
+                    modifier = Modifier.align(Alignment.TopEnd)
+                        .padding(top = if (browserVideoFullscreen) 8.dp else 12.dp, end = 12.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xB0000000))
+                ) {
+                    IconButton(onClick = {
+                        setVideoFullscreen(!browserVideoFullscreen)
+                    }, modifier = Modifier.size(47.dp)) {
+                        Icon(
+                            if (browserVideoFullscreen) Icons.Default.FullscreenExit
+                            else Icons.Default.Fullscreen,
+                            contentDescription = if (browserVideoFullscreen) "退出全螢幕" else "切換全螢幕",
+                            tint = BrowserGreen, modifier = Modifier.size(28.dp)
+                        )
+                    }
+                }
+            }
             if (selected.url == BrowserAddress.BLANK_TAB) {
                 Column(
                     Modifier.fillMaxSize().background(BrowserNavy)
