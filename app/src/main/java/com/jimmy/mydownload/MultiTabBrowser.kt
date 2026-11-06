@@ -239,18 +239,41 @@ private val X_DISPLAY_SCRIPT = """
   if (flags[12]) selectors.push(
     '#layers [role="dialog"]:has([data-testid="tweetPhoto"],video) [data-testid="share"]'
   );
-  // Hide captions, not the seekbar or playback controls. Do not hide the
-  // entire player/overlay because that would disable seeking and pausing.
-  if (flags[13]) {
-    const videoViewer = '#layers [role="dialog"]:has(video,[data-testid="videoPlayer"])';
-    selectors.push(
-      videoViewer + ' [data-testid="tweetText"]',
-      videoViewer + ' [data-testid="media-caption"]',
-      videoViewer + ' [data-testid="video-caption"]',
-      videoViewer + ' [data-testid="videoTitle"]',
-      videoViewer + ' [data-testid="videoDescription"]'
-    );
-  }
+  // X's media page can be a full-screen route, not a role=dialog modal.
+  // Detect the *visible seekbar* without touching player event handlers.
+  const mediaRoute = /\\/status\\/\\d+\\/(?:photo|video)\\/\\d+\\/?$/.test(location.pathname) ||
+    /^\\/i\\/status\\/\\d+\\/?$/.test(location.pathname);
+  const modal = !!document.querySelector('#layers [role="dialog"]:has(video,[data-testid="videoPlayer"])');
+  const liveVideo = Array.from(document.querySelectorAll('video')).some(node => {
+    const rect = node.getBoundingClientRect();
+    return rect.width >= 120 && rect.height >= 90 && rect.bottom > 0 &&
+      rect.top < innerHeight;
+  });
+  const seekbarVisible = Array.from(document.querySelectorAll(
+    '[role="slider"],input[type="range"],[data-testid="videoPlayer"] [aria-valuenow]'
+  )).some(node => {
+    const rect = node.getBoundingClientRect();
+    const css = getComputedStyle(node);
+    return rect.width >= 80 && rect.height > 0 && rect.bottom > 0 &&
+      rect.top < innerHeight && css.display !== 'none' && css.visibility !== 'hidden';
+  });
+  document.documentElement.dataset.mydownloadXSeek =
+    (liveVideo && (mediaRoute || modal) && seekbarVisible) ? '1' : '0';
+  const seekViewer = 'html[data-mydownload-x-seek="1"]';
+  if (flags[13]) selectors.push(
+    seekViewer + ' [data-testid="tweetText"]',
+    seekViewer + ' [data-testid="media-caption"]',
+    seekViewer + ' [data-testid="video-caption"]',
+    seekViewer + ' [data-testid="videoDescription"]'
+  );
+  if (flags[14]) selectors.push(
+    seekViewer + ' [data-testid="User-Name"]',
+    seekViewer + ' [data-testid="UserName"]',
+    seekViewer + ' [data-testid="User-Names"]',
+    seekViewer + ' [data-testid^="UserAvatar-Container"]',
+    seekViewer + ' [data-testid="Tweet-User-Avatar"]',
+    seekViewer + ' [data-testid="videoTitle"]'
+  );
   const id = 'mydownload-x-display';
   let style = document.getElementById(id);
   if (!style) {
@@ -274,7 +297,7 @@ private fun xDisplayScript(options: XDisplayOptions): String {
         options.hideBottomHome, options.hideBottomSearch,
         options.hideBottomGrok, options.hideBottomChat,
         options.hideBottomNotifications, options.hideBottomShare,
-        options.hideVideoPlaybackText
+        options.hideVideoPlaybackText, options.hideVideoPlaybackTitle
     ).joinToString(",") { it.toString() }
     return X_DISPLAY_SCRIPT.replace("__FLAGS__", flags)
 }
