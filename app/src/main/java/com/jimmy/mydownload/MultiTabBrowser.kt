@@ -1167,19 +1167,38 @@ fun MultiTabBrowser(
         ) {
             val shown = fullscreenView
             if (shown != null) {
-                AndroidView(
-                    modifier = Modifier.fillMaxSize().background(Color.Black),
-                    factory = {
-                        FrameLayout(context).apply {
-                            (shown.parent as? ViewGroup)?.removeView(shown)
-                            addView(shown, FrameLayout.LayoutParams(
-                                FrameLayout.LayoutParams.MATCH_PARENT,
-                                FrameLayout.LayoutParams.MATCH_PARENT
-                            ))
+                Box(Modifier.fillMaxSize().background(Color.Black)) {
+                    AndroidView(
+                        modifier = Modifier.fillMaxSize(),
+                        factory = {
+                            FrameLayout(context).apply {
+                                (shown.parent as? ViewGroup)?.removeView(shown)
+                                addView(shown, FrameLayout.LayoutParams(
+                                    FrameLayout.LayoutParams.MATCH_PARENT,
+                                    FrameLayout.LayoutParams.MATCH_PARENT
+                                ))
+                            }
+                        },
+                        onRelease = { it.removeAllViews() }
+                    )
+                    if (BrowserVideoDiscovery.isXPage(selected.url)) {
+                        Button(
+                            onClick = {
+                                val currentVideo = videoElements.videos.firstOrNull()
+                                currentWebView()?.webChromeClient?.onHideCustomView()
+                                offerDetectedVideo(currentVideo)
+                            },
+                            modifier = Modifier.align(Alignment.TopEnd).padding(16.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = BrowserGreen, contentColor = BrowserNavy
+                            )
+                        ) {
+                            Icon(Icons.Default.Download, null)
+                            Spacer(Modifier.width(5.dp))
+                            Text("下載影片")
                         }
-                    },
-                    onRelease = { it.removeAllViews() }
-                )
+                    }
+                }
             }
         }
     }
