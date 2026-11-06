@@ -239,6 +239,18 @@ private val X_DISPLAY_SCRIPT = """
   if (flags[12]) selectors.push(
     '#layers [role="dialog"]:has([data-testid="tweetPhoto"],video) [data-testid="share"]'
   );
+  // Hide captions, not the seekbar or playback controls. Do not hide the
+  // entire player/overlay because that would disable seeking and pausing.
+  if (flags[13]) {
+    const videoViewer = '#layers [role="dialog"]:has(video,[data-testid="videoPlayer"])';
+    selectors.push(
+      videoViewer + ' [data-testid="tweetText"]',
+      videoViewer + ' [data-testid="media-caption"]',
+      videoViewer + ' [data-testid="video-caption"]',
+      videoViewer + ' [data-testid="videoTitle"]',
+      videoViewer + ' [data-testid="videoDescription"]'
+    );
+  }
   const id = 'mydownload-x-display';
   let style = document.getElementById(id);
   if (!style) {
@@ -261,7 +273,8 @@ private fun xDisplayScript(options: XDisplayOptions): String {
         options.hideMediaDescription, options.hideMediaTitle,
         options.hideBottomHome, options.hideBottomSearch,
         options.hideBottomGrok, options.hideBottomChat,
-        options.hideBottomNotifications, options.hideBottomShare
+        options.hideBottomNotifications, options.hideBottomShare,
+        options.hideVideoPlaybackText
     ).joinToString(",") { it.toString() }
     return X_DISPLAY_SCRIPT.replace("__FLAGS__", flags)
 }
