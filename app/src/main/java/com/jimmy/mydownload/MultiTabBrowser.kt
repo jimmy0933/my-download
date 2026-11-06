@@ -548,6 +548,114 @@ private val X_VIDEO_FULLSCREEN_SCRIPT = """
 private fun xVideoFullscreenScript(enabled: Boolean): String =
     X_VIDEO_FULLSCREEN_SCRIPT.replace("__ENABLED__", enabled.toString())
 
+/**
+ * Double tap the left/right side of the *playing video* to seek -/+10 seconds.
+ * Uses touch capture only for completed double taps. Single taps, vertical
+ * carousel swipes and two-finger zoom remain owned by X.
+ */
+private val X_VIDEO_DOUBLE_TAP_SEEK_SCRIPT = """
+(() => {
+  if (!/^(?:www\.)?(?:x\.com|twitter\.com)$/.test(location.hostname)) return;
+  if (window.__mydownloadVideoSeek) return;
+  window.__mydownloadVideoSeek = true;
+
+  let tapStart = null;
+  let lastTap = null;
+  const viewer = () => /\/status\/\d+/.test(location.pathname) ||
+    !!window.__mydownloadVideoFullscreen?.enabled ||
+    !!document.querySelector('#layers [role="dialog"]:has(video,[data-testid="videoPlayer"])');
+  const distance = (a,b) => Math.hypot(a.x-b.x,a.y-b.y);
+  const validTarget = e => !(e.target instanceof Element &&
+    e.target.closest('button,a,input,[role="slider"],[data-testid="playButton"]'));
+  const activeVideo = (x,y) => {
+    const all = Array.from(document.querySelectorAll('video')).map(video => ({
+      video, r: video.getBoundingClientRect()
+    })).filter(({r}) => r.width >= 120 && r.height >= 75 &&
+      r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth);
+    const underTap = all.filter(({r}) => x >= r.left && x <= r.right &&
+      y >= r.top && y <= r.bottom);
+    const videos = underTap.length ? underTap : all;
+    videos.sort((a,b) =>
+      Number(!b.video.paused) - Number(!a.video.paused) ||
+      b.r.width*b.r.height - a.r.width*a.r.height
+    );
+    return videos[0]?.video || null;
+  };
+  const feedback = (side) => {
+    const id = 'mydownload-seek-feedback';
+    let element = document.getElementById(id);
+    if (!element) {
+      element = document.createElement('div');
+      element.id = id;
+      Object.assign(element.style, {
+        position:'fixed', top:'36%', zIndex:'2147483647',
+        padding:'12px 16px', borderRadius:'28px', pointerEvents:'none',
+        color:'white', background:'rgba(0,0,0,0.65)',
+        font:'600 19px sans-serif', transition:'opacity 150ms'
+      });
+      (document.body || document.documentElement).appendChild(element);
+    }
+    element.style.left = side === 'left' ? '11%' : 'auto';
+    element.style.right = side === 'right' ? '11%' : 'auto';
+    element.textContent = side === 'left' ? '↶ 10 秒' : '10 秒 ↷';
+    element.style.opacity = '1';
+    clearTimeout(element.__hideTimer);
+    element.__hideTimer = setTimeout(() => {element.style.opacity = '0';}, 650);
+  };
+  document.addEventListener('touchstart', e => {
+    if (e.touches.length !== 1 || !viewer() ||
+        !validTarget(e) || window.__mydownloadMediaZoom?.scale > 1) {
+      tapStart = null;
+      if (e.touches.length > 1) lastTap = null;
+      return;
+    }
+    const t=e.touches[0];
+    tapStart={x:t.clientX,y:t.clientY,time:performance.now()};
+  }, {capture:true,passive:true});
+  document.addEventListener('touchmove', e => {
+    if (tapStart && e.touches.length === 1) {
+      const t=e.touches[0];
+      if (distance(tapStart,{x:t.clientX,y:t.clientY}) > 22) {
+        tapStart=null;
+        lastTap=null;
+      }
+    } else tapStart=null;
+  }, {capture:true,passive:true});
+  document.addEventListener('touchend', e => {
+    if (!tapStart || e.touches.length > 0 || e.changedTouches.length !== 1) return;
+    const t=e.changedTouches[0], now=performance.now();
+    const tap={x:t.clientX,y:t.clientY,time:now};
+    const start=tapStart; tapStart=null;
+    if (now-start.time>280 || distance(tap,start)>25 || !viewer()) {
+      lastTap=null;
+      return;
+    }
+    const side=tap.x < innerWidth*0.4 ? 'left' :
+      tap.x > innerWidth*0.6 ? 'right' : '';
+    if (!side) {lastTap=null;return;}
+    const video=activeVideo(tap.x,tap.y);
+    if (!video || !Number.isFinite(video.duration) || video.duration <= 0) {
+      lastTap=null;return;
+    }
+    if (lastTap && lastTap.video===video && lastTap.side===side &&
+        now-lastTap.time<350 && distance(tap,lastTap)<75) {
+      lastTap=null;
+      try {
+        const duration=video.duration;
+        video.currentTime=Math.min(Math.max(0,video.currentTime+
+          (side==='left'?-10:10)),Math.max(0,duration-0.1));
+        feedback(side);
+        if (e.cancelable) e.preventDefault();
+        e.stopImmediatePropagation();
+      } catch (ignored) {}
+    } else lastTap={...tap,side,video};
+  }, {capture:true,passive:false});
+  document.addEventListener('touchcancel', () => {
+    tapStart=null;lastTap=null;
+  }, {capture:true,passive:true});
+})()
+""".trimIndent()
+
 private val AV01_TILE_SCAN = """
 (() => {
   let result = {width: innerWidth, tiles: []};
@@ -858,6 +966,7 @@ fun MultiTabBrowser(
                 if (url != null && BrowserVideoDiscovery.isXPage(url)) {
                     view?.evaluateJavascript(xDisplayScript(currentXOptions), null)
                     view?.evaluateJavascript(X_MEDIA_PINCH_ZOOM_SCRIPT, null)
+                    view?.evaluateJavascript(X_VIDEO_DOUBLE_TAP_SEEK_SCRIPT, null)
                 }
                 saveSession()
             }
@@ -1143,6 +1252,7 @@ fun MultiTabBrowser(
                 if (BrowserVideoDiscovery.isXPage(selected.url)) {
                     browser.evaluateJavascript(xDisplayScript(currentXOptions), null)
                     browser.evaluateJavascript(X_MEDIA_PINCH_ZOOM_SCRIPT, null)
+                    browser.evaluateJavascript(X_VIDEO_DOUBLE_TAP_SEEK_SCRIPT, null)
                     // X updates video nodes during vertical swipes without a reload.
                     // Re-select and recenter the playing video on each scan.
                     if (browserVideoFullscreen) {
