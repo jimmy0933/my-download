@@ -97,19 +97,17 @@ private data class VideoPositions(val width: Float = 1f, val tiles: List<VideoPo
 private val X_HIDE_COMPOSE_BUTTON_SCRIPT = """
 (() => {
   // Cosmetic change, scoped to X. Leave replies, reposts and video controls intact.
-  if (!/^(?:www\\.)?(?:x\\.com|twitter\\.com)$/.test(location.hostname)) return;
+  if (!/^(?:www\.)?(?:x\.com|twitter\.com)$/.test(location.hostname)) return;
   if (document.getElementById('mydownload-hide-x-compose')) return;
   const style = document.createElement('style');
   style.id = 'mydownload-hide-x-compose';
-  style.textContent = \`
-    [data-testid="SideNav_NewTweet_Button"],
-    [data-testid="FloatingActionButton"],
-    [data-testid="FloatingActionButtonContainer"],
-    a[href="/compose/post"], a[href^="/compose/post?"],
-    a[href="/compose/tweet"], a[href^="/compose/tweet?"] {
-      display: none !important;
-    }
-  \`;
+  style.textContent = [
+    '[data-testid="SideNav_NewTweet_Button"]',
+    '[data-testid="FloatingActionButton"]',
+    '[data-testid="FloatingActionButtonContainer"]',
+    'a[href="/compose/post"]', 'a[href^="/compose/post?"]',
+    'a[href="/compose/tweet"]', 'a[href^="/compose/tweet?"]'
+  ].join(', ') + ' { display: none !important; }';
   (document.head || document.documentElement).appendChild(style);
 })()
 """.trimIndent()
