@@ -23,7 +23,30 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 
 @Composable
-fun DownloadSettingsScreen(adsBlocked: Boolean, onBlockChange: (Boolean) -> Unit) {
+private fun XVisibilitySetting(
+    title: String,
+    description: String,
+    hidden: Boolean,
+    onHiddenChange: (Boolean) -> Unit
+) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(title, fontWeight = FontWeight.Medium)
+            Text(description, color = Color(0xFF9CAFC0),
+                style = MaterialTheme.typography.bodySmall)
+        }
+        Spacer(Modifier.width(10.dp))
+        Switch(checked = hidden, onCheckedChange = onHiddenChange)
+    }
+}
+
+@Composable
+fun DownloadSettingsScreen(
+    adsBlocked: Boolean,
+    onBlockChange: (Boolean) -> Unit,
+    xDisplayOptions: XDisplayOptions,
+    onXDisplayChange: (XDisplayOptions) -> Unit
+) {
     val context = LocalContext.current
     var folder by remember { mutableStateOf(DownloadSettings.folderLabel(context)) }
     var customFolder by remember { mutableStateOf(DownloadSettings.folder(context).isNotEmpty()) }
@@ -151,6 +174,57 @@ fun DownloadSettingsScreen(adsBlocked: Boolean, onBlockChange: (Boolean) -> Unit
             }
         }
 
+
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF142333)),
+            shape = RoundedCornerShape(20.dp)
+        ) {
+            Column(
+                Modifier.fillMaxWidth().padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(13.dp)
+            ) {
+                Text("X 網頁顯示設定", style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold, color = Color(0xFF27DBB3))
+                Text(
+                    "只影響 App 內開啟的 X／Twitter 網頁。開啟開關代表隱藏，關閉即可還原。設定會自動儲存。",
+                    color = Color(0xFFB4C8D5), style = MaterialTheme.typography.bodySmall
+                )
+                HorizontalDivider(color = Color(0xFF304458))
+                XVisibilitySetting(
+                    title = "隱藏回覆按鈕",
+                    description = "隱藏貼文底下的回覆圖示及數字，不會刪除回覆內容。",
+                    hidden = xDisplayOptions.hideReply,
+                    onHiddenChange = { onXDisplayChange(xDisplayOptions.copy(hideReply = it)) }
+                )
+                XVisibilitySetting(
+                    title = "隱藏轉發按鈕",
+                    description = "包含轉發和取消轉發圖示。",
+                    hidden = xDisplayOptions.hideRepost,
+                    onHiddenChange = { onXDisplayChange(xDisplayOptions.copy(hideRepost = it)) }
+                )
+                XVisibilitySetting(
+                    title = "隱藏觀看次數",
+                    description = "隱藏貼文的觀看數及分析圖示。",
+                    hidden = xDisplayOptions.hideViews,
+                    onHiddenChange = { onXDisplayChange(xDisplayOptions.copy(hideViews = it)) }
+                )
+                XVisibilitySetting(
+                    title = "隱藏分享按鈕",
+                    description = "隱藏貼文的分享圖示。",
+                    hidden = xDisplayOptions.hideShare,
+                    onHiddenChange = { onXDisplayChange(xDisplayOptions.copy(hideShare = it)) }
+                )
+                HorizontalDivider(color = Color(0xFF304458))
+                XVisibilitySetting(
+                    title = "隱藏 X 底部導覽列",
+                    description = "隱藏手機版最下方的首頁、搜尋、通知、訊息列；App 自己的工具列不受影響。",
+                    hidden = xDisplayOptions.hideBottomNavigation,
+                    onHiddenChange = {
+                        onXDisplayChange(xDisplayOptions.copy(hideBottomNavigation = it))
+                    }
+                )
+            }
+        }
 
         Card(
             colors = CardDefaults.cardColors(containerColor = Color(0xFF142333)),
