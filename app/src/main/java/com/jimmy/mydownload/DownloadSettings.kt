@@ -14,7 +14,14 @@ data class XDisplayOptions(
     val hideShare: Boolean = false,
     val hideBottomNavigation: Boolean = false,
     val hideMediaDescription: Boolean = false,
-    val hideMediaTitle: Boolean = false
+    val hideMediaTitle: Boolean = false,
+    val fontSizePercent: Int = 100,
+    val hideBottomHome: Boolean = false,
+    val hideBottomSearch: Boolean = false,
+    val hideBottomGrok: Boolean = false,
+    val hideBottomChat: Boolean = false,
+    val hideBottomNotifications: Boolean = false,
+    val hideBottomShare: Boolean = false
 )
 
 /**
@@ -44,6 +51,13 @@ object DownloadSettings {
     private const val X_HIDE_BOTTOM = "x_hide_bottom_navigation"
     private const val X_HIDE_MEDIA_DESCRIPTION = "x_hide_media_description"
     private const val X_HIDE_MEDIA_TITLE = "x_hide_media_title"
+    private const val X_FONT_PERCENT = "x_font_size_percent"
+    private const val X_HIDE_BOTTOM_HOME = "x_hide_bottom_home"
+    private const val X_HIDE_BOTTOM_SEARCH = "x_hide_bottom_search"
+    private const val X_HIDE_BOTTOM_GROK = "x_hide_bottom_grok"
+    private const val X_HIDE_BOTTOM_CHAT = "x_hide_bottom_chat"
+    private const val X_HIDE_BOTTOM_NOTIFICATIONS = "x_hide_bottom_notifications"
+    private const val X_HIDE_BOTTOM_SHARE = "x_hide_bottom_share"
     private const val FLOAT_BUTTON_X = "floating_download_x"
     private const val FLOAT_BUTTON_Y = "floating_download_y"
 
@@ -116,7 +130,14 @@ object DownloadSettings {
             hideShare = prefs.getBoolean(X_HIDE_SHARE, false),
             hideBottomNavigation = prefs.getBoolean(X_HIDE_BOTTOM, false),
             hideMediaDescription = prefs.getBoolean(X_HIDE_MEDIA_DESCRIPTION, false),
-            hideMediaTitle = prefs.getBoolean(X_HIDE_MEDIA_TITLE, false)
+            hideMediaTitle = prefs.getBoolean(X_HIDE_MEDIA_TITLE, false),
+            fontSizePercent = prefs.getInt(X_FONT_PERCENT, 100).coerceIn(80, 160),
+            hideBottomHome = prefs.getBoolean(X_HIDE_BOTTOM_HOME, false),
+            hideBottomSearch = prefs.getBoolean(X_HIDE_BOTTOM_SEARCH, false),
+            hideBottomGrok = prefs.getBoolean(X_HIDE_BOTTOM_GROK, false),
+            hideBottomChat = prefs.getBoolean(X_HIDE_BOTTOM_CHAT, false),
+            hideBottomNotifications = prefs.getBoolean(X_HIDE_BOTTOM_NOTIFICATIONS, false),
+            hideBottomShare = prefs.getBoolean(X_HIDE_BOTTOM_SHARE, false)
         )
     }
 
@@ -129,6 +150,13 @@ object DownloadSettings {
             .putBoolean(X_HIDE_BOTTOM, options.hideBottomNavigation)
             .putBoolean(X_HIDE_MEDIA_DESCRIPTION, options.hideMediaDescription)
             .putBoolean(X_HIDE_MEDIA_TITLE, options.hideMediaTitle)
+            .putInt(X_FONT_PERCENT, options.fontSizePercent.coerceIn(80, 160))
+            .putBoolean(X_HIDE_BOTTOM_HOME, options.hideBottomHome)
+            .putBoolean(X_HIDE_BOTTOM_SEARCH, options.hideBottomSearch)
+            .putBoolean(X_HIDE_BOTTOM_GROK, options.hideBottomGrok)
+            .putBoolean(X_HIDE_BOTTOM_CHAT, options.hideBottomChat)
+            .putBoolean(X_HIDE_BOTTOM_NOTIFICATIONS, options.hideBottomNotifications)
+            .putBoolean(X_HIDE_BOTTOM_SHARE, options.hideBottomShare)
             .apply()
     }
 
