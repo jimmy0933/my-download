@@ -22,7 +22,8 @@ data class XDisplayOptions(
     val hideBottomChat: Boolean = false,
     val hideBottomNotifications: Boolean = false,
     val hideBottomShare: Boolean = false,
-    val hideVideoPlaybackText: Boolean = false
+    val hideVideoPlaybackText: Boolean = false,
+    val hideVideoPlaybackTitle: Boolean = false
 )
 
 /**
@@ -60,6 +61,7 @@ object DownloadSettings {
     private const val X_HIDE_BOTTOM_NOTIFICATIONS = "x_hide_bottom_notifications"
     private const val X_HIDE_BOTTOM_SHARE = "x_hide_bottom_share"
     private const val X_HIDE_VIDEO_PLAYBACK_TEXT = "x_hide_video_playback_text"
+    private const val X_HIDE_VIDEO_PLAYBACK_TITLE = "x_hide_video_playback_title"
     private const val FLOAT_BUTTON_X = "floating_download_x"
     private const val FLOAT_BUTTON_Y = "floating_download_y"
     private const val FLOAT_BUTTON_OPACITY = "floating_download_opacity"
@@ -141,7 +143,8 @@ object DownloadSettings {
             hideBottomChat = prefs.getBoolean(X_HIDE_BOTTOM_CHAT, false),
             hideBottomNotifications = prefs.getBoolean(X_HIDE_BOTTOM_NOTIFICATIONS, false),
             hideBottomShare = prefs.getBoolean(X_HIDE_BOTTOM_SHARE, false),
-            hideVideoPlaybackText = prefs.getBoolean(X_HIDE_VIDEO_PLAYBACK_TEXT, false)
+            hideVideoPlaybackText = prefs.getBoolean(X_HIDE_VIDEO_PLAYBACK_TEXT, false),
+            hideVideoPlaybackTitle = prefs.getBoolean(X_HIDE_VIDEO_PLAYBACK_TITLE, false)
         )
     }
 
@@ -162,6 +165,7 @@ object DownloadSettings {
             .putBoolean(X_HIDE_BOTTOM_NOTIFICATIONS, options.hideBottomNotifications)
             .putBoolean(X_HIDE_BOTTOM_SHARE, options.hideBottomShare)
             .putBoolean(X_HIDE_VIDEO_PLAYBACK_TEXT, options.hideVideoPlaybackText)
+            .putBoolean(X_HIDE_VIDEO_PLAYBACK_TITLE, options.hideVideoPlaybackTitle)
             .apply()
     }
 
