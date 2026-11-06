@@ -46,7 +46,9 @@ fun DownloadSettingsScreen(
     adsBlocked: Boolean,
     onBlockChange: (Boolean) -> Unit,
     xDisplayOptions: XDisplayOptions,
-    onXDisplayChange: (XDisplayOptions) -> Unit
+    onXDisplayChange: (XDisplayOptions) -> Unit,
+    downloadButtonOpacityPercent: Int,
+    onDownloadButtonOpacityChange: (Int) -> Unit
 ) {
     val context = LocalContext.current
     var folder by remember { mutableStateOf(DownloadSettings.folderLabel(context)) }
@@ -175,6 +177,44 @@ fun DownloadSettingsScreen(
             }
         }
 
+
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF142333)),
+            shape = RoundedCornerShape(20.dp)
+        ) {
+            Column(Modifier.fillMaxWidth().padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("下載圖示", style = MaterialTheme.typography.titleMedium,
+                    color = Color(0xFF27DBB3), fontWeight = FontWeight.Bold)
+                Text("影片下載按鈕只顯示圖示，按一下下載；長按拖曳後會記住位置。",
+                    color = Color(0xFFB4C8D5), style = MaterialTheme.typography.bodySmall)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("按鈕透明度", modifier = Modifier.weight(1f),
+                        fontWeight = FontWeight.Medium)
+                    Text("$" + "{downloadButtonOpacityPercent}%",
+                        color = Color(0xFF27DBB3),
+                        style = MaterialTheme.typography.titleMedium)
+                }
+                Slider(
+                    value = downloadButtonOpacityPercent.toFloat(),
+                    onValueChange = { amount ->
+                        onDownloadButtonOpacityChange(
+                            ((amount / 5f).roundToInt() * 5).coerceIn(20, 100)
+                        )
+                    },
+                    valueRange = 20f..100f, steps = 15
+                )
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("較透明 20%", color = Color(0xFF9CAFC0),
+                        style = MaterialTheme.typography.bodySmall)
+                    TextButton(onClick = { onDownloadButtonOpacityChange(85) }) {
+                        Text("預設 85%")
+                    }
+                    Text("不透明 100%", color = Color(0xFF9CAFC0),
+                        style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
 
         Card(
             colors = CardDefaults.cardColors(containerColor = Color(0xFF142333)),
@@ -439,6 +479,22 @@ fun DownloadSettingsScreen(
             }
         }
 
+        Button(
+            onClick = {
+                // Other preferences and destination are already stored when edited.
+                // This explicit action re-saves all current display/repair choices.
+                DownloadSettings.setXDisplayOptions(context, xDisplayOptions)
+                DownloadSettings.setFloatingButtonOpacityPercent(
+                    context, downloadButtonOpacityPercent
+                )
+                DownloadSettings.setAdBlockEnabled(context, adsBlocked)
+                DownloadSettings.setAutoRepairMp4(context, autoRepair)
+                notice = "所有設定已儲存，重開 App 仍會保留。"
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("儲存目前設定") }
+        Text("選項變更時也會自動儲存；此按鈕可再次確認寫入。",
+            color = Color(0xFF9CAFC0), style = MaterialTheme.typography.bodySmall)
         if (notice.isNotBlank()) Text(notice, color = Color(0xFF27DBB3))
         if (error.isNotBlank()) Text(error, color = Color(0xFFFFB1A8))
     }
