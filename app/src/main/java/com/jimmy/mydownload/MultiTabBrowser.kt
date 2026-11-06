@@ -1719,6 +1719,25 @@ fun MultiTabBrowser(
                         },
                         onRelease = { it.removeAllViews() }
                     )
+                    // X/HTML5 native fullscreen keeps an explicit exit action;
+                    // the device back button remains available as well.
+                    Box(
+                        modifier = Modifier.align(Alignment.TopStart)
+                            .padding(12.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xB0000000))
+                    ) {
+                        IconButton(
+                            onClick = { currentWebView()?.webChromeClient?.onHideCustomView() },
+                            modifier = Modifier.size(47.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.FullscreenExit,
+                                contentDescription = "退出全螢幕",
+                                tint = BrowserGreen, modifier = Modifier.size(28.dp)
+                            )
+                        }
+                    }
                     if (BrowserVideoDiscovery.isXPage(selected.url)) {
                         MovableDownloadButton(
                             containerWidth = fullscreenWidth,
