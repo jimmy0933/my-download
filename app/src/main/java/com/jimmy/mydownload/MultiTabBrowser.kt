@@ -28,6 +28,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -51,6 +52,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
@@ -84,9 +86,9 @@ private val BrowserGreen = Color(0xFF27DBB3)
  */
 @Composable
 private fun BoxScope.MovableDownloadButton(
-    text: String,
     containerWidth: Int,
     containerHeight: Int,
+    opacityPercent: Int,
     position: FloatingDownloadPosition,
     onMove: (FloatingDownloadPosition) -> Unit,
     onMoveFinished: (FloatingDownloadPosition) -> Unit,
@@ -107,6 +109,7 @@ private fun BoxScope.MovableDownloadButton(
     Box(
         modifier = Modifier.align(Alignment.TopStart)
             .offset { IntOffset(posX, posY) }
+            .alpha(opacityPercent.coerceIn(20, 100) / 100f)
             .onSizeChanged { size ->
                 buttonWidth = size.width
                 buttonHeight = size.height
@@ -128,16 +131,16 @@ private fun BoxScope.MovableDownloadButton(
     ) {
         Button(
             onClick = onClick,
+            modifier = Modifier.size(49.dp),
+            shape = CircleShape,
             colors = ButtonDefaults.buttonColors(
                 containerColor = BrowserGreen, contentColor = BrowserNavy
             ),
             elevation = ButtonDefaults.buttonElevation(defaultElevation = 7.dp),
-            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
+            contentPadding = PaddingValues(0.dp)
         ) {
-            Icon(Icons.Default.Download, contentDescription = null,
-                modifier = Modifier.size(19.dp))
-            Spacer(Modifier.width(5.dp))
-            Text(text, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            Icon(Icons.Default.Download, contentDescription = "下載或偵測影片",
+                modifier = Modifier.size(25.dp))
         }
     }
 }
@@ -313,6 +316,7 @@ fun MultiTabBrowser(
     visible: Boolean,
     adBlockEnabled: Boolean,
     xDisplayOptions: XDisplayOptions,
+    downloadButtonOpacityPercent: Int,
     modifier: Modifier = Modifier,
     onDownload: (String) -> Unit,
     onDetectedVideos: (List<StreamChoice>) -> Unit,
@@ -466,7 +470,7 @@ fun MultiTabBrowser(
             if (tab.url != url) {
                 val previousWasX = BrowserVideoDiscovery.isXPage(tab.url)
                 val oldPage = tab.url
-                val gallerySwipe = XMediaNavigation.samePostViewer(oldPage, url)
+                val gallerySwipe = XMediaNavigation.isMediaSwipe(oldPage, url)
                 if (BrowserAddress.isWebUrl(oldPage) && tab.scrollY > 0) {
                     val saved = tab.scrollByUrl[oldPage]
                     if (saved == null || saved.native < tab.scrollY) {
@@ -476,7 +480,9 @@ fun MultiTabBrowser(
                 }
                 if (!gallerySwipe) tab.scrollY = 0
                 tab.url = url
-                if (tab.restoreTarget == url) restoreScroll(web, tab, url)
+                // Viewer swipes should never trigger our saved-page scroll restoration.
+                if (gallerySwipe) tab.restoreTarget = null
+                else if (tab.restoreTarget == url) restoreScroll(web, tab, url)
                 if (tab.id == activeId && !gallerySwipe) {
                     // An X gallery swipe changes the URL but not the WebView/DOM.
                     // Keep the current media rendered until the next scan completes.
@@ -532,8 +538,10 @@ fun MultiTabBrowser(
 
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                 super.onPageStarted(view, url, favicon)
+                val mediaSwipe = url != null &&
+                    XMediaNavigation.isMediaSwipe(tab.url, url)
                 if (url != null) updateUrl(url)
-                tab.progress = 0
+                if (!mediaSwipe) tab.progress = 0
             }
 
             override fun doUpdateVisitedHistory(
