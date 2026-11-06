@@ -304,10 +304,18 @@ fun DownloadSettingsScreen(
                 )
                 XVisibilitySetting(
                     title = "影片顯示進度條時隱藏內文",
-                    description = "只隱藏 X 影片播放器上方的貼文文字與說明，保留播放、暫停、快轉及進度條。",
+                    description = "開啟時隱藏影片下方的貼文內文；播放、暫停、快轉與進度條仍保留。",
                     hidden = xDisplayOptions.hideVideoPlaybackText,
                     onHiddenChange = {
                         onXDisplayChange(xDisplayOptions.copy(hideVideoPlaybackText = it))
+                    }
+                )
+                XVisibilitySetting(
+                    title = "影片顯示進度條時隱藏標題／作者",
+                    description = "可個別隱藏影片下方的帳號名稱、頭像和作者資訊，不影響進度條。",
+                    hidden = xDisplayOptions.hideVideoPlaybackTitle,
+                    onHiddenChange = {
+                        onXDisplayChange(xDisplayOptions.copy(hideVideoPlaybackTitle = it))
                     }
                 )
                 HorizontalDivider(color = Color(0xFF304458))
