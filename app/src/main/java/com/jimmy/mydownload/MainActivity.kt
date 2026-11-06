@@ -129,6 +129,9 @@ fun RootScreen(shared: String) {
     var tab by rememberSaveable { mutableIntStateOf(if (shared.isNotBlank()) 1 else 0) }
     var adsBlocked by remember { mutableStateOf(DownloadSettings.adBlockEnabled(context)) }
     var xDisplayOptions by remember { mutableStateOf(DownloadSettings.xDisplayOptions(context)) }
+    var downloadButtonOpacityPercent by remember {
+        mutableIntStateOf(DownloadSettings.floatingButtonOpacityPercent(context))
+    }
     var manualUrl by rememberSaveable { mutableStateOf(shared) }
 
     var selectedLink by remember { mutableStateOf<String?>(null) }
@@ -231,6 +234,7 @@ fun RootScreen(shared: String) {
                     visible = tab == 0,
                     adBlockEnabled = adsBlocked,
                     xDisplayOptions = xDisplayOptions,
+                    downloadButtonOpacityPercent = downloadButtonOpacityPercent,
                     modifier = if (tab == 0) Modifier.fillMaxSize() else Modifier.size(0.dp),
                     onDownload = { showDownload(it) },
                     onDetectedVideos = { showDetectedChoices(it) },
@@ -396,6 +400,11 @@ fun RootScreen(shared: String) {
                         onXDisplayChange = { options ->
                             xDisplayOptions = options
                             DownloadSettings.setXDisplayOptions(context, options)
+                        },
+                        downloadButtonOpacityPercent = downloadButtonOpacityPercent,
+                        onDownloadButtonOpacityChange = { percent ->
+                            downloadButtonOpacityPercent = percent
+                            DownloadSettings.setFloatingButtonOpacityPercent(context, percent)
                         }
                     )
                 }
