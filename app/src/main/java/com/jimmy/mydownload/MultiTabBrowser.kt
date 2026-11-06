@@ -302,6 +302,141 @@ private fun xDisplayScript(options: XDisplayOptions): String {
     return X_DISPLAY_SCRIPT.replace("__FLAGS__", flags)
 }
 
+/**
+ * Two-finger media zoom is implemented inside the existing X document. This
+ * leaves one-finger gallery/video swipes to X, so the page never has to reload
+ * and the native browser toolbar and download overlay stay at their size.
+ */
+private val X_MEDIA_PINCH_ZOOM_SCRIPT = """
+(() => {
+  if (!/^(?:www\.)?(?:x\.com|twitter\.com)$/.test(location.hostname)) return;
+  const existing = window.__mydownloadMediaZoom;
+  if (existing) { existing.ensure(); return; }
+
+  const state = {
+    path: location.pathname, media: null, scale: 1, x: 0, y: 0,
+    startDistance: 0, startScale: 1, startX: 0, startY: 0,
+    startPanX: 0, startPanY: 0, mode: '',
+    originalScale: '', originalTranslate: '', originalOrigin: ''
+  };
+  const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
+  const dist = (a,b) => Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY);
+  const viewer = () =>
+    /\/status\/\d+\/(?:photo|video)\/\d+\/?$/.test(location.pathname) ||
+    /^\/i\/status\/\d+\/?$/.test(location.pathname) ||
+    !!document.querySelector('#layers [role="dialog"]:has([data-testid="tweetPhoto"],video,[data-testid="videoPlayer"])');
+
+  const reset = () => {
+    if (state.media) {
+      state.media.style.scale = state.originalScale;
+      state.media.style.translate = state.originalTranslate;
+      state.media.style.transformOrigin = state.originalOrigin;
+    }
+    state.media = null; state.scale = 1; state.x = 0; state.y = 0;
+    state.mode = ''; state.startDistance = 0;
+  };
+  const ensure = () => {
+    if (location.pathname !== state.path ||
+        (state.media && !state.media.isConnected)) {
+      reset();
+      state.path = location.pathname;
+    }
+  };
+  const targetMedia = (touches) => {
+    const midX = (touches[0].clientX + touches[1].clientX)/2;
+    const midY = (touches[0].clientY + touches[1].clientY)/2;
+    const near = document.elementFromPoint(midX, midY);
+    const container = near?.closest(
+      '[data-testid="videoPlayer"],[data-testid="tweetPhoto"],[data-testid="swipe-to-dismiss"],[role="dialog"]'
+    );
+    const candidates = [
+      ...(container ? container.querySelectorAll('video,img') : []),
+      ...document.querySelectorAll('video,img')
+    ];
+    let found = null, area = 0;
+    for (const media of candidates) {
+      const rect = media.getBoundingClientRect();
+      if (rect.width < 150 || rect.height < 100 ||
+          rect.left > midX || rect.right < midX ||
+          rect.top > midY || rect.bottom < midY) continue;
+      const size = rect.width * rect.height;
+      if (size > area) { found = media; area = size; }
+    }
+    return found;
+  };
+  const capture = (media) => {
+    if (state.media !== media) {
+      reset();
+      state.media = media;
+      state.originalScale = media.style.scale;
+      state.originalTranslate = media.style.translate;
+      state.originalOrigin = media.style.transformOrigin;
+    }
+  };
+  const render = () => {
+    if (!state.media) return;
+    state.media.style.transformOrigin = 'center center';
+    state.media.style.scale = String(state.scale);
+    state.media.style.translate = state.x + 'px ' + state.y + 'px';
+  };
+
+  document.addEventListener('touchstart', e => {
+    ensure();
+    if (!viewer()) return;
+    if (e.touches.length === 2) {
+      const media = targetMedia(e.touches);
+      if (!media) return;
+      capture(media);
+      state.startDistance = Math.max(1, dist(e.touches[0],e.touches[1]));
+      state.startScale = state.scale;
+      state.mode = 'pinch';
+    } else if (e.touches.length === 1 && state.media && state.scale > 1) {
+      const p = e.touches[0];
+      const r = state.media.getBoundingClientRect();
+      if (p.clientX >= r.left && p.clientX <= r.right &&
+          p.clientY >= r.top && p.clientY <= r.bottom) {
+        state.mode = 'pan'; state.startX = p.clientX; state.startY = p.clientY;
+        state.startPanX = state.x; state.startPanY = state.y;
+      }
+    }
+  }, {capture:true, passive:false});
+  document.addEventListener('touchmove', e => {
+    if (!state.media || !viewer()) return;
+    if (state.mode === 'pinch' && e.touches.length === 2) {
+      state.scale = clamp(state.startScale *
+        dist(e.touches[0],e.touches[1]) / state.startDistance, 1, 4);
+      if (state.scale <= 1.001) { state.x = 0; state.y = 0; }
+      render();
+      e.preventDefault(); e.stopPropagation();
+    } else if (state.mode === 'pan' && e.touches.length === 1 && state.scale > 1) {
+      const p = e.touches[0], r = state.media.getBoundingClientRect();
+      const maxX = Math.max(0,(r.width * (state.scale-1)) / (2*state.scale));
+      const maxY = Math.max(0,(r.height * (state.scale-1)) / (2*state.scale));
+      state.x = clamp(state.startPanX + p.clientX-state.startX, -maxX,maxX);
+      state.y = clamp(state.startPanY + p.clientY-state.startY, -maxY,maxY);
+      render();
+      e.preventDefault(); e.stopPropagation();
+    }
+  }, {capture:true, passive:false});
+  const end = e => {
+    if (state.mode === 'pinch' && e.touches.length < 2) {
+      state.mode = '';
+    } else if (state.mode === 'pan' && e.touches.length === 0) {
+      state.mode = '';
+    }
+  };
+  document.addEventListener('touchend', end, {capture:true, passive:true});
+  document.addEventListener('touchcancel', end, {capture:true, passive:true});
+  // Reset zoom with a double tap; this affects only the focused media.
+  document.addEventListener('dblclick', e => {
+    if (state.media && state.scale > 1 && viewer()) {
+      e.preventDefault(); e.stopPropagation(); reset();
+    }
+  }, {capture:true});
+  window.__mydownloadMediaZoom = {ensure};
+})()
+""".trimIndent()
+
 private val AV01_TILE_SCAN = """
 (() => {
   let result = {width: innerWidth, tiles: []};
@@ -608,6 +743,7 @@ fun MultiTabBrowser(
                 // added later by React, without removing other interactive elements.
                 if (url != null && BrowserVideoDiscovery.isXPage(url)) {
                     view?.evaluateJavascript(xDisplayScript(currentXOptions), null)
+                    view?.evaluateJavascript(X_MEDIA_PINCH_ZOOM_SCRIPT, null)
                 }
                 saveSession()
             }
@@ -877,6 +1013,7 @@ fun MultiTabBrowser(
                 // Reinstate CSS if React recreates its head or mobile navigation.
                 if (BrowserVideoDiscovery.isXPage(selected.url)) {
                     browser.evaluateJavascript(xDisplayScript(currentXOptions), null)
+                    browser.evaluateJavascript(X_MEDIA_PINCH_ZOOM_SCRIPT, null)
                 }
                 browser.evaluateJavascript(BrowserVideoDiscovery.SCAN_SCRIPT) { result ->
                     if (activeId == checkedId) {
