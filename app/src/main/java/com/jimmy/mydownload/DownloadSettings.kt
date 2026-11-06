@@ -6,11 +6,25 @@ import android.provider.DocumentsContract
 import java.io.IOException
 import java.net.URI
 
+/** X-only cosmetic preferences. All optional filters default to off. */
+data class XDisplayOptions(
+    val hideReply: Boolean = false,
+    val hideRepost: Boolean = false,
+    val hideViews: Boolean = false,
+    val hideShare: Boolean = false,
+    val hideBottomNavigation: Boolean = false
+)
+
 object DownloadSettings {
     private const val PREF = "download_settings"
     private const val FOLDER = "destination_tree"
     private const val BLOCK = "block_ads"
     private const val AUTO_REPAIR = "auto_repair_mp4"
+    private const val X_HIDE_REPLY = "x_hide_reply"
+    private const val X_HIDE_REPOST = "x_hide_repost"
+    private const val X_HIDE_VIEWS = "x_hide_views"
+    private const val X_HIDE_SHARE = "x_hide_share"
+    private const val X_HIDE_BOTTOM = "x_hide_bottom_navigation"
 
     fun folder(context: Context): String =
         context.getSharedPreferences(PREF, Context.MODE_PRIVATE).getString(FOLDER, "").orEmpty()
@@ -70,6 +84,27 @@ object DownloadSettings {
     fun setAutoRepairMp4(context: Context, enabled: Boolean) {
         context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
             .edit().putBoolean(AUTO_REPAIR, enabled).apply()
+    }
+
+    fun xDisplayOptions(context: Context): XDisplayOptions {
+        val prefs = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+        return XDisplayOptions(
+            hideReply = prefs.getBoolean(X_HIDE_REPLY, false),
+            hideRepost = prefs.getBoolean(X_HIDE_REPOST, false),
+            hideViews = prefs.getBoolean(X_HIDE_VIEWS, false),
+            hideShare = prefs.getBoolean(X_HIDE_SHARE, false),
+            hideBottomNavigation = prefs.getBoolean(X_HIDE_BOTTOM, false)
+        )
+    }
+
+    fun setXDisplayOptions(context: Context, options: XDisplayOptions) {
+        context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit()
+            .putBoolean(X_HIDE_REPLY, options.hideReply)
+            .putBoolean(X_HIDE_REPOST, options.hideRepost)
+            .putBoolean(X_HIDE_VIEWS, options.hideViews)
+            .putBoolean(X_HIDE_SHARE, options.hideShare)
+            .putBoolean(X_HIDE_BOTTOM, options.hideBottomNavigation)
+            .apply()
     }
 
     fun folderLabel(context: Context): String {
