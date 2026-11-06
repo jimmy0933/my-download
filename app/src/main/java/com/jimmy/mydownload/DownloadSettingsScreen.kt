@@ -191,7 +191,7 @@ fun DownloadSettingsScreen(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("按鈕透明度", modifier = Modifier.weight(1f),
                         fontWeight = FontWeight.Medium)
-                    Text("$" + "{downloadButtonOpacityPercent}%",
+                    Text("${downloadButtonOpacityPercent}%",
                         color = Color(0xFF27DBB3),
                         style = MaterialTheme.typography.titleMedium)
                 }
@@ -300,6 +300,14 @@ fun DownloadSettingsScreen(
                     hidden = xDisplayOptions.hideMediaTitle,
                     onHiddenChange = {
                         onXDisplayChange(xDisplayOptions.copy(hideMediaTitle = it))
+                    }
+                )
+                XVisibilitySetting(
+                    title = "影片顯示進度條時隱藏內文",
+                    description = "只隱藏 X 影片播放器上方的貼文文字與說明，保留播放、暫停、快轉及進度條。",
+                    hidden = xDisplayOptions.hideVideoPlaybackText,
+                    onHiddenChange = {
+                        onXDisplayChange(xDisplayOptions.copy(hideVideoPlaybackText = it))
                     }
                 )
                 HorizontalDivider(color = Color(0xFF304458))
