@@ -383,7 +383,7 @@ private val X_MEDIA_PINCH_ZOOM_SCRIPT = """
   const state = {
     path: location.pathname, media: null, scale: 1, x: 0, y: 0,
     startDistance: 0, startScale: 1, startX: 0, startY: 0,
-    startPanX: 0, startPanY: 0, mode: '', nativePinch: false,
+    startPanX: 0, startPanY: 0, mode: '', nativePinch: false, singleStart: null,
     originalScale: '', originalTranslate: '', originalOrigin: '',
     originalScalePriority: '', originalTranslatePriority: ''
   };
@@ -392,6 +392,9 @@ private val X_MEDIA_PINCH_ZOOM_SCRIPT = """
   const visible = rect => rect.width>90 && rect.height>65 &&
     rect.right>0 && rect.left<innerWidth &&
     rect.bottom>0 && rect.top<innerHeight;
+  const videoViewer = () => !!window.__mydownloadVideoFullscreen?.enabled ||
+    !!document.querySelector('[data-testid="vss-scroll-view"]') ||
+    !!document.querySelector('#layers [role="dialog"]:has(video,[data-testid="videoPlayer"])');
   const viewer = () => {
     if (/\/status\/\d+/.test(location.pathname) ||
         /^\/i\/status\/\d+/.test(location.pathname) ||
@@ -418,7 +421,7 @@ private val X_MEDIA_PINCH_ZOOM_SCRIPT = """
     }
     state.media=null;
     state.scale=1;state.x=0;state.y=0;state.mode='';
-    state.startDistance=0;state.nativePinch=false;
+    state.startDistance=0;state.nativePinch=false;state.singleStart=null;
   };
   const ensure = () => {
     if (state.path!==location.pathname ||
@@ -500,6 +503,8 @@ private val X_MEDIA_PINCH_ZOOM_SCRIPT = """
     const x=innerWidth*clamp(xFraction,0,1);
     const y=innerHeight*clamp(yFraction,0,1);
     if (!capture(chooseMedia(x,y))) return false;
+    state.startX=x;state.startY=y;
+    state.startPanX=state.x;state.startPanY=state.y;
     state.mode='native';
     state.nativePinch=true;
     return true;
@@ -523,13 +528,15 @@ private val X_MEDIA_PINCH_ZOOM_SCRIPT = """
       if (!capture(media)) return;
       state.startDistance=Math.max(1,dist(e.touches[0],e.touches[1]));
       state.startScale=state.scale;
+      state.startX=x;state.startY=y;
+      state.startPanX=state.x;state.startPanY=state.y;
+      state.singleStart=null;
       if (!state.nativePinch) state.mode='pinch';
       if (e.cancelable) e.preventDefault();
       e.stopImmediatePropagation();
-    } else if (e.touches.length===1 && state.media && state.scale>1.01) {
-      const p=e.touches[0],r=state.media.getBoundingClientRect();
-      if (p.clientX>=r.left && p.clientX<=r.right &&
-          p.clientY>=r.top && p.clientY<=r.bottom) beginPan(p);
+    } else if (e.touches.length===1 && videoViewer()) {
+      // One finger may select the next/previous clip, never pan the zoomed media.
+      state.singleStart={x:e.touches[0].clientX,y:e.touches[0].clientY};
     }
   },{capture:true,passive:false});
   document.addEventListener('touchmove',e=>{
@@ -542,20 +549,30 @@ private val X_MEDIA_PINCH_ZOOM_SCRIPT = """
         if(state.scale<=1.005){state.scale=1;state.x=0;state.y=0;}
         render();
       }
+      // Panning and zooming both require two active fingers.
+      if(state.scale>1.01) movePan({
+        clientX:(e.touches[0].clientX+e.touches[1].clientX)/2,
+        clientY:(e.touches[0].clientY+e.touches[1].clientY)/2
+      });
       if(e.cancelable)e.preventDefault();
       e.stopImmediatePropagation();
-    } else if(e.touches.length===1 && state.mode==='pan' &&
-        state.scale>1.01) {
-      movePan(e.touches[0]);
-      if(e.cancelable)e.preventDefault();
-      e.stopImmediatePropagation();
+    } else if(e.touches.length===1 && state.singleStart && videoViewer()) {
+      const dx=e.touches[0].clientX-state.singleStart.x;
+      const dy=e.touches[0].clientY-state.singleStart.y;
+      const slider=e.target?.closest?.(
+        '[role="slider"],input[type="range"],[data-testid*="seek"],[data-testid*="progress"]');
+      // No horizontal dragging of the playing viewport. Preserve sliders,
+      // taps and X's vertical carousel navigation.
+      if(!slider && Math.abs(dx)>12 && Math.abs(dx)>Math.abs(dy)*1.25) {
+        if(e.cancelable)e.preventDefault();
+        e.stopImmediatePropagation();
+      }
     }
   },{capture:true,passive:false});
   const end=e=>{
-    if (e.touches.length===0) {
-      if (!state.nativePinch) state.mode='';
-    } else if(e.touches.length===1 && state.mode==='pinch' &&
-        state.scale>1.01) beginPan(e.touches[0]);
+    state.singleStart=null;
+    // Lifting one finger after a pinch must not enable one-finger dragging.
+    if(e.touches.length<2 && !state.nativePinch) state.mode='';
   };
   document.addEventListener('touchend',end,{capture:true,passive:true});
   document.addEventListener('touchcancel',end,{capture:true,passive:true});
@@ -642,7 +659,9 @@ private val X_IMMERSIVE_FIT_SCRIPT = """
   const stateKey='__mydownloadImmersiveFit';
   const state=window[stateKey]||(window[stateKey]={
     active:false, listenerInstalled:false, gesture:null, timer:0,
-    scroll:null, cards:[], lastHeight:0
+    scroll:null, cards:[], lastHeight:0,
+    lastViewportWidth:0,lastViewportHeight:0,
+    anchorCard:null,anchorIndex:-1,anchorKey:'',restoreToken:0
   });
   const cardAttr='data-mydownload-fullscreen-card';
   const scrollAttr='data-mydownload-fullscreen-scroll';
@@ -658,11 +677,7 @@ private val X_IMMERSIVE_FIT_SCRIPT = """
       el.removeAttribute(scrollAttr));
     state.scroll=null;state.cards=[];state.lastHeight=0;
   };
-  if(!enabled){
-    state.active=false;clear();
-    return 'disabled';
-  }
-  state.active=true;
+  const wasActive=state.active;
 
   const findCards=scroller=>{
     let list=scroller.firstElementChild;
@@ -754,6 +769,62 @@ private val X_IMMERSIVE_FIT_SCRIPT = """
       ? chosen : null;
   };
 
+  // Keep the visible video card, not its old portrait scrollTop, when changing
+  // orientation. Otherwise a landscape card height selects another clip.
+  const cardKey=card=>card?.querySelector('a[href*="/status/"]')?.getAttribute('href') ||
+    card?.querySelector('video')?.currentSrc || '';
+  const rememberVisible=()=>{
+    const found=measure(), selected=found&&centered(found);
+    if(!selected)return;
+    state.anchorCard=selected.card;state.anchorIndex=selected.index;
+    state.anchorKey=cardKey(selected.card);
+  };
+  const restoreVisible=(token,attempt=0)=>{
+    if(token!==state.restoreToken || state.gesture)return;
+    const found=measure();
+    if(!found)return;
+    let card=found.cards.includes(state.anchorCard)?state.anchorCard:null;
+    if(!card && state.anchorKey)
+      card=found.cards.find(c=>cardKey(c)===state.anchorKey);
+    if(!card)card=found.cards[state.anchorIndex];
+    if(!card)return;
+    const delta=card.getBoundingClientRect().top-found.box.top;
+    if(Math.abs(delta)>2){
+      const scroll=found.scroller;
+      const snap=scroll.style.scrollSnapType;
+      const behavior=scroll.style.scrollBehavior;
+      scroll.style.scrollSnapType='none';
+      scroll.style.scrollBehavior='auto';
+      scroll.scrollTop+=delta;
+      scroll.style.scrollSnapType=snap;
+      scroll.style.scrollBehavior=behavior;
+    }
+    if(attempt<3)requestAnimationFrame(()=>restoreVisible(token,attempt+1));
+  };
+  const width=innerWidth, height=Math.round(window.visualViewport?.height||innerHeight);
+  const resized=state.lastViewportWidth>0 &&
+    (Math.abs(width-state.lastViewportWidth)>20 ||
+     Math.abs(height-state.lastViewportHeight)>20);
+  const stamp=()=>{state.lastViewportWidth=width;state.lastViewportHeight=height;};
+  if(!enabled){
+    state.active=false;
+    if(wasActive || resized){
+      const token=++state.restoreToken;
+      clear();stamp();
+      requestAnimationFrame(()=>restoreVisible(token));
+    }else{
+      if(!state.gesture)rememberVisible();
+      stamp();
+    }
+    return 'disabled';
+  }
+  state.active=true;
+  if(!state.anchorCard || !state.anchorCard.isConnected)rememberVisible();
+  const token=(resized || !wasActive)?++state.restoreToken:0;
+  apply();stamp();
+  if(token)requestAnimationFrame(()=>restoreVisible(token));
+  else if(!state.gesture)rememberVisible();
+
   // X normally handles the snap itself. Correct only a *small remaining*
   // offset after a confirmed swipe to a different card. Never call
   // scrollIntoView, never select the old card, never use smooth scroll.
@@ -770,6 +841,9 @@ private val X_IMMERSIVE_FIT_SCRIPT = """
       ? current.index>gesture.fromIndex
       : current.index<gesture.fromIndex;
     if(!changed || !inDirection)return;
+    state.anchorCard=current.card;
+    state.anchorIndex=current.index;
+    state.anchorKey=cardKey(current.card);
     const delta=current.rect.top-box.top;
     // Only correct an under-snap (e.g. new post starts 125px below top).
     // A full-card jump here would move the user backwards, so disallow it.
@@ -845,7 +919,6 @@ private val X_IMMERSIVE_FIT_SCRIPT = """
     document.addEventListener('touchcancel',cancelGesture,
       {capture:true,passive:true});
   }
-  apply();
   return 'applied';
 })()
 """.trimIndent()
@@ -1451,6 +1524,8 @@ fun MultiTabBrowser(
         val web = currentWebView() ?: return
         if (!BrowserVideoDiscovery.isXPage(selected.url)) return
         if (enabled) {
+            // Snapshot the current carousel card before changing the viewport.
+            web.evaluateJavascript(xImmersiveFitScript(false), null)
             web.evaluateJavascript(xVideoFullscreenScript(true)) { result ->
                 if (result == "\"fullscreen\"") browserVideoFullscreen = true
                 else Toast.makeText(context, "未偵測到可全螢幕播放的影片", Toast.LENGTH_SHORT).show()
@@ -1688,9 +1763,8 @@ fun MultiTabBrowser(
                     browser.evaluateJavascript(xDisplayScript(currentXOptions), null)
                     browser.evaluateJavascript(X_MEDIA_PINCH_ZOOM_SCRIPT, null)
                     browser.evaluateJavascript(X_VIDEO_DOUBLE_TAP_SEEK_SCRIPT, null)
-                    if (browserVideoFullscreen) {
-                        browser.evaluateJavascript(xImmersiveFitScript(true), null)
-                    }
+                    // Snapshot the current video in portrait too, before a rotation.
+                    browser.evaluateJavascript(xImmersiveFitScript(browserVideoFullscreen), null)
                     // X's own carousel owns the vertical swipe and snap.
                     // Do not call scrollTo/scrollIntoView after the gesture.
                 }
@@ -1900,7 +1974,7 @@ fun MultiTabBrowser(
                     modifier = Modifier.align(Alignment.BottomEnd)
                         // Keep clear of X's bottom actions and the draggable
                         // download icon, which may be anchored to the corner.
-                        .padding(end = 16.dp, bottom = 90.dp)
+                        .padding(end = 16.dp, bottom = 16.dp)
                         .clip(CircleShape)
                         .background(Color(0xB0000000))
                 ) {
@@ -2316,7 +2390,7 @@ fun MultiTabBrowser(
                     // the device back button remains available as well.
                     Box(
                         modifier = Modifier.align(Alignment.BottomEnd)
-                            .padding(end = 16.dp, bottom = 90.dp)
+                            .padding(end = 16.dp, bottom = 16.dp)
                             .clip(CircleShape)
                             .background(Color(0xB0000000))
                     ) {
