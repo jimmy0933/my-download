@@ -1335,7 +1335,7 @@ fun MultiTabBrowser(
                                 ) {
                                     web.evaluateJavascript(
                                         "window.__mydownloadImmersiveFit?.nativeFinish(" +
-                                            "$" + "dx,$" + "dy)", null
+                                            dx.toString() + "," + dy.toString() + ")", null
                                     )
                                 } else {
                                     web.evaluateJavascript(
