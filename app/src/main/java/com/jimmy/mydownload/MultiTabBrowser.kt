@@ -999,7 +999,14 @@ private val X_IMMERSIVE_FIT_SCRIPT = """
 
   const settleOnScrollEnd=()=>{
     if(!enabled || !state.active || state.gesture)return;
-    if(Date.now()-(state.lastResizeAt||0)<180)return;
+    const sinceResize=Date.now()-(state.lastResizeAt||0);
+    if(sinceResize<180){
+      // A scrollend may arrive while landscape is still measuring its
+      // viewport. Retry once after the rotation settles instead of losing it.
+      clearTimeout(state.healthTimer);
+      state.healthTimer=setTimeout(()=>state.onScrollEnd?.(),180-sinceResize);
+      return;
+    }
     const found=measure();
     if(!found || found.cards.length<2)return;
     prepareSlides(found);
