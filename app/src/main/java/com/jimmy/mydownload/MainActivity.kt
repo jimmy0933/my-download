@@ -422,58 +422,22 @@ fun RootScreen(shared: String) {
                         .padding(start = 20.dp, end = 20.dp, bottom = 30.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Text("下載此影片", style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold)
-                    Text(
-                        selectedLink.orEmpty().substringBefore('?'), maxLines = 2,
-                        overflow = TextOverflow.Ellipsis, color = Soft,
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    if (candidateSources.isNotEmpty()) {
-                        Text(
-                            "影片檔名：" + StreamResolver.safeTitle(candidateSources.first().title),
-                            color = Green,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                        Text(
-                            if (resolving) "正在驗證來源與畫質…"
-                            else "已找到 ${choices.size} 種可下載格式，優先顯示 MP4。",
-                            color = Soft, style = MaterialTheme.typography.bodySmall
-                        )
-                    }
+                    // Show only actionable, validated download options.
+                    // Technical source URLs, media IDs and failed probe logs stay
+                    // out of the picker; they are not useful when choosing quality.
                     if (resolving) {
                         LinearProgressIndicator(Modifier.fillMaxWidth())
-                        Text("正在取得畫質選項…", color = Soft)
-                    }
-                    if (resolveError.isNotBlank()) {
-                        Text(resolveError, color = Color(0xFFFFBC92))
+                    } else if (choices.isEmpty()) {
+                        Text(
+                            if (resolveError.isNotBlank()) "目前沒有可下載項目"
+                            else "沒有找到可下載項目",
+                            color = Soft, style = MaterialTheme.typography.bodyMedium
+                        )
                         OutlinedButton(onClick = {
                             if (candidateSources.isNotEmpty())
                                 showDetectedChoices(candidateSources)
                             else selectedLink?.let { showDownload(it) }
-                        }) {
-                            Text("重新偵測")
-                        }
-                    }
-                    if (candidateSources.isNotEmpty() && choices.isNotEmpty()) {
-                        val groups = choices.map { MediaCandidateResolver.group(it.url) }.distinct()
-                        if (groups.size > 1) {
-                            Text(
-                                "本頁偵測到不同影片（" + groups.size +
-                                    " 組），請依每筆來源的影片 ID 和解析度選擇。",
-                                color = Color(0xFFFFCB83),
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                        }
-                    }
-                    if (choices.isNotEmpty() && sourceFailures.isNotEmpty()) {
-                        Text(
-                            "另有來源無法使用：" + sourceFailures.take(2).joinToString("；"),
-                            color = Color(0xFFFFBC92),
-                            style = MaterialTheme.typography.bodySmall
-                        )
+                        }) { Text("重新偵測") }
                     }
                     choices.forEach { stream ->
                         Card(
@@ -484,7 +448,9 @@ fun RootScreen(shared: String) {
                                 }.onSuccess {
                                     scope.launch { snackbar.showSnackbar("已加入下載：" + stream.label) }
                                 }.onFailure {
-                                    resolveError = it.message ?: "無法開始下載"
+                                    scope.launch {
+                                        snackbar.showSnackbar(it.message ?: "無法開始下載")
+                                    }
                                 }
                             },
                             colors = CardDefaults.cardColors(containerColor = Color(0xFF23384B))
@@ -493,22 +459,20 @@ fun RootScreen(shared: String) {
                                 Modifier.fillMaxWidth().padding(16.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Column(Modifier.weight(1f)) {
-                                    Text(stream.label, color = Green, fontWeight = FontWeight.Bold)
-                                    Text(
-                                        stream.detail.ifBlank { stream.title },
-                                        maxLines = 3, color = Soft,
-                                        style = MaterialTheme.typography.bodySmall
-                                    )
-                                }
-                                Text("下載 ↓", color = Green)
+                                Text(
+                                    stream.label,
+                                    color = Green,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Spacer(Modifier.width(12.dp))
+                                Icon(Icons.Default.Download, "下載此畫質", tint = Green)
                             }
                         }
                     }
-                    TextButton(
-                        onClick = { selectedLink = null; tab = 1 },
-                        modifier = Modifier.align(Alignment.End)
-                    ) { Text("查看下載管理") }
+
                 }
             }
         }
