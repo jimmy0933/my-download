@@ -12,6 +12,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -60,6 +62,9 @@ fun DownloadSettingsScreen(
     var selectedRepairId by remember { mutableLongStateOf(-1L) }
     var repairMenuExpanded by remember { mutableStateOf(false) }
     var repairResult by remember { mutableStateOf("") }
+    var preferredPlayer by remember { mutableStateOf(DownloadSettings.videoPlayer(context)) }
+    var playerMenuExpanded by remember { mutableStateOf(false) }
+    val installedPlayers = remember(context) { VideoPlayerApps.options(context) }
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -213,6 +218,57 @@ fun DownloadSettingsScreen(
                     Text("不透明 100%", color = Color(0xFF9CAFC0),
                         style = MaterialTheme.typography.bodySmall)
                 }
+            }
+        }
+
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF142333)),
+            shape = RoundedCornerShape(20.dp)
+        ) {
+            Column(Modifier.fillMaxWidth().padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.PlayArrow, null, tint = Color(0xFF27DBB3))
+                    Spacer(Modifier.width(9.dp))
+                    Text("影片播放器", style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold)
+                }
+                Text("從手機已安裝的播放器選擇播放方式；下次在下載管理按「播放」就會使用。",
+                    color = Color(0xFFB4C8D5), style = MaterialTheme.typography.bodySmall)
+                Box {
+                    OutlinedButton(
+                        onClick = { playerMenuExpanded = true },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(VideoPlayerApps.label(context, preferredPlayer),
+                            modifier = Modifier.weight(1f), maxLines = 1)
+                        Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                    }
+                    DropdownMenu(
+                        expanded = playerMenuExpanded,
+                        onDismissRequest = { playerMenuExpanded = false }
+                    ) {
+                        installedPlayers.forEach { player ->
+                            DropdownMenuItem(
+                                text = { Text(player.title) },
+                                onClick = {
+                                    preferredPlayer = player.id
+                                    DownloadSettings.setVideoPlayer(context, player.id)
+                                    playerMenuExpanded = false
+                                    notice = "已儲存播放設定：" + player.title
+                                },
+                                leadingIcon = {
+                                    RadioButton(
+                                        selected = preferredPlayer == player.id,
+                                        onClick = null
+                                    )
+                                }
+                            )
+                        }
+                    }
+                }
+                Text("可選系統預設、每次詢問，或已安裝的播放器。此設定用於下載完成的影片；X 網頁播放仍使用網頁播放器。",
+                    color = Color(0xFF9CAFC0), style = MaterialTheme.typography.bodySmall)
             }
         }
 
@@ -514,6 +570,7 @@ fun DownloadSettingsScreen(
                 )
                 DownloadSettings.setAdBlockEnabled(context, adsBlocked)
                 DownloadSettings.setAutoRepairMp4(context, autoRepair)
+                DownloadSettings.setVideoPlayer(context, preferredPlayer)
                 notice = "所有設定已儲存，重開 App 仍會保留。"
             },
             modifier = Modifier.fillMaxWidth()
