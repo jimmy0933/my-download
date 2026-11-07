@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Message
 import android.view.View
+import android.view.ScaleGestureDetector
 import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.DownloadListener
@@ -322,124 +323,191 @@ private val X_MEDIA_PINCH_ZOOM_SCRIPT = """
   const state = {
     path: location.pathname, media: null, scale: 1, x: 0, y: 0,
     startDistance: 0, startScale: 1, startX: 0, startY: 0,
-    startPanX: 0, startPanY: 0, mode: '',
-    originalScale: '', originalTranslate: '', originalOrigin: ''
+    startPanX: 0, startPanY: 0, mode: '', nativePinch: false,
+    originalScale: '', originalTranslate: '', originalOrigin: '',
+    originalScalePriority: '', originalTranslatePriority: ''
   };
-  const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
+  const clamp = (n,lo,hi) => Math.min(hi,Math.max(lo,n));
   const dist = (a,b) => Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY);
-  const viewer = () =>
-    /\/status\/\d+\/(?:photo|video)\/\d+\/?$/.test(location.pathname) ||
-    /^\/i\/status\/\d+\/?$/.test(location.pathname) ||
-    !!document.querySelector('#layers [role="dialog"]:has([data-testid="tweetPhoto"],video,[data-testid="videoPlayer"])');
-
+  const visible = rect => rect.width>90 && rect.height>65 &&
+    rect.right>0 && rect.left<innerWidth &&
+    rect.bottom>0 && rect.top<innerHeight;
+  const viewer = () => {
+    if (/\/status\/\d+/.test(location.pathname) ||
+        /^\/i\/status\/\d+/.test(location.pathname) ||
+        window.__mydownloadVideoFullscreen?.enabled) return true;
+    if (document.querySelector(
+        '#layers [role="dialog"]:has(video,[data-testid="tweetPhoto"])'
+      )) return true;
+    // X may open videos in an inline immersive viewer with no /video/1 path.
+    // A large visible video is a safe signal when the user pinches on it.
+    return [...document.querySelectorAll('video')].some(v => {
+      const r=v.getBoundingClientRect();
+      return visible(r) && r.width>=innerWidth*0.44 &&
+        r.height>=innerHeight*0.30;
+    });
+  };
   const reset = () => {
     if (state.media) {
-      state.media.style.scale = state.originalScale;
-      state.media.style.translate = state.originalTranslate;
-      state.media.style.transformOrigin = state.originalOrigin;
+      const media=state.media;
+      media.style.setProperty('scale',state.originalScale,
+        state.originalScalePriority);
+      media.style.setProperty('translate',state.originalTranslate,
+        state.originalTranslatePriority);
+      media.style.transformOrigin=state.originalOrigin;
     }
-    state.media = null; state.scale = 1; state.x = 0; state.y = 0;
-    state.mode = ''; state.startDistance = 0;
+    state.media=null;
+    state.scale=1;state.x=0;state.y=0;state.mode='';
+    state.startDistance=0;state.nativePinch=false;
   };
   const ensure = () => {
-    if (location.pathname !== state.path ||
+    if (state.path!==location.pathname ||
         (state.media && !state.media.isConnected)) {
       reset();
-      state.path = location.pathname;
+      state.path=location.pathname;
     }
   };
-  const targetMedia = (touches) => {
-    const midX = (touches[0].clientX + touches[1].clientX)/2;
-    const midY = (touches[0].clientY + touches[1].clientY)/2;
-    const near = document.elementFromPoint(midX, midY);
-    const container = near?.closest(
-      '[data-testid="videoPlayer"],[data-testid="tweetPhoto"],[data-testid="swipe-to-dismiss"],[role="dialog"]'
-    );
-    const candidates = [
-      ...(container ? container.querySelectorAll('video,img') : []),
-      ...document.querySelectorAll('video,img')
-    ];
-    let found = null, area = 0;
-    for (const media of candidates) {
-      const rect = media.getBoundingClientRect();
-      if (rect.width < 150 || rect.height < 100 ||
-          rect.left > midX || rect.right < midX ||
-          rect.top > midY || rect.bottom < midY) continue;
-      const size = rect.width * rect.height;
-      if (size > area) { found = media; area = size; }
-    }
-    return found;
+  const chooseMedia = (x,y) => {
+    const candidates=[...document.querySelectorAll('video,img')]
+      .map(media=>({media,rect:media.getBoundingClientRect()}))
+      .filter(({rect})=>visible(rect) && rect.width>=120 && rect.height>=80)
+      .map(item=>{
+        const r=item.rect;
+        const inside=x>=r.left && x<=r.right && y>=r.top && y<=r.bottom;
+        const overlap=Math.max(0,Math.min(r.right,innerWidth)-Math.max(0,r.left))*
+          Math.max(0,Math.min(r.bottom,innerHeight)-Math.max(0,r.top));
+        const dx=(r.left+r.right)/2-x,dy=(r.top+r.bottom)/2-y;
+        return {...item,inside,overlap,distance:Math.hypot(dx,dy)};
+      });
+    if (!candidates.length) return null;
+    // Video first, never a poster/image overlay that happens to cover it.
+    // A second video above or below the swipe must not be selected.
+    candidates.sort((a,b)=>
+      Number(b.inside)-Number(a.inside) ||
+      Number(b.media.tagName==='VIDEO')-Number(a.media.tagName==='VIDEO') ||
+      a.distance-b.distance || b.overlap-a.overlap);
+    const chosen=candidates[0];
+    if (!chosen.inside && chosen.distance>Math.max(innerWidth,innerHeight)*0.48)
+      return null;
+    return chosen.media;
   };
-  const capture = (media) => {
-    if (state.media !== media) {
+  const capture = media => {
+    if (!media) return false;
+    if (state.media!==media) {
       reset();
-      state.media = media;
-      state.originalScale = media.style.scale;
-      state.originalTranslate = media.style.translate;
-      state.originalOrigin = media.style.transformOrigin;
+      state.media=media;
+      state.originalScale=media.style.getPropertyValue('scale');
+      state.originalTranslate=media.style.getPropertyValue('translate');
+      state.originalOrigin=media.style.transformOrigin;
+      state.originalScalePriority=media.style.getPropertyPriority('scale');
+      state.originalTranslatePriority=media.style.getPropertyPriority('translate');
     }
+    return true;
   };
   const render = () => {
     if (!state.media) return;
-    state.media.style.transformOrigin = 'center center';
-    state.media.style.scale = String(state.scale);
-    state.media.style.translate = state.x + 'px ' + state.y + 'px';
+    state.media.style.transformOrigin='center center';
+    // Keep X's original transform/scroll logic. Scale and translate are
+    // individual properties, so we never reparent or force the video fixed.
+    state.media.style.setProperty('scale',String(state.scale),'important');
+    state.media.style.setProperty('translate',
+      state.x+'px '+state.y+'px','important');
   };
-
-  document.addEventListener('touchstart', e => {
+  const applyScale = factor => {
+    if (!state.media || !Number.isFinite(factor) || factor<=0) return;
+    state.scale=clamp(state.scale*factor,1,5);
+    if (state.scale<=1.005) {state.scale=1;state.x=0;state.y=0;}
+    render();
+  };
+  const beginPan = p => {
+    if (!state.media || state.scale<=1.01) return;
+    state.mode='pan';
+    state.startX=p.clientX;state.startY=p.clientY;
+    state.startPanX=state.x;state.startPanY=state.y;
+  };
+  const movePan = p => {
+    if (!state.media) return;
+    const rect=state.media.getBoundingClientRect();
+    const maxX=Math.max(0,rect.width*(state.scale-1)/(2*state.scale));
+    const maxY=Math.max(0,rect.height*(state.scale-1)/(2*state.scale));
+    state.x=clamp(state.startPanX+p.clientX-state.startX,-maxX,maxX);
+    state.y=clamp(state.startPanY+p.clientY-state.startY,-maxY,maxY);
+    render();
+  };
+  const nativeStart = (xFraction,yFraction) => {
+    ensure();
+    if (!viewer()) return false;
+    const x=innerWidth*clamp(xFraction,0,1);
+    const y=innerHeight*clamp(yFraction,0,1);
+    if (!capture(chooseMedia(x,y))) return false;
+    state.mode='native';
+    state.nativePinch=true;
+    return true;
+  };
+  const nativeScale = factor => {
+    if (!state.nativePinch || !state.media) return false;
+    applyScale(factor);
+    return true;
+  };
+  const nativeEnd = () => {
+    state.nativePinch=false;
+    if (state.mode==='native') state.mode='';
+  };
+  document.addEventListener('touchstart',e=>{
     ensure();
     if (!viewer()) return;
-    if (e.touches.length === 2) {
-      const media = targetMedia(e.touches);
-      if (!media) return;
-      capture(media);
-      state.startDistance = Math.max(1, dist(e.touches[0],e.touches[1]));
-      state.startScale = state.scale;
-      state.mode = 'pinch';
-    } else if (e.touches.length === 1 && state.media && state.scale > 1) {
-      const p = e.touches[0];
-      const r = state.media.getBoundingClientRect();
-      if (p.clientX >= r.left && p.clientX <= r.right &&
-          p.clientY >= r.top && p.clientY <= r.bottom) {
-        state.mode = 'pan'; state.startX = p.clientX; state.startY = p.clientY;
-        state.startPanX = state.x; state.startPanY = state.y;
-      }
+    if (e.touches.length===2) {
+      const x=(e.touches[0].clientX+e.touches[1].clientX)/2;
+      const y=(e.touches[0].clientY+e.touches[1].clientY)/2;
+      const media=chooseMedia(x,y);
+      if (!capture(media)) return;
+      state.startDistance=Math.max(1,dist(e.touches[0],e.touches[1]));
+      state.startScale=state.scale;
+      if (!state.nativePinch) state.mode='pinch';
+      if (e.cancelable) e.preventDefault();
+      e.stopImmediatePropagation();
+    } else if (e.touches.length===1 && state.media && state.scale>1.01) {
+      const p=e.touches[0],r=state.media.getBoundingClientRect();
+      if (p.clientX>=r.left && p.clientX<=r.right &&
+          p.clientY>=r.top && p.clientY<=r.bottom) beginPan(p);
     }
-  }, {capture:true, passive:false});
-  document.addEventListener('touchmove', e => {
+  },{capture:true,passive:false});
+  document.addEventListener('touchmove',e=>{
     if (!state.media || !viewer()) return;
-    if (state.mode === 'pinch' && e.touches.length === 2) {
-      state.scale = clamp(state.startScale *
-        dist(e.touches[0],e.touches[1]) / state.startDistance, 1, 4);
-      if (state.scale <= 1.001) { state.x = 0; state.y = 0; }
-      render();
-      e.preventDefault(); e.stopPropagation();
-    } else if (state.mode === 'pan' && e.touches.length === 1 && state.scale > 1) {
-      const p = e.touches[0], r = state.media.getBoundingClientRect();
-      const maxX = Math.max(0,(r.width * (state.scale-1)) / (2*state.scale));
-      const maxY = Math.max(0,(r.height * (state.scale-1)) / (2*state.scale));
-      state.x = clamp(state.startPanX + p.clientX-state.startX, -maxX,maxX);
-      state.y = clamp(state.startPanY + p.clientY-state.startY, -maxY,maxY);
-      render();
-      e.preventDefault(); e.stopPropagation();
+    if (e.touches.length===2 &&
+        (state.mode==='pinch' || state.nativePinch)) {
+      if (!state.nativePinch && state.startDistance>0) {
+        const ratio=dist(e.touches[0],e.touches[1])/state.startDistance;
+        state.scale=clamp(state.startScale*ratio,1,5);
+        if(state.scale<=1.005){state.scale=1;state.x=0;state.y=0;}
+        render();
+      }
+      if(e.cancelable)e.preventDefault();
+      e.stopImmediatePropagation();
+    } else if(e.touches.length===1 && state.mode==='pan' &&
+        state.scale>1.01) {
+      movePan(e.touches[0]);
+      if(e.cancelable)e.preventDefault();
+      e.stopImmediatePropagation();
     }
-  }, {capture:true, passive:false});
-  const end = e => {
-    if (state.mode === 'pinch' && e.touches.length < 2) {
-      state.mode = '';
-    } else if (state.mode === 'pan' && e.touches.length === 0) {
-      state.mode = '';
-    }
+  },{capture:true,passive:false});
+  const end=e=>{
+    if (e.touches.length===0) {
+      if (!state.nativePinch) state.mode='';
+    } else if(e.touches.length===1 && state.mode==='pinch' &&
+        state.scale>1.01) beginPan(e.touches[0]);
   };
-  document.addEventListener('touchend', end, {capture:true, passive:true});
-  document.addEventListener('touchcancel', end, {capture:true, passive:true});
-  // Reset zoom with a double tap; this affects only the focused media.
-  document.addEventListener('dblclick', e => {
-    if (state.media && state.scale > 1 && viewer()) {
-      e.preventDefault(); e.stopPropagation(); reset();
+  document.addEventListener('touchend',end,{capture:true,passive:true});
+  document.addEventListener('touchcancel',end,{capture:true,passive:true});
+  document.addEventListener('dblclick',e=>{
+    if (state.media && state.scale>1.01 && viewer()) {
+      e.preventDefault();e.stopImmediatePropagation();reset();
     }
-  }, {capture:true});
-  window.__mydownloadMediaZoom = {ensure, isZoomed: () => state.scale > 1.01};
+  },{capture:true});
+  window.__mydownloadMediaZoom={
+    ensure, isZoomed:()=>state.scale>1.01,
+    nativeStart,nativeScale,nativeEnd,reset
+  };
 })()
 """.trimIndent()
 
@@ -794,6 +862,9 @@ fun MultiTabBrowser(
         web.settings.domStorageEnabled = true
         web.settings.loadsImagesAutomatically = true
         web.settings.mediaPlaybackRequiresUserGesture = false
+        // Avoid WebView's page-level pinch zoom competing with the X media
+        // pinch detector. Other websites retain their usual browser zoom.
+        web.settings.setSupportZoom(!BrowserVideoDiscovery.isXPage(tab.url))
         web.settings.allowFileAccess = false
         web.settings.allowContentAccess = false
         web.settings.setSupportMultipleWindows(true)
@@ -809,6 +880,7 @@ fun MultiTabBrowser(
             val textZoom = if (BrowserVideoDiscovery.isXPage(url))
                 currentXOptions.fontSizePercent.coerceIn(80, 160) else 100
             if (web.settings.textZoom != textZoom) web.settings.textZoom = textZoom
+            web.settings.setSupportZoom(!BrowserVideoDiscovery.isXPage(url))
             if (!BrowserAddress.isWebUrl(url) && url != BrowserAddress.BLANK_TAB) return
             if (tab.url != url) {
                 val previousWasX = BrowserVideoDiscovery.isXPage(tab.url)
@@ -970,6 +1042,50 @@ fun MultiTabBrowser(
                 fullscreenCallback?.onCustomViewHidden()
                 fullscreenCallback = null
             }
+        }
+
+        // Android sees two-finger gestures even when X swallows DOM touch
+        // events. Forward incremental scale to the existing in-page media,
+        // without reloading the WebView or scaling the whole page.
+        val mediaScaleDetector = ScaleGestureDetector(
+            context,
+            object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+                override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
+                    if (!BrowserVideoDiscovery.isXPage(tab.url)) return false
+                    val focusX = (detector.focusX / web.width.coerceAtLeast(1))
+                        .coerceIn(0f, 1f)
+                    val focusY = (detector.focusY / web.height.coerceAtLeast(1))
+                        .coerceIn(0f, 1f)
+                    web.evaluateJavascript(X_MEDIA_PINCH_ZOOM_SCRIPT, null)
+                    web.evaluateJavascript(
+                        "window.__mydownloadMediaZoom?.nativeStart($focusX,$focusY)", null
+                    )
+                    return true
+                }
+
+                override fun onScale(detector: ScaleGestureDetector): Boolean {
+                    if (!BrowserVideoDiscovery.isXPage(tab.url)) return false
+                    val factor = detector.scaleFactor.coerceIn(0.5f, 2f)
+                    web.evaluateJavascript(
+                        "window.__mydownloadMediaZoom?.nativeScale($factor)", null
+                    )
+                    return true
+                }
+
+                override fun onScaleEnd(detector: ScaleGestureDetector) {
+                    if (BrowserVideoDiscovery.isXPage(tab.url)) {
+                        web.evaluateJavascript(
+                            "window.__mydownloadMediaZoom?.nativeEnd()", null
+                        )
+                    }
+                }
+            }
+        )
+        web.setOnTouchListener { _, event ->
+            if (BrowserVideoDiscovery.isXPage(tab.url)) {
+                mediaScaleDetector.onTouchEvent(event)
+            }
+            false  // Let the existing player receive normal one-finger swipes/taps.
         }
 
         web.setOnScrollChangeListener { _, _, y, _, _ ->
