@@ -804,6 +804,21 @@ private val X_IMMERSIVE_FIT_SCRIPT = """
     }
     if(attempt<3)requestAnimationFrame(()=>restoreVisible(token,attempt+1));
   };
+  // Orientation events can arrive before the next 950 ms polling cycle.
+  // Use the already-saved card immediately, without changing the playing
+  // video element, source URL or playback position.
+  state.handleResize=()=>{
+    const found=measure();
+    if(!found || !found.cards.includes(state.anchorCard))return;
+    const token=++state.restoreToken;
+    requestAnimationFrame(()=>restoreVisible(token));
+  };
+  if(!state.resizeInstalled){
+    state.resizeInstalled=true;
+    window.addEventListener('resize',()=>state.handleResize?.(),{passive:true});
+    window.visualViewport?.addEventListener('resize',
+      ()=>state.handleResize?.(),{passive:true});
+  }
   const width=innerWidth, height=Math.round(window.visualViewport?.height||innerHeight);
   const resized=state.lastViewportWidth>0 &&
     (Math.abs(width-state.lastViewportWidth)>20 ||
