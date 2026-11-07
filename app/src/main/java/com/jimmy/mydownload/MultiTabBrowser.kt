@@ -571,6 +571,67 @@ private fun xVideoFullscreenScript(enabled: Boolean): String =
  * Uses touch capture only for completed double taps. Single taps, vertical
  * carousel swipes and two-finger zoom remain owned by X.
  */
+/**
+ * Resize X's mobile immersive carousel (not the video layer) to the *actual*
+ * landscape WebView viewport. X retains ownership of vertical swipe snapping.
+ */
+private val X_IMMERSIVE_FIT_SCRIPT = """
+(() => {
+  if(!/^(?:www\.)?(?:x\.com|twitter\.com)$/.test(location.hostname))return;
+  const enabled=__ENABLED__ && innerWidth>innerHeight*1.12;
+  const cardAttr='data-mydownload-fullscreen-card';
+  const scrollAttr='data-mydownload-fullscreen-scroll';
+  const styleId='mydownload-fullscreen-card-size';
+  const previous=document.getElementById(styleId);
+  if(!enabled){
+    previous?.remove();
+    document.querySelectorAll('['+cardAttr+']').forEach(e=>e.removeAttribute(cardAttr));
+    document.querySelectorAll('['+scrollAttr+']').forEach(e=>e.removeAttribute(scrollAttr));
+    return 'disabled';
+  }
+  const scroller=document.querySelector('[data-testid="vss-scroll-view"]');
+  if(!scroller)return 'no-immersive-view';
+  const viewport=Math.round(window.visualViewport?.height||innerHeight);
+  if(viewport<140)return 'not-ready';
+  let list=scroller.firstElementChild;
+  let cards=[];
+  for(let level=0;list && level<4;level++){
+    const children=[...list.children].filter(e=>e instanceof HTMLElement);
+    if(!children.length)break;
+    cards=children.filter(e=>e.querySelector(
+      'video,[data-testid^="immersive-tweet-ui-content-container"]'));
+    if(cards.length||children.length>1)break;
+    list=children[0];
+  }
+  if(!cards.length)return 'no-video-cards';
+  document.querySelectorAll('['+cardAttr+']').forEach(e=>{
+    if(!cards.includes(e))e.removeAttribute(cardAttr);
+  });
+  for(const card of cards)card.setAttribute(cardAttr,'1');
+  scroller.setAttribute(scrollAttr,'1');
+  let style=previous;
+  if(!style){
+    style=document.createElement('style');style.id=styleId;
+    (document.head||document.documentElement).appendChild(style);
+  }
+  // Matching full-height cards prevents the preceding post peeking in from
+  // the top when Android hides its status/navigation bars. Never use
+  // scrollTo, scrollIntoView, fixed video positioning, or video transforms.
+  const css='[data-testid="vss-scroll-view"]['+scrollAttr+'] {'+
+    'height:'+viewport+'px !important;min-height:'+viewport+'px !important;'+
+    'max-height:'+viewport+'px !important;box-sizing:border-box !important;}'+
+    '['+cardAttr+'="1"] {'+
+    'height:'+viewport+'px !important;min-height:'+viewport+'px !important;'+
+    'max-height:'+viewport+'px !important;flex:0 0 '+viewport+'px !important;'+
+    'box-sizing:border-box !important;}';
+  if(style.textContent!==css)style.textContent=css;
+  return 'applied';
+})()
+""".trimIndent()
+
+private fun xImmersiveFitScript(enabled: Boolean): String =
+    X_IMMERSIVE_FIT_SCRIPT.replace("__ENABLED__", enabled.toString())
+
 private val X_VIDEO_DOUBLE_TAP_SEEK_SCRIPT = """
 (() => {
   if (!/^(?:www\.)?(?:x\.com|twitter\.com)$/.test(location.hostname)) return;
@@ -990,9 +1051,8 @@ fun MultiTabBrowser(
                     view?.evaluateJavascript(X_MEDIA_PINCH_ZOOM_SCRIPT, null)
                     view?.evaluateJavascript(X_VIDEO_DOUBLE_TAP_SEEK_SCRIPT, null)
                     if (browserVideoFullscreen) {
-                        // A document replacement can occur on X; restore the
-                        // fullscreen UI state without seeking or reopening video.
                         view?.evaluateJavascript(xVideoFullscreenScript(true), null)
+                        view?.evaluateJavascript(xImmersiveFitScript(true), null)
                     }
                 }
                 saveSession()
@@ -1133,6 +1193,7 @@ fun MultiTabBrowser(
             }
         } else {
             browserVideoFullscreen = false
+            web.evaluateJavascript(xImmersiveFitScript(false), null)
             web.evaluateJavascript(xVideoFullscreenScript(false), null)
         }
     }
@@ -1363,6 +1424,9 @@ fun MultiTabBrowser(
                     browser.evaluateJavascript(xDisplayScript(currentXOptions), null)
                     browser.evaluateJavascript(X_MEDIA_PINCH_ZOOM_SCRIPT, null)
                     browser.evaluateJavascript(X_VIDEO_DOUBLE_TAP_SEEK_SCRIPT, null)
+                    if (browserVideoFullscreen) {
+                        browser.evaluateJavascript(xImmersiveFitScript(true), null)
+                    }
                     // X's own carousel owns the vertical swipe and snap.
                     // Do not call scrollTo/scrollIntoView after the gesture.
                 }
@@ -1400,9 +1464,10 @@ fun MultiTabBrowser(
     // No player CSS/DOM changes or WebView reloads are performed.
     LaunchedEffect(visible, browserVideoFullscreen, selected.id, selected.url) {
         if (visible && BrowserVideoDiscovery.isXPage(selected.url)) {
-            currentWebView()?.evaluateJavascript(
-                xVideoFullscreenScript(browserVideoFullscreen), null
-            )
+            currentWebView()?.let { browser ->
+                browser.evaluateJavascript(xVideoFullscreenScript(browserVideoFullscreen), null)
+                browser.evaluateJavascript(xImmersiveFitScript(browserVideoFullscreen), null)
+            }
         }
     }
 
