@@ -79,6 +79,113 @@ object BrowserVideoDiscovery {
 
     // Media players may use blob: URLs for <video>. These entries only expose
     // already-loaded network media resources, without making new API calls.
+    /**
+     * Scans the LIVE active player at download-click time. Unlike SCAN_SCRIPT,
+     * which lists every visible/preloaded video, this returns one active clip
+     * with caption and post identity from its own card. Never reuse stale
+     * scan results from a previous swipe.
+     */
+    val ACTIVE_VIDEO_SCAN_SCRIPT = """
+(() => {
+  const result = {width:innerWidth, videos:[], pageText:'', pagePostUrl:''};
+  const within = rect => rect.width >= 100 && rect.height >= 70 &&
+    rect.left < innerWidth && rect.right > 0 &&
+    rect.top < innerHeight && rect.bottom > 0;
+  const visibleArea = rect =>
+    Math.max(0,Math.min(innerWidth,rect.right)-Math.max(0,rect.left)) *
+    Math.max(0,Math.min(innerHeight,rect.bottom)-Math.max(0,rect.top));
+  const entries = [...document.querySelectorAll('video')].map(video => {
+    const rect = video.getBoundingClientRect();
+    const area = visibleArea(rect);
+    const centerY = (rect.top+rect.bottom)/2;
+    const centerX = (rect.left+rect.right)/2;
+    const distance = Math.abs(centerY-innerHeight/2)/Math.max(innerHeight,1) +
+      Math.abs(centerX-innerWidth/2)/Math.max(innerWidth,1);
+    const playing = !video.paused && !video.ended && video.readyState >= 1;
+    return {video,rect,area,distance,playing};
+  }).filter(entry => within(entry.rect) && entry.area>10000);
+  if (!entries.length) return JSON.stringify(result);
+  // Favor a playing, prominently visible video over one preloaded above/below.
+  entries.sort((a,b) => Number(b.playing)-Number(a.playing) ||
+    b.area-a.area || a.distance-b.distance);
+  const {video,rect} = entries[0];
+
+  const currentStatus = /\/status\/(\d{6,22})/.exec(location.pathname)?.[1] || '';
+  const statusLinks = container => container
+    ? [...container.querySelectorAll('a[href*="/status/"]')].map(a=>a.href)
+       .filter(url => /\/status\/\d{6,22}/.test(url)) : [];
+
+  let article = video.closest('article');
+  const getText = node =>
+    (node?.querySelector('[data-testid="tweetText"]')?.innerText ||
+      node?.querySelector('[data-testid="media-caption"]')?.innerText ||
+      node?.querySelector('[data-testid="video-caption"]')?.innerText || '').trim();
+  let text = getText(article);
+  let url = statusLinks(article)[0] || '';
+
+  // X media-viewer DOM may place video and caption in sibling nodes.
+  // Find the smallest ancestor with a caption or matching status link,
+  // without accidentally selecting the whole feed with an older post.
+  if (!text || !url) {
+    let node=video.parentElement;
+    for (let level=0;node && level<12;node=node.parentElement,level++) {
+      const candidateText=getText(node);
+      const links=statusLinks(node);
+      const matchingUrl=currentStatus ?
+        links.find(link=>link.includes('/status/'+currentStatus)) : '';
+      const candidateUrl=matchingUrl || (links.length===1?links[0]:'');
+      if ((!text && candidateText) || (!url && candidateUrl)) {
+        if (!text && candidateText) text=candidateText;
+        if (!url && candidateUrl) url=candidateUrl;
+      }
+      if (text && url) break;
+    }
+  }
+
+  // If the viewer is on a specific status, resolve its caption from that
+  // post rather than borrowing another article's text.
+  if (currentStatus) {
+    const exact = [...document.querySelectorAll('article')].find(node =>
+      statusLinks(node).some(link => link.includes('/status/'+currentStatus)));
+    if (exact && (!article || !text)) {
+      text=getText(exact)||text;
+    }
+    if (!url || !url.includes('/status/'+currentStatus)) url=location.href;
+  }
+
+  // Final fallback: nearest visible caption to the active video, not the
+  // first tweet in the DOM. A distant/hidden caption is not accepted.
+  if (!text) {
+    const captions=[...document.querySelectorAll('[data-testid="tweetText"]')];
+    const scored=captions.map(node => {
+      const r=node.getBoundingClientRect();
+      const d=Math.abs((r.top+r.bottom)/2-(rect.top+rect.bottom)/2);
+      return {node,r,d};
+    }).filter(x=>x.r.width>20 && x.r.height>10 &&
+      x.r.bottom>0 && x.r.top<innerHeight &&
+      x.d<innerHeight*0.82).sort((a,b)=>a.d-b.d);
+    text=scored[0]?.node.innerText?.trim() || '';
+  }
+
+  const src=video.currentSrc || video.src ||
+    video.querySelector('source')?.src || '';
+  const thumb=video.poster ||
+    article?.querySelector('img[src*="twimg.com"]')?.src || '';
+  const mediaId=(
+    /(?:ext_tw_video_thumb|amplify_video_thumb|tweet_video_thumb)\/(\d+)/.exec(thumb) ||
+    /(?:ext_tw_video|amplify_video|tweet_video|tv_video)\/(\d+)/.exec(src) ||
+    [,'']
+  )[1];
+  result.pageText=text.slice(0,1200);
+  result.pagePostUrl=url || (currentStatus?location.href:'');
+  result.videos.push({
+    src,right:rect.right,top:rect.top,mediaId,
+    postText:result.pageText,postUrl:result.pagePostUrl
+  });
+  return JSON.stringify(result);
+})()
+""".trimIndent()
+
     val RESOURCE_SCAN_SCRIPT = """
 (() => JSON.stringify(performance.getEntriesByType('resource')
   .map(entry => entry.name)
