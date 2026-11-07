@@ -577,60 +577,199 @@ private fun xVideoFullscreenScript(enabled: Boolean): String =
  */
 private val X_IMMERSIVE_FIT_SCRIPT = """
 (() => {
-  if(!/^(?:www\.)?(?:x\.com|twitter\.com)$/.test(location.hostname))return;
+  if (!/^(?:www\.)?(?:x\.com|twitter\.com)$/.test(location.hostname)) return;
   const enabled=__ENABLED__ && innerWidth>innerHeight*1.12;
+  const stateKey='__mydownloadImmersiveFit';
+  const state=window[stateKey]||(window[stateKey]={
+    active:false, listenerInstalled:false, gesture:null, timer:0,
+    scroll:null, cards:[], lastHeight:0
+  });
   const cardAttr='data-mydownload-fullscreen-card';
   const scrollAttr='data-mydownload-fullscreen-scroll';
   const styleId='mydownload-fullscreen-card-size';
-  const previous=document.getElementById(styleId);
+
+  const clear=()=>{
+    clearTimeout(state.timer);
+    state.timer=0;state.gesture=null;
+    document.getElementById(styleId)?.remove();
+    document.querySelectorAll('['+cardAttr+']').forEach(el=>
+      el.removeAttribute(cardAttr));
+    document.querySelectorAll('['+scrollAttr+']').forEach(el=>
+      el.removeAttribute(scrollAttr));
+    state.scroll=null;state.cards=[];state.lastHeight=0;
+  };
   if(!enabled){
-    previous?.remove();
-    document.querySelectorAll('['+cardAttr+']').forEach(e=>e.removeAttribute(cardAttr));
-    document.querySelectorAll('['+scrollAttr+']').forEach(e=>e.removeAttribute(scrollAttr));
+    state.active=false;clear();
     return 'disabled';
   }
-  const scroller=document.querySelector('[data-testid="vss-scroll-view"]');
-  if(!scroller)return 'no-immersive-view';
-  const viewport=Math.round(window.visualViewport?.height||innerHeight);
-  if(viewport<140)return 'not-ready';
-  let list=scroller.firstElementChild;
-  let cards=[];
-  for(let level=0;list && level<4;level++){
-    const children=[...list.children].filter(e=>e instanceof HTMLElement);
-    if(!children.length)break;
-    cards=children.filter(e=>e.querySelector(
-      'video,[data-testid^="immersive-tweet-ui-content-container"]'));
-    // A single wrapper containing multiple videos is the entire timeline,
-    // not a slide. Descend once more rather than shrinking the whole feed.
-    if(cards.length===1 && children.length===1 &&
-        cards[0].querySelectorAll('video').length>1){
-      list=children[0];continue;
+  state.active=true;
+
+  const findCards=scroller=>{
+    let list=scroller.firstElementChild;
+    for(let depth=0;list&&depth<5;depth++){
+      const children=[...list.children].filter(el=>el instanceof HTMLElement);
+      if(!children.length)return [];
+      const videos=children.filter(el=>el.querySelector(
+        'video,[data-testid^="immersive-tweet-ui-content-container"]'));
+      if(videos.length>1)return videos;
+      if(videos.length===1 && children.length===1 &&
+          videos[0].querySelectorAll('video').length>1){
+        list=children[0];continue;
+      }
+      if(videos.length===1 && children.length>1)return videos;
+      if(videos.length===1 && children.length===1){
+        // A single post may be the only mounted card; keep that card unless
+        // its child is clearly another wrapper around multiple media posts.
+        return videos;
+      }
+      // No media at this level, descend through the sole wrapper.
+      if(children.length!==1)return [];
+      list=children[0];
     }
-    if(cards.length||children.length>1)break;
-    list=children[0];
+    return [];
+  };
+  const measure=()=>{
+    const scroller=document.querySelector('[data-testid="vss-scroll-view"]');
+    if(!scroller)return null;
+    const cards=findCards(scroller);
+    if(!cards.length)return null;
+    return {scroller,cards,box:scroller.getBoundingClientRect()};
+  };
+  const apply=()=>{
+    if(!state.active)return null;
+    const found=measure();
+    if(!found)return null;
+    const {scroller,cards}=found;
+    const height=Math.round(window.visualViewport?.height||innerHeight);
+    if(height<140)return null;
+    state.scroll=scroller;state.cards=cards;state.lastHeight=height;
+    document.querySelectorAll('['+cardAttr+']').forEach(el=>{
+      if(!cards.includes(el))el.removeAttribute(cardAttr);
+    });
+    for(const card of cards){
+      if(!card.hasAttribute(cardAttr))card.setAttribute(cardAttr,'1');
+    }
+    if(!scroller.hasAttribute(scrollAttr))scroller.setAttribute(scrollAttr,'1');
+    let style=document.getElementById(styleId);
+    if(!style){
+      style=document.createElement('style');style.id=styleId;
+      (document.head||document.documentElement).appendChild(style);
+    }
+    // Resize the carousel and ask the browser to snap each *card* to its
+    // beginning, instead of carrying portrait-sized snap offsets into
+    // landscape. The real video/player surface is never transformed.
+    const css='[data-testid="vss-scroll-view"]['+scrollAttr+'] {'+
+      'height:'+height+'px !important;min-height:'+height+'px !important;'+
+      'max-height:'+height+'px !important;box-sizing:border-box !important;'+
+      'scroll-snap-type:y mandatory !important;'+
+      'scroll-padding-block:0 !important;'+
+      '}'+
+      '['+cardAttr+'="1"] {'+
+      'height:'+height+'px !important;min-height:'+height+'px !important;'+
+      'max-height:'+height+'px !important;flex:0 0 '+height+'px !important;'+
+      'box-sizing:border-box !important;'+
+      'scroll-snap-align:start !important;'+
+      'scroll-snap-stop:always !important;'+
+      'scroll-margin-block:0 !important;}';
+    if(style.textContent!==css)style.textContent=css;
+    return found;
+  };
+
+  // Choose the card which owns the center of the visible screen. A thin
+  // remnant of the preceding card at the top cannot win this comparison.
+  const centered=({scroller,cards,box})=>{
+    const cy=Math.max(box.top,0)+
+      Math.min(box.height,innerHeight)/2;
+    let chosen=null,best=-Infinity;
+    cards.forEach((card,index)=>{
+      const r=card.getBoundingClientRect();
+      const overlap=Math.max(0,Math.min(r.bottom,box.bottom,innerHeight)-
+        Math.max(r.top,box.top,0));
+      const contains=cy>=r.top && cy<=r.bottom;
+      const score=(contains?100000:0)+overlap-
+        Math.abs((r.top+r.bottom)/2-cy)*0.12;
+      if(score>best){best=score;chosen={card,index,rect:r,overlap};}
+    });
+    return chosen && chosen.overlap>Math.min(innerHeight,box.height)*0.22
+      ? chosen : null;
+  };
+
+  // X normally handles the snap itself. Correct only a *small remaining*
+  // offset after a confirmed swipe to a different card. Never call
+  // scrollIntoView, never select the old card, never use smooth scroll.
+  const finishSwipe=(gesture,attempt=0)=>{
+    if(!state.active||state.gesture)return;
+    const found=apply();
+    if(!found)return;
+    const {scroller,cards,box}=found;
+    if(gesture.scroller!==scroller)return;
+    const current=centered(found);
+    if(!current)return;
+    const changed=current.card!==gesture.fromCard;
+    const inDirection=gesture.direction>0
+      ? current.index>gesture.fromIndex
+      : current.index<gesture.fromIndex;
+    if(!changed || !inDirection)return;
+    const delta=current.rect.top-box.top;
+    // Only correct an under-snap (e.g. new post starts 125px below top).
+    // A full-card jump here would move the user backwards, so disallow it.
+    if(Math.abs(delta)<10 || Math.abs(delta)>box.height*0.42)return;
+    const target=scroller.scrollTop+delta;
+    const range=scroller.scrollHeight-scroller.clientHeight;
+    if(range<=20 || target<0 || target>range+2)return;
+    // Only move in the user's intended swipe direction.
+    if(gesture.direction>0 && delta<=0)return;
+    if(gesture.direction<0 && delta>=0)return;
+    if(attempt<1){
+      // Wait until X's momentum animation has settled, so we don't fight it.
+      const savedTop=scroller.scrollTop;
+      state.timer=setTimeout(()=>{
+        if(!state.active||state.gesture)return;
+        if(Math.abs(scroller.scrollTop-savedTop)>5){
+          finishSwipe(gesture,1);
+        }else{
+          scroller.scrollTop=target;
+        }
+      },110);
+    }else{
+      scroller.scrollTop=target;
+    }
+  };
+
+  if(!state.listenerInstalled){
+    state.listenerInstalled=true;
+    document.addEventListener('touchstart',event=>{
+      if(!state.active||event.touches.length!==1)return;
+      const found=apply();
+      if(!found)return;
+      const current=centered(found);
+      if(!current)return;
+      const t=event.touches[0];
+      state.gesture={
+        x:t.clientX,y:t.clientY,fromIndex:current.index,
+        fromCard:current.card,scroller:found.scroller
+      };
+      clearTimeout(state.timer);
+    },{capture:true,passive:true});
+    document.addEventListener('touchend',event=>{
+      const gesture=state.gesture;
+      if(!gesture)return;
+      if(event.touches.length!==0||event.changedTouches.length!==1){
+        state.gesture=null;return;
+      }
+      state.gesture=null;
+      const t=event.changedTouches[0];
+      const dx=t.clientX-gesture.x,dy=t.clientY-gesture.y;
+      if(Math.abs(dy)<55||Math.abs(dy)<Math.abs(dx)*1.3)return;
+      gesture.direction=dy<0?1:-1;
+      clearTimeout(state.timer);
+      state.timer=setTimeout(()=>finishSwipe(gesture),350);
+    },{capture:true,passive:true});
+    document.addEventListener('touchcancel',()=>{
+      state.gesture=null;clearTimeout(state.timer);
+    },{capture:true,passive:true});
   }
-  if(!cards.length)return 'no-video-cards';
-  document.querySelectorAll('['+cardAttr+']').forEach(e=>{
-    if(!cards.includes(e))e.removeAttribute(cardAttr);
-  });
-  for(const card of cards)card.setAttribute(cardAttr,'1');
-  scroller.setAttribute(scrollAttr,'1');
-  let style=previous;
-  if(!style){
-    style=document.createElement('style');style.id=styleId;
-    (document.head||document.documentElement).appendChild(style);
-  }
-  // Matching full-height cards prevents the preceding post peeking in from
-  // the top when Android hides its status/navigation bars. Never use
-  // scrollTo, scrollIntoView, fixed video positioning, or video transforms.
-  const css='[data-testid="vss-scroll-view"]['+scrollAttr+'] {'+
-    'height:'+viewport+'px !important;min-height:'+viewport+'px !important;'+
-    'max-height:'+viewport+'px !important;box-sizing:border-box !important;}'+
-    '['+cardAttr+'="1"] {'+
-    'height:'+viewport+'px !important;min-height:'+viewport+'px !important;'+
-    'max-height:'+viewport+'px !important;flex:0 0 '+viewport+'px !important;'+
-    'box-sizing:border-box !important;}';
-  if(style.textContent!==css)style.textContent=css;
+  apply();
   return 'applied';
 })()
 """.trimIndent()
