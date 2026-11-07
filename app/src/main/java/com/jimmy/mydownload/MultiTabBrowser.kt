@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.Message
 import android.view.View
 import android.view.ScaleGestureDetector
+import android.view.MotionEvent
 import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.DownloadListener
@@ -736,38 +737,54 @@ private val X_IMMERSIVE_FIT_SCRIPT = """
     }
   };
 
+  const startGesture=(x,y)=>{
+    if(!state.active || state.gesture)return;
+    const found=apply();
+    if(!found)return;
+    const current=centered(found);
+    if(!current)return;
+    state.gesture={
+      x,y,fromIndex:current.index,fromCard:current.card,
+      scroller:found.scroller
+    };
+    clearTimeout(state.timer);
+  };
+  const completeGesture=(dx,dy)=>{
+    const gesture=state.gesture;
+    if(!gesture)return;
+    state.gesture=null;
+    if(Math.abs(dy)<55 || Math.abs(dy)<Math.abs(dx)*1.3)return;
+    gesture.direction=dy<0?1:-1;
+    clearTimeout(state.timer);
+    state.timer=setTimeout(()=>finishSwipe(gesture),350);
+  };
+  const cancelGesture=()=>{
+    state.gesture=null;
+    clearTimeout(state.timer);
+  };
+  // Android's WebView also forwards a swipe here when X swallows DOM touch
+  // events. Both paths share one gesture record and cannot snap twice.
+  state.nativeStart=startGesture;
+  state.nativeFinish=completeGesture;
+  state.nativeCancel=cancelGesture;
   if(!state.listenerInstalled){
     state.listenerInstalled=true;
     document.addEventListener('touchstart',event=>{
-      if(!state.active||event.touches.length!==1)return;
-      const found=apply();
-      if(!found)return;
-      const current=centered(found);
-      if(!current)return;
+      if(!state.active || event.touches.length!==1)return;
       const t=event.touches[0];
-      state.gesture={
-        x:t.clientX,y:t.clientY,fromIndex:current.index,
-        fromCard:current.card,scroller:found.scroller
-      };
-      clearTimeout(state.timer);
+      startGesture(t.clientX,t.clientY);
     },{capture:true,passive:true});
     document.addEventListener('touchend',event=>{
+      if(event.touches.length!==0 || event.changedTouches.length!==1){
+        cancelGesture();return;
+      }
       const gesture=state.gesture;
       if(!gesture)return;
-      if(event.touches.length!==0||event.changedTouches.length!==1){
-        state.gesture=null;return;
-      }
-      state.gesture=null;
       const t=event.changedTouches[0];
-      const dx=t.clientX-gesture.x,dy=t.clientY-gesture.y;
-      if(Math.abs(dy)<55||Math.abs(dy)<Math.abs(dx)*1.3)return;
-      gesture.direction=dy<0?1:-1;
-      clearTimeout(state.timer);
-      state.timer=setTimeout(()=>finishSwipe(gesture),350);
+      completeGesture(t.clientX-gesture.x,t.clientY-gesture.y);
     },{capture:true,passive:true});
-    document.addEventListener('touchcancel',()=>{
-      state.gesture=null;clearTimeout(state.timer);
-    },{capture:true,passive:true});
+    document.addEventListener('touchcancel',cancelGesture,
+      {capture:true,passive:true});
   }
   apply();
   return 'applied';
@@ -1286,11 +1303,54 @@ fun MultiTabBrowser(
                 }
             }
         )
+        var swipeStartX = 0f
+        var swipeStartY = 0f
+        var wasMultiTouch = false
         web.setOnTouchListener { _, event ->
             if (BrowserVideoDiscovery.isXPage(tab.url)) {
                 mediaScaleDetector.onTouchEvent(event)
+                if (browserVideoFullscreen) {
+                    when (event.actionMasked) {
+                        MotionEvent.ACTION_DOWN -> {
+                            swipeStartX = event.x
+                            swipeStartY = event.y
+                            wasMultiTouch = false
+                            web.evaluateJavascript(
+                                "window.__mydownloadImmersiveFit?.nativeStart(" +
+                                    "${event.x},${event.y})", null
+                            )
+                        }
+                        MotionEvent.ACTION_POINTER_DOWN -> {
+                            wasMultiTouch = true
+                            web.evaluateJavascript(
+                                "window.__mydownloadImmersiveFit?.nativeCancel()", null
+                            )
+                        }
+                        MotionEvent.ACTION_UP -> {
+                            if (!wasMultiTouch) {
+                                val dx = event.x - swipeStartX
+                                val dy = event.y - swipeStartY
+                                if (kotlin.math.abs(dy) > 55f &&
+                                    kotlin.math.abs(dy) > kotlin.math.abs(dx) * 1.3f
+                                ) {
+                                    web.evaluateJavascript(
+                                        "window.__mydownloadImmersiveFit?.nativeFinish(" +
+                                            "$" + "dx,$" + "dy)", null
+                                    )
+                                } else {
+                                    web.evaluateJavascript(
+                                        "window.__mydownloadImmersiveFit?.nativeCancel()", null
+                                    )
+                                }
+                            }
+                        }
+                        MotionEvent.ACTION_CANCEL -> web.evaluateJavascript(
+                            "window.__mydownloadImmersiveFit?.nativeCancel()", null
+                        )
+                    }
+                }
             }
-            false  // Let the existing player receive normal one-finger swipes/taps.
+            false  // Existing X single-finger swipes, taps and seek remain native.
         }
 
         web.setOnScrollChangeListener { _, _, y, _, _ ->
