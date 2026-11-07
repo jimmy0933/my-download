@@ -503,6 +503,136 @@ private fun xVideoFullscreenScript(enabled: Boolean): String =
  * Uses touch capture only for completed double taps. Single taps, vertical
  * carousel swipes and two-finger zoom remain owned by X.
  */
+/**
+ * X video feeds may retain a portrait-era vertical offset when entering
+ * landscape immersive mode. Snap the *scrolling card*, never the video node:
+ * fixed-position/transformed video surfaces caused black frames previously.
+ */
+private val X_FULLSCREEN_VERTICAL_SNAP_SCRIPT = """
+(() => {
+  if (!/^(?:www\.)?(?:x\.com|twitter\.com)$/.test(location.hostname)) return;
+  const old = window.__mydownloadXVerticalSnap;
+  if (old) { old.refresh(); return; }
+
+  const state = {
+    route: location.pathname,
+    width: innerWidth, height: innerHeight,
+    finger: null, timer: null
+  };
+  const isFullscreenLandscape = () =>
+    window.__mydownloadVideoFullscreen?.enabled === true &&
+    innerWidth > innerHeight * 1.15 &&
+    (/\/status\/\d+/.test(location.pathname) ||
+      !!document.querySelector('#layers [role="dialog"]:has(video)'));
+
+  function snapToCurrent() {
+    if (!isFullscreenLandscape() || state.finger) return 'inactive';
+
+    // Look at the current center video, not the previous clip above it.
+    const videos = Array.from(document.querySelectorAll('video')).map(video => ({
+      video, rect: video.getBoundingClientRect()
+    })).filter(({rect}) => rect.width >= 120 && rect.height >= 100 &&
+      rect.right > 0 && rect.left < innerWidth &&
+      rect.bottom > innerHeight * 0.35 && rect.top < innerHeight * 0.70);
+    if (!videos.length) return 'no-video';
+    videos.sort((a,b) => {
+      const ay = Math.max(0, Math.min(a.rect.bottom,innerHeight)-Math.max(0,a.rect.top));
+      const by = Math.max(0, Math.min(b.rect.bottom,innerHeight)-Math.max(0,b.rect.top));
+      return Number(!b.video.paused) - Number(!a.video.paused) || by-ay;
+    });
+    const video = videos[0].video;
+
+    // Identify the slide's outer card. It has roughly a full viewport's
+    // height; internal video controls and subtitles must keep their layout.
+    let slide = null, bestScore = Infinity;
+    let node = video.closest('[data-testid="videoPlayer"]') || video.parentElement;
+    for (let level=0;node && level<13;node=node.parentElement,level++) {
+      const r = node.getBoundingClientRect();
+      if (r.height > innerHeight*2.25) break;
+      if (r.height < innerHeight*0.64 || r.width < innerWidth*0.43) continue;
+      if (r.top < -innerHeight*0.28 || r.top > innerHeight*0.45) continue;
+      if (node.querySelectorAll('video').length > 2) break;
+      const score = Math.abs(r.height-innerHeight) +
+        (r.top < 0 ? Math.abs(r.top)*0.6 : 0);
+      if (score < bestScore) {slide=node;bestScore=score;}
+    }
+    if (!slide) return 'no-slide';
+    const rect = slide.getBoundingClientRect();
+    // Only correct the small residual offset shown between adjacent videos.
+    // Never jump the feed to a different post.
+    if (rect.top <= 14 || rect.top > innerHeight*0.43) return 'already-aligned';
+
+    let nodeParent = slide.parentElement;
+    while (nodeParent) {
+      const scroller = nodeParent;
+      const isRoot = scroller === document.scrollingElement ||
+        scroller === document.documentElement || scroller === document.body;
+      const css = getComputedStyle(scroller);
+      const canScroll = isRoot || /auto|scroll|overlay/.test(css.overflowY);
+      const range = scroller.scrollHeight-scroller.clientHeight;
+      if (canScroll && range > 25) {
+        const containerTop = isRoot ? 0 : scroller.getBoundingClientRect().top;
+        const delta = rect.top-containerTop;
+        if (delta > 12 && delta < innerHeight*0.43) {
+          const position = Math.min(range,scroller.scrollTop+delta);
+          if (position>scroller.scrollTop+8) {
+            scroller.scrollTo({top:position,behavior:'smooth'});
+            return 'snapped';
+          }
+        }
+      }
+      nodeParent=nodeParent.parentElement;
+    }
+    // Browser may scroll a nested carousel not exposed as overflow:auto.
+    // scrollIntoView only adjusts ancestors; it does not reposition video DOM.
+    slide.scrollIntoView({block:'start',behavior:'smooth'});
+    return 'requested';
+  }
+
+  function schedule(delay=250) {
+    clearTimeout(state.timer);
+    if (isFullscreenLandscape()) {
+      state.timer=setTimeout(snapToCurrent,delay);
+    }
+  }
+  document.addEventListener('touchstart',e => {
+    if (!isFullscreenLandscape() || e.touches.length!==1) {
+      state.finger=null;return;
+    }
+    const t=e.touches[0];
+    state.finger={x:t.clientX,y:t.clientY,time:performance.now()};
+  },{capture:true,passive:true});
+  document.addEventListener('touchmove',e => {
+    if (e.touches.length>1) state.finger=null;
+  },{capture:true,passive:true});
+  document.addEventListener('touchend',e => {
+    const start=state.finger;
+    if (!start || e.touches.length || e.changedTouches.length!==1) return;
+    state.finger=null;
+    const t=e.changedTouches[0];
+    const dx=t.clientX-start.x,dy=t.clientY-start.y;
+    if (Math.abs(dy)>55 && Math.abs(dy)>Math.abs(dx)*1.25) {
+      // Give X's own inertial swipe time to settle before correcting a
+      // remaining partial-card offset.
+      schedule(300);
+    }
+  },{capture:true,passive:true});
+  document.addEventListener('touchcancel',()=>{state.finger=null;},
+    {capture:true,passive:true});
+  const refresh=() => {
+    const routeChanged=location.pathname!==state.route;
+    const resized=Math.abs(innerWidth-state.width)>18 ||
+      Math.abs(innerHeight-state.height)>18;
+    state.route=location.pathname;
+    state.width=innerWidth;state.height=innerHeight;
+    if (routeChanged || resized) schedule(320);
+  };
+  window.addEventListener('resize',refresh,{passive:true});
+  window.__mydownloadXVerticalSnap={refresh};
+  schedule(360);
+})()
+""".trimIndent()
+
 private val X_VIDEO_DOUBLE_TAP_SEEK_SCRIPT = """
 (() => {
   if (!/^(?:www\.)?(?:x\.com|twitter\.com)$/.test(location.hostname)) return;
@@ -1208,6 +1338,9 @@ fun MultiTabBrowser(
                     browser.evaluateJavascript(xDisplayScript(currentXOptions), null)
                     browser.evaluateJavascript(X_MEDIA_PINCH_ZOOM_SCRIPT, null)
                     browser.evaluateJavascript(X_VIDEO_DOUBLE_TAP_SEEK_SCRIPT, null)
+                    if (browserVideoFullscreen) {
+                        browser.evaluateJavascript(X_FULLSCREEN_VERTICAL_SNAP_SCRIPT, null)
+                    }
                     // The fullscreen mode shares the portrait player and
                     // requires no per-video positioning during vertical swipes.
                 }
@@ -1245,9 +1378,13 @@ fun MultiTabBrowser(
     // No player CSS/DOM changes or WebView reloads are performed.
     LaunchedEffect(visible, browserVideoFullscreen, selected.id, selected.url) {
         if (visible && BrowserVideoDiscovery.isXPage(selected.url)) {
-            currentWebView()?.evaluateJavascript(
-                xVideoFullscreenScript(browserVideoFullscreen), null
-            )
+            currentWebView()?.let { browser ->
+                browser.evaluateJavascript(xVideoFullscreenScript(browserVideoFullscreen)) {
+                    if (browserVideoFullscreen) {
+                        browser.evaluateJavascript(X_FULLSCREEN_VERTICAL_SNAP_SCRIPT, null)
+                    }
+                }
+            }
         }
     }
 
