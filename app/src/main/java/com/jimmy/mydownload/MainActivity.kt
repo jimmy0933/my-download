@@ -9,6 +9,7 @@ import android.provider.DocumentsContract
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -191,6 +192,28 @@ fun RootScreen(shared: String) {
         }
     }
 
+    // The whole completed download card uses the same playback and error
+    // handling as the existing Play button.
+    fun playDownloaded(item: DownloadRecord) {
+        if (item.status != "完成") return
+        runCatching { openVideo(context, item) }
+            .onFailure { problem ->
+                if (problem is IOException) {
+                    DownloadStore.patch(context, item.id) {
+                        it.copy(
+                            status = "失敗",
+                            error = problem.message ?: "影片檔案無效",
+                            progress = 0
+                        )
+                    }
+                    downloads = DownloadStore.read(context)
+                }
+                scope.launch {
+                    snackbar.showSnackbar(problem.message ?: "無法播放影片")
+                }
+            }
+    }
+
     LaunchedEffect(Unit) {
         while (true) {
             downloads = DownloadStore.read(context)
@@ -294,6 +317,10 @@ fun RootScreen(shared: String) {
                         }
                         items(downloads, key = { it.id }) { item ->
                             Card(
+                                modifier = Modifier.fillMaxWidth()
+                                    .clickable(enabled = item.status == "完成") {
+                                        playDownloaded(item)
+                                    },
                                 colors = CardDefaults.cardColors(containerColor = Panel),
                                 shape = RoundedCornerShape(18.dp)
                             ) {
@@ -316,9 +343,13 @@ fun RootScreen(shared: String) {
                                     )
                                     Text(item.status + " · " + item.progress + "%",
                                         color = Soft, style = MaterialTheme.typography.bodySmall)
-                                    if (item.status == "完成" && item.bytes > 0L) {
-                                        Text("已儲存 " + Mp4Ranges.label(item.bytes),
-                                            color = Soft, style = MaterialTheme.typography.bodySmall)
+                                    if (item.status == "完成") {
+                                        Text("點一下此列即可播放", color = Green,
+                                            style = MaterialTheme.typography.bodySmall)
+                                        if (item.bytes > 0L) {
+                                            Text("已儲存 " + Mp4Ranges.label(item.bytes),
+                                                color = Soft, style = MaterialTheme.typography.bodySmall)
+                                        }
                                     }
                                     if (item.error.isNotBlank()) {
                                         Text(item.error, color = Color(0xFFFFBC92),
@@ -343,24 +374,9 @@ fun RootScreen(shared: String) {
                                     Row(horizontalArrangement = Arrangement.End) {
                                         when (item.status) {
                                             "完成" -> {
-                                                TextButton(onClick = {
-                                                    runCatching { openVideo(context, item) }
-                                                        .onFailure { problem ->
-                                                            if (problem is IOException) {
-                                                                DownloadStore.patch(context, item.id) {
-                                                                    it.copy(status = "失敗",
-                                                                        error = problem.message ?: "影片檔案無效",
-                                                                        progress = 0)
-                                                                }
-                                                                downloads = DownloadStore.read(context)
-                                                            }
-                                                            scope.launch {
-                                                                snackbar.showSnackbar(
-                                                                    problem.message ?: "無法播放影片"
-                                                                )
-                                                            }
-                                                        }
-                                                }) { Text("播放") }
+                                                TextButton(onClick = { playDownloaded(item) }) {
+                                                    Text("播放")
+                                                }
                                             }
                                             "已暫停", "失敗", "待儲存" -> TextButton(onClick = {
                                                 DownloadService.start(context, item.id)
