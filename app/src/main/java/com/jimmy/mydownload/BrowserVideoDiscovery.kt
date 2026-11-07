@@ -116,10 +116,14 @@ object BrowserVideoDiscovery {
        .filter(url => /\/status\/\d{6,22}/.test(url)) : [];
 
   let article = video.closest('article');
-  const getText = node =>
-    (node?.querySelector('[data-testid="tweetText"]')?.innerText ||
-      node?.querySelector('[data-testid="media-caption"]')?.innerText ||
-      node?.querySelector('[data-testid="video-caption"]')?.innerText || '').trim();
+  const getText = node => {
+    const candidate = node?.querySelector(
+      '[data-testid="tweetText"],[data-testid="media-caption"],' +
+      '[data-testid="video-caption"],[data-testid="videoDescription"]'
+    );
+    return (candidate?.innerText?.trim() ||
+      candidate?.textContent?.trim() || '').slice(0,1200);
+  };
   let text = getText(article);
   let url = statusLinks(article)[0] || '';
 
@@ -147,7 +151,7 @@ object BrowserVideoDiscovery {
   if (currentStatus) {
     const exact = [...document.querySelectorAll('article')].find(node =>
       statusLinks(node).some(link => link.includes('/status/'+currentStatus)));
-    if (exact && (!article || !text)) {
+    if (exact && (article === exact || !text || !article)) {
       text=getText(exact)||text;
     }
     if (!url || !url.includes('/status/'+currentStatus)) url=location.href;
@@ -164,7 +168,8 @@ object BrowserVideoDiscovery {
     }).filter(x=>x.r.width>20 && x.r.height>10 &&
       x.r.bottom>0 && x.r.top<innerHeight &&
       x.d<innerHeight*0.82).sort((a,b)=>a.d-b.d);
-    text=scored[0]?.node.innerText?.trim() || '';
+    text=scored[0]?.node.innerText?.trim() ||
+      scored[0]?.node.textContent?.trim() || '';
   }
 
   const src=video.currentSrc || video.src ||
