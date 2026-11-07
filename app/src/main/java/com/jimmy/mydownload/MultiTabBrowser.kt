@@ -565,8 +565,7 @@ private val X_FULLSCREEN_VERTICAL_SNAP_SCRIPT = """
     let nodeParent = slide.parentElement;
     while (nodeParent) {
       const scroller = nodeParent;
-      const isRoot = scroller === document.scrollingElement ||
-        scroller === document.documentElement || scroller === document.body;
+      const isRoot = scroller === document.scrollingElement;
       const css = getComputedStyle(scroller);
       const canScroll = isRoot || /auto|scroll|overlay/.test(css.overflowY);
       const range = scroller.scrollHeight-scroller.clientHeight;
