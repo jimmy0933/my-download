@@ -27,6 +27,45 @@ private val X_VIDEO_PROGRESS_OVERLAY_SCRIPT = """
     });
   state.options=config;
 
+  // X still renders its own seek/timeline control. Hide just that native
+  // timeline while our functional replacement is visible; don't hide the
+  // playback controls, volume slider or loading indicator. Visibility (rather
+  // than display) also avoids shifting X's carousel/controls in landscape.
+  const nativeStyleId='mydownload-hide-native-seek';
+  let nativeStyle=document.getElementById(nativeStyleId);
+  if(!nativeStyle){
+    nativeStyle=document.createElement('style');
+    nativeStyle.id=nativeStyleId;
+    nativeStyle.textContent=`
+      html[data-mydownload-custom-progress="1"]
+      :is([data-testid="videoPlayer"],[data-testid="vss-scroll-view"],
+          [data-testid="immersive-viewer"],#layers [role="dialog"]:has(video))
+      :is(
+        [role="slider"]:not([aria-label*="volume" i]):not([aria-label*="音量"]),
+        input[type="range"]:not([aria-label*="volume" i]):not([aria-label*="音量"]),
+        [data-testid*="seek" i],[data-testid*="scrub" i],
+        [data-testid*="progress" i]:not([role="progressbar"]),
+        [aria-label*="seek" i],[aria-label*="timeline" i],
+        [aria-label*="播放進度"]
+      ),
+      html[data-mydownload-custom-progress="1"]
+      :is([data-testid*="video-progress" i],
+          [data-testid*="video-seek" i],
+          [data-testid*="video-scrub" i])
+      { visibility:hidden !important; pointer-events:none !important; }
+      html[data-mydownload-custom-progress="1"]
+      video::-webkit-media-controls-timeline
+      { display:none !important; }
+    `;
+    (document.head||document.documentElement).appendChild(nativeStyle);
+  }
+  const showCustomTimeline=visible=>{
+    if(visible)document.documentElement.setAttribute(
+      'data-mydownload-custom-progress','1');
+    else document.documentElement.removeAttribute(
+      'data-mydownload-custom-progress');
+  };
+
   const create=()=>{
     if(state.root?.isConnected)return;
     const root=document.createElement('div');
@@ -162,12 +201,14 @@ private val X_VIDEO_PROGRESS_OVERLAY_SCRIPT = """
       video.duration>0&&video.readyState>=1;
     state.visible=!!playable;
     if(!playable){
+      showCustomTimeline(false);
       state.root.style.display='none';
       state.video=null;
       return;
     }
     state.video=video;
     state.root.style.display='block';
+    showCustomTimeline(true);
     state.root.style.opacity=String(opts.opacity/100);
     state.root.style.bottom=(innerWidth>innerHeight?
       opts.landscapeBottom:opts.portraitBottom)+'px';
@@ -182,6 +223,7 @@ private val X_VIDEO_PROGRESS_OVERLAY_SCRIPT = """
   };
 
   if(!config.enabled){
+    showCustomTimeline(false);
     clearTimeout(state.timer);state.timer=0;state.visible=false;
     if(state.root)state.root.style.display='none';
     return 'disabled';
