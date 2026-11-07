@@ -780,7 +780,12 @@ private val X_IMMERSIVE_FIT_SCRIPT = """
   // video element, source URL or playback position.
   state.handleResize=()=>{
     const found=measure();
-    if(!found || !found.cards.includes(state.anchorCard))return;
+    if(!found || state.gesture)return;
+    // React can replace the card node on rotation, so match the video's
+    // stable post/media key as well. Never guess based on array index.
+    const present=found.cards.includes(state.anchorCard) ||
+      (state.anchorKey && found.cards.some(c=>cardKey(c)===state.anchorKey));
+    if(!present)return;
     const token=++state.restoreToken;
     requestAnimationFrame(()=>restoreVisible(token));
   };
@@ -844,7 +849,7 @@ private val X_IMMERSIVE_FIT_SCRIPT = """
       if(!still || centered(still)?.card!==newlyActiveCard)return;
       const video=newlyActiveCard.querySelector('video');
       if(video?.autoplay && video.paused && !video.ended && !video.error &&
-          video.readyState>=1){
+          video.readyState>=1 && Date.now()-state.lastUserTouch>500){
         video.play().catch(()=>{});
       }
     },650);
@@ -860,6 +865,7 @@ private val X_IMMERSIVE_FIT_SCRIPT = """
       x,y,fromIndex:current.index,fromCard:current.card,
       scroller:found.scroller
     };
+    state.lastUserTouch=Date.now();
     clearTimeout(state.timer);
   };
   const completeGesture=(dx,dy)=>{
