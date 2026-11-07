@@ -1620,7 +1620,7 @@ fun MultiTabBrowser(
                 )
             }
         }
-        if (selected.progress in 1..99) {
+        if (!browserVideoFullscreen && selected.progress in 1..99) {
             LinearProgressIndicator(
                 progress = { selected.progress / 100f },
                 modifier = Modifier.fillMaxWidth(), color = BrowserGreen
