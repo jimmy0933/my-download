@@ -23,7 +23,8 @@ data class XDisplayOptions(
     val hideBottomNotifications: Boolean = false,
     val hideBottomShare: Boolean = false,
     val hideVideoPlaybackText: Boolean = false,
-    val hideVideoPlaybackTitle: Boolean = false
+    val hideVideoPlaybackTitle: Boolean = false,
+    val hideVideoBelowProgressDetails: Boolean = false
 )
 
 /**
@@ -62,6 +63,7 @@ object DownloadSettings {
     private const val X_HIDE_BOTTOM_SHARE = "x_hide_bottom_share"
     private const val X_HIDE_VIDEO_PLAYBACK_TEXT = "x_hide_video_playback_text"
     private const val X_HIDE_VIDEO_PLAYBACK_TITLE = "x_hide_video_playback_title"
+    private const val X_HIDE_VIDEO_BELOW_PROGRESS_DETAILS = "x_hide_video_below_progress_details"
     private const val FLOAT_BUTTON_X = "floating_download_x"
     private const val FLOAT_BUTTON_Y = "floating_download_y"
     private const val FLOAT_BUTTON_OPACITY = "floating_download_opacity"
@@ -144,7 +146,8 @@ object DownloadSettings {
             hideBottomNotifications = prefs.getBoolean(X_HIDE_BOTTOM_NOTIFICATIONS, false),
             hideBottomShare = prefs.getBoolean(X_HIDE_BOTTOM_SHARE, false),
             hideVideoPlaybackText = prefs.getBoolean(X_HIDE_VIDEO_PLAYBACK_TEXT, false),
-            hideVideoPlaybackTitle = prefs.getBoolean(X_HIDE_VIDEO_PLAYBACK_TITLE, false)
+            hideVideoPlaybackTitle = prefs.getBoolean(X_HIDE_VIDEO_PLAYBACK_TITLE, false),
+            hideVideoBelowProgressDetails = prefs.getBoolean(X_HIDE_VIDEO_BELOW_PROGRESS_DETAILS, false)
         )
     }
 
@@ -166,6 +169,7 @@ object DownloadSettings {
             .putBoolean(X_HIDE_BOTTOM_SHARE, options.hideBottomShare)
             .putBoolean(X_HIDE_VIDEO_PLAYBACK_TEXT, options.hideVideoPlaybackText)
             .putBoolean(X_HIDE_VIDEO_PLAYBACK_TITLE, options.hideVideoPlaybackTitle)
+            .putBoolean(X_HIDE_VIDEO_BELOW_PROGRESS_DETAILS, options.hideVideoBelowProgressDetails)
             .apply()
     }
 
