@@ -184,7 +184,9 @@ object BrowserVideoDiscovery {
   result.pageText=text.slice(0,1200);
   result.pagePostUrl=url || (currentStatus?location.href:'');
   result.videos.push({
-    src,right:rect.right,top:rect.top,mediaId,
+    // The visible active video may be partially clipped by a carousel edge.
+    // Keep coordinates valid for the Android decoder without changing the DOM.
+    src,right:Math.max(0,rect.right),top:Math.max(0,rect.top),mediaId,
     postText:result.pageText,postUrl:result.pagePostUrl
   });
   return JSON.stringify(result);
