@@ -105,9 +105,11 @@ object BrowserVideoDiscovery {
     return {video,rect,area,distance,playing};
   }).filter(entry => within(entry.rect) && entry.area>10000);
   if (!entries.length) return JSON.stringify(result);
-  // Favor a playing, prominently visible video over one preloaded above/below.
-  entries.sort((a,b) => Number(b.playing)-Number(a.playing) ||
-    b.area-a.area || a.distance-b.distance);
+  // Prefer the clip occupying the current screen. The previous video
+  // can remain "playing" briefly after a swipe while only a thin strip of it
+  // is visible at the edge, so playing-state alone is not authoritative.
+  entries.sort((a,b) => b.area-a.area || a.distance-b.distance ||
+    Number(b.playing)-Number(a.playing));
   const {video,rect} = entries[0];
 
   const currentStatus = /\/status\/(\d{6,22})/.exec(location.pathname)?.[1] || '';
