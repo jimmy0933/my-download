@@ -444,103 +444,52 @@ private val X_MEDIA_PINCH_ZOOM_SCRIPT = """
 """.trimIndent()
 
 /**
- * Fullscreen is a CSS presentation change of the live player's container.
- * It never moves the <video> element, creates a WebView, or navigates away,
- * so playback time and X's playback controls can continue uninterrupted.
+ * X fullscreen is the same inline player as portrait: only Android chrome and
+ * system bars are hidden. Never force a fixed-position video overlay because
+ * it can black out Android's hardware-accelerated video surface in landscape.
  */
 private val X_VIDEO_FULLSCREEN_SCRIPT = """
 (() => {
   if (!/^(?:www\.)?(?:x\.com|twitter\.com)$/.test(location.hostname)) return 'not-x';
-  const requested = __ENABLED__;
+  const enabled = __ENABLED__;
   const state = window.__mydownloadVideoFullscreen ||
-    (window.__mydownloadVideoFullscreen = {
-      enabled: false, path: location.pathname,
-      player: null, video: null, playerStyle: null, videoStyle: null,
-      sync: null, listenersAdded: false
-    });
+    (window.__mydownloadVideoFullscreen = { enabled: false });
 
-  const restore = () => {
-    if (state.player) {
-      if (state.playerStyle === null) state.player.removeAttribute('style');
-      else state.player.setAttribute('style', state.playerStyle);
-      state.player.removeAttribute('data-mydownload-fullscreen');
-    }
-    if (state.video) {
-      if (state.videoStyle === null) state.video.removeAttribute('style');
-      else state.video.setAttribute('style', state.videoStyle);
-    }
-    state.player = null; state.video = null;
-    state.playerStyle = null; state.videoStyle = null;
-  };
-  if (!requested) {
+  // Restore styles from older fullscreen implementations, if any. X owns its
+  // original player DOM, video surface, swipe gestures and playback controls.
+  // Do not force the video container to position:fixed: this can produce an
+  // entirely black compositor layer on Android landscape playback.
+  if (state.player) {
+    if (state.playerStyle === null) state.player.removeAttribute('style');
+    else if (state.playerStyle !== undefined)
+      state.player.setAttribute('style', state.playerStyle);
+    state.player.removeAttribute('data-mydownload-fullscreen');
+  }
+  if (state.video) {
+    if (state.videoStyle === null) state.video.removeAttribute('style');
+    else if (state.videoStyle !== undefined)
+      state.video.setAttribute('style', state.videoStyle);
+  }
+  state.player = null;
+  state.video = null;
+  if (!enabled) {
     state.enabled = false;
-    restore();
     return 'exited';
   }
-  state.enabled = true;
 
-  // When X moves to another post, release the previous fixed player BEFORE
-  // choosing the next. Otherwise the previous player always looks visible and
-  // the new video stays at its off-screen carousel position.
-  if (state.path !== location.pathname) {
-    restore();
-    state.path = location.pathname;
-  }
-
-  const candidates = Array.from(document.querySelectorAll('video')).map(video => {
+  const playingVideo = Array.from(document.querySelectorAll('video')).some(video => {
     const rect = video.getBoundingClientRect();
-    const visible = rect.width >= 80 && rect.height >= 60 &&
+    return rect.width >= 80 && rect.height >= 60 &&
       rect.right > 0 && rect.left < innerWidth &&
       rect.bottom > 0 && rect.top < innerHeight;
-    const playing = video.readyState >= 2 && !video.paused && !video.ended;
-    return {video, rect, visible, playing};
-  }).filter(item => item.visible || item.playing);
-
-  // Prefer the active playing video to offscreen/preloaded videos. X reuses
-  // DOM nodes, and some swipes do not change the page URL.
-  candidates.sort((a,b) =>
-    Number(b.playing) - Number(a.playing) ||
-    Number(b.visible) - Number(a.visible) ||
-    Math.abs((a.rect.top+a.rect.bottom)/2 - innerHeight/2) -
-      Math.abs((b.rect.top+b.rect.bottom)/2 - innerHeight/2)
-  );
-  const video = candidates[0]?.video;
-  if (!video) {
-    // Keep fullscreen enabled through the short loading gap between videos.
-    // The periodic browser scan will bind the next video without a reload.
-    return 'waiting';
+  });
+  if (!playingVideo) {
+    state.enabled = false;
+    return 'no-video';
   }
-  const player = video.closest('[data-testid="videoPlayer"]') ||
-    video.closest('[data-testid="videoComponent"]') ||
-    video.parentElement;
-  if (!player) return 'waiting';
-
-  if (state.player !== player || state.video !== video) {
-    restore();
-    state.player = player; state.video = video;
-    state.playerStyle = player.getAttribute('style');
-    state.videoStyle = video.getAttribute('style');
-  }
-  player.setAttribute('data-mydownload-fullscreen', 'true');
-  const important = (element, key, value) =>
-    element.style.setProperty(key, value, 'important');
-  important(player, 'position', 'fixed');
-  important(player, 'inset', '0');
-  important(player, 'top', '0');
-  important(player, 'left', '0');
-  important(player, 'width', '100vw');
-  important(player, 'height', '100dvh');
-  important(player, 'margin', '0');
-  important(player, 'transform', 'none');
-  important(player, 'translate', 'none');
-  important(player, 'z-index', '2147483640');
-  important(player, 'background-color', '#000');
-  important(player, 'overflow', 'hidden');
-  important(video, 'width', '100%');
-  important(video, 'height', '100%');
-  important(video, 'max-height', '100%');
-  important(video, 'object-fit', 'contain');
-
+  // Only a UI/immersive-mode flag. No video.pause(), play(), seek(), reload()
+  // or DOM re-parenting, so landscape behaves like portrait.
+  state.enabled = true;
   return 'fullscreen';
 })()
 """.trimIndent()
@@ -1253,11 +1202,8 @@ fun MultiTabBrowser(
                     browser.evaluateJavascript(xDisplayScript(currentXOptions), null)
                     browser.evaluateJavascript(X_MEDIA_PINCH_ZOOM_SCRIPT, null)
                     browser.evaluateJavascript(X_VIDEO_DOUBLE_TAP_SEEK_SCRIPT, null)
-                    // X updates video nodes during vertical swipes without a reload.
-                    // Re-select and recenter the playing video on each scan.
-                    if (browserVideoFullscreen) {
-                        browser.evaluateJavascript(xVideoFullscreenScript(true), null)
-                    }
+                    // The fullscreen mode shares the portrait player and
+                    // requires no per-video positioning during vertical swipes.
                 }
                 browser.evaluateJavascript(BrowserVideoDiscovery.SCAN_SCRIPT) { result ->
                     if (activeId == checkedId) {
@@ -1289,7 +1235,8 @@ fun MultiTabBrowser(
         }
     }
 
-    // Keep fullscreen bound to the existing WebView, without a loadUrl/reload.
+    // Keep fullscreen bound to the same WebView across X's SPA route changes.
+    // No player CSS/DOM changes or WebView reloads are performed.
     LaunchedEffect(visible, browserVideoFullscreen, selected.id, selected.url) {
         if (visible && BrowserVideoDiscovery.isXPage(selected.url)) {
             currentWebView()?.evaluateJavascript(
