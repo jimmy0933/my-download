@@ -731,16 +731,25 @@ private val X_IMMERSIVE_FIT_SCRIPT = """
     active:false, listenerInstalled:false, gesture:null, timer:0,
     scroll:null, cards:[], lastHeight:0,
     lastViewportWidth:0,lastViewportHeight:0,
-    anchorCard:null,anchorIndex:-1,anchorKey:'',restoreToken:0
+    anchorCard:null,anchorIndex:-1,anchorKey:'',restoreToken:0,
+    healthTimer:0,lastHealthTop:null,stillSince:0,lastRepairAt:0,
+    layoutRepair:false,layoutHeight:0
   });
   const cardAttr='data-mydownload-fullscreen-card';
   const scrollAttr='data-mydownload-fullscreen-scroll';
   const styleId='mydownload-fullscreen-card-size';
+  const repairStyleId='mydownload-immersive-layout-repair';
+  const repairAttr='data-mydownload-immersive-slide';
 
   const clear=()=>{
     clearTimeout(state.timer);
     clearTimeout(state.playbackTimer);
+    clearTimeout(state.healthTimer);
     state.timer=0;state.gesture=null;
+    document.getElementById(repairStyleId)?.remove();
+    document.querySelectorAll('['+repairAttr+']').forEach(el=>
+      el.removeAttribute(repairAttr));
+    state.layoutRepair=false;state.layoutHeight=0;
     document.getElementById(styleId)?.remove();
     document.querySelectorAll('['+cardAttr+']').forEach(el=>
       el.removeAttribute(cardAttr));
@@ -817,6 +826,126 @@ private val X_IMMERSIVE_FIT_SCRIPT = """
       ? chosen : null;
   };
 
+  /**
+   * Some X WebView carousel sessions retain portrait-size slide wrappers or
+   * an off-grid scroll offset after a landscape swipe. Once this happens,
+   * every next clip inherits the same split viewport. Repair the CAROUSEL
+   * wrapper only, never scale/reparent/reload video or change its playback.
+   * The health check runs while idle too, so an earlier bad swipe can recover.
+   */
+  const viewportHeight=found=>
+    Math.min(found.box.height,found.scroller.clientHeight,innerHeight);
+  const inspected=found=>{
+    const h=viewportHeight(found);
+    return found.cards.map((card,index)=>{
+      const rect=card.getBoundingClientRect();
+      const overlap=Math.max(0,Math.min(rect.bottom,found.box.bottom,innerHeight)-
+        Math.max(rect.top,found.box.top,0));
+      return {card,index,rect,overlap,h,video:card.querySelector('video')};
+    }).filter(item=>item.overlap>0);
+  };
+  const repairSlideHeight=(found,h)=>{
+    const previousHeight=state.layoutHeight;
+    state.layoutHeight=Math.round(h);
+    if(state.layoutHeight<140)return;
+    state.layoutRepair=true;
+    let style=document.getElementById(repairStyleId);
+    if(!style){
+      style=document.createElement('style');
+      style.id=repairStyleId;
+      (document.head||document.documentElement).appendChild(style);
+    }
+    // Only min-height on the OUTER card. In contrast to the old fix this
+    // never forces a max-height, flex basis, video dimensions or transforms.
+    const css='['+repairAttr+'="1"] {'+
+      'min-height:'+state.layoutHeight+'px !important;'+
+      'box-sizing:border-box !important;'+
+      'scroll-snap-align:start !important;}';
+    if(style.textContent!==css)style.textContent=css;
+    found.cards.forEach(card=>{
+      if(!card.hasAttribute(repairAttr))card.setAttribute(repairAttr,'1');
+    });
+    return previousHeight!==state.layoutHeight;
+  };
+  const repairOffset=(found,card)=>{
+    if(!card?.isConnected || !found.cards.includes(card))return false;
+    const scroll=found.scroller;
+    const range=scroll.scrollHeight-scroll.clientHeight;
+    if(range<15)return false;
+    const delta=card.getBoundingClientRect().top-found.box.top;
+    if(Math.abs(delta)<9 || Math.abs(delta)>viewportHeight(found)*1.5)
+      return false;
+    const next=Math.max(0,Math.min(range,scroll.scrollTop+delta));
+    if(Math.abs(next-scroll.scrollTop)<5)return false;
+    // Disable only the scroller's snap for this single synchronous correction.
+    // Re-enable immediately after layout, leaving X's video DOM untouched.
+    const originalSnap=scroll.style.scrollSnapType;
+    scroll.style.scrollSnapType='none';
+    scroll.scrollTop=next;
+    requestAnimationFrame(()=>{
+      if(scroll.isConnected && scroll.style.scrollSnapType==='none')
+        scroll.style.scrollSnapType=originalSnap;
+    });
+    state.lastRepairAt=Date.now();
+    return true;
+  };
+  const healthCheck=(fromSwipe=false)=>{
+    if(!state.active || state.gesture || !enabled)return;
+    const now=Date.now();
+    if(now-(state.lastResizeAt||0)<650 || now-(state.lastUserTouch||0)<500)
+      return;
+    const found=measure();
+    if(!found || found.cards.length<2 || viewportHeight(found)<140)return;
+    const currentTop=found.scroller.scrollTop;
+    if(state.lastHealthTop===null || Math.abs(state.lastHealthTop-currentTop)>2){
+      state.lastHealthTop=currentTop;
+      state.stillSince=now;
+      return;
+    }
+    if(!fromSwipe && now-state.stillSince<300)return;
+    if(now-state.lastRepairAt<700)return;
+    if(state.layoutRepair)repairSlideHeight(found,viewportHeight(found));
+    const entries=inspected(found);
+    const h=viewportHeight(found);
+    const visible=entries.filter(e=>e.overlap>h*0.11);
+    if(visible.length<2)return;
+    // The playing video is the best anchor after a slide transition.
+    // Otherwise use the card at viewport center, rather than a cached
+    // array index which X can recycle for a different post.
+    const playing=visible.filter(e=>e.video && !e.video.paused &&
+      !e.video.ended && e.video.readyState>=2);
+    const centeredCard=centered(found)?.card;
+    const chosen=(playing.length===1 && playing[0].overlap>h*0.22)
+      ? playing[0]
+      : visible.find(e=>e.card===centeredCard) ||
+        visible.slice().sort((a,b)=>b.overlap-a.overlap)[0];
+    if(!chosen)return;
+    const shortCards=visible.some(e=>e.rect.height<h*0.87);
+    if(shortCards){
+      // The source of the sticky split-screen state is frequently a
+      // portrait-sized slide retained in landscape. Repair layout once,
+      // then align after the browser has performed that reflow.
+      repairSlideHeight(found,h);
+      state.lastRepairAt=now;
+      const token=++state.restoreToken;
+      const card=chosen.card;
+      requestAnimationFrame(()=>{
+        if(token===state.restoreToken && state.active && !state.gesture){
+          const fresh=measure();
+          if(fresh)repairOffset(fresh,card);
+        }
+      });
+    }else{
+      // Two full-height cards are visible: this is an inherited partial
+      // scroll offset rather than the wrong height. Correct it at rest.
+      repairOffset(found,chosen.card);
+    }
+    state.anchorCard=chosen.card;
+    state.anchorIndex=chosen.index;
+    state.anchorKey=cardKey(chosen.card);
+  };
+  state.healthCheck=healthCheck;
+
   // Keep the visible video card, not its old portrait scrollTop, when changing
   // orientation. Otherwise a landscape card height selects another clip.
   const cardKey=card=>card?.querySelector('a[href*="/status/"]')?.getAttribute('href') ||
@@ -851,6 +980,8 @@ private val X_IMMERSIVE_FIT_SCRIPT = """
   // video element, source URL or playback position.
   state.handleResize=()=>{
     state.lastResizeAt=Date.now();
+    state.lastHealthTop=null;
+    clearTimeout(state.healthTimer);
     clearTimeout(state.timer);
     const found=measure();
     if(!found || state.gesture)return;
@@ -886,11 +1017,17 @@ private val X_IMMERSIVE_FIT_SCRIPT = """
     return 'disabled';
   }
   state.active=true;
+  if(!wasActive){
+    state.lastResizeAt=Date.now();
+    state.lastHealthTop=null;
+  }
   if(!state.anchorCard || !state.anchorCard.isConnected)rememberVisible();
   const token=(resized || !wasActive)?++state.restoreToken:0;
   apply();stamp();
   if(token)requestAnimationFrame(()=>restoreVisible(token));
-  else if(!state.gesture)rememberVisible();
+  else if(!state.gesture && Date.now()-(state.lastUserTouch||0)>900)
+    rememberVisible();
+  if(!state.gesture)healthCheck(false);
 
   // In landscape X sometimes stops between two immersive cards. Wait for
   // its own momentum to settle before aligning the card that the swipe
@@ -902,6 +1039,10 @@ private val X_IMMERSIVE_FIT_SCRIPT = """
   const finishSwipe=(gesture,attempt=0)=>{
     if(!state.active || state.gesture || Date.now()-(state.lastResizeAt||0)<400)
       return;
+    // Even if the normal snap guard rejects the swipe, a persistent
+    // split-screen state must still be detected and repaired at rest.
+    clearTimeout(state.healthTimer);
+    state.healthTimer=setTimeout(()=>state.healthCheck?.(true),750);
     const found=measure();
     if(!found || gesture.scroller!==found.scroller)return;
     const {scroller,cards,box}=found;
@@ -996,6 +1137,8 @@ private val X_IMMERSIVE_FIT_SCRIPT = """
       scroller:found.scroller
     };
     state.lastUserTouch=Date.now();
+    state.lastHealthTop=null;
+    clearTimeout(state.healthTimer);
     clearTimeout(state.timer);
     clearTimeout(state.playbackTimer);
   };
