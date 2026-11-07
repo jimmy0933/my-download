@@ -540,6 +540,20 @@ private val X_MEDIA_PINCH_ZOOM_SCRIPT = """
     }
   },{capture:true,passive:false});
   document.addEventListener('touchmove',e=>{
+    // This must run BEFORE the zoomed-media check: a video is usually not
+    // captured until the first pinch, but sideways one-finger drags are
+    // forbidden during normal playback too.
+    if(e.touches.length===1 && state.singleStart && videoViewer()) {
+      const dx=e.touches[0].clientX-state.singleStart.x;
+      const dy=e.touches[0].clientY-state.singleStart.y;
+      const slider=e.target?.closest?.(
+        '[role="slider"],input[type="range"],[data-testid*="seek"],[data-testid*="progress"]');
+      if(!slider && Math.abs(dx)>12 && Math.abs(dx)>Math.abs(dy)*1.25) {
+        if(e.cancelable)e.preventDefault();
+        e.stopImmediatePropagation();
+        return;
+      }
+    }
     if (!state.media || !viewer()) return;
     if (e.touches.length===2 &&
         (state.mode==='pinch' || state.nativePinch)) {
@@ -556,17 +570,6 @@ private val X_MEDIA_PINCH_ZOOM_SCRIPT = """
       });
       if(e.cancelable)e.preventDefault();
       e.stopImmediatePropagation();
-    } else if(e.touches.length===1 && state.singleStart && videoViewer()) {
-      const dx=e.touches[0].clientX-state.singleStart.x;
-      const dy=e.touches[0].clientY-state.singleStart.y;
-      const slider=e.target?.closest?.(
-        '[role="slider"],input[type="range"],[data-testid*="seek"],[data-testid*="progress"]');
-      // No horizontal dragging of the playing viewport. Preserve sliders,
-      // taps and X's vertical carousel navigation.
-      if(!slider && Math.abs(dx)>12 && Math.abs(dx)>Math.abs(dy)*1.25) {
-        if(e.cancelable)e.preventDefault();
-        e.stopImmediatePropagation();
-      }
     }
   },{capture:true,passive:false});
   const end=e=>{
