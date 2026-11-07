@@ -734,7 +734,8 @@ private val X_IMMERSIVE_FIT_SCRIPT = """
     anchorCard:null,anchorIndex:-1,anchorKey:'',restoreToken:0,
     healthTimer:0,lastHealthTop:null,stillSince:0,lastRepairAt:0,
     layoutRepair:false,layoutHeight:0,
-    boundScroller:null,scrollObserver:null,prepareRaf:0,settleRaf:0
+    boundScroller:null,scrollObserver:null,prepareRaf:0,settleRaf:0,
+    lastScrollAt:0,lastStartedVideo:null
   });
   const cardAttr='data-mydownload-fullscreen-card';
   const scrollAttr='data-mydownload-fullscreen-scroll';
@@ -809,7 +810,8 @@ private val X_IMMERSIVE_FIT_SCRIPT = """
       state.scroll=found.scroller;
       state.cards=found.cards;
       state.attachScroller?.(found);
-      state.prepareSlides?.(found);
+      // Do not measure or write card dimensions on every poll or
+      // during finger movement: this forced synchronous layout in WebView.
     }
     // Also clean up CSS from an older injected runtime if any.
     document.getElementById(styleId)?.remove();
@@ -944,7 +946,6 @@ private val X_IMMERSIVE_FIT_SCRIPT = """
     }
     if(!fromSwipe && now-state.stillSince<300)return;
     if(now-state.lastRepairAt<700)return;
-    if(state.layoutRepair)repairSlideHeight(found,viewportHeight(found));
     const entries=inspected(found);
     const h=viewportHeight(found);
     const visible=entries.filter(e=>e.overlap>h*0.06);
@@ -997,37 +998,69 @@ private val X_IMMERSIVE_FIT_SCRIPT = """
   };
   state.healthCheck=healthCheck;
 
+  // Once the user has selected a new X clip, ask that SAME video element
+  // to start immediately rather than waiting for a 650 ms watchdog.
+  // X still owns its authenticated stream, buffering and pause controls.
+  const startSelectedVideo=card=>{
+    if(Date.now()-(state.lastSwipeAt||0)>1700 ||
+        card===state.lastSwipeCard)return;
+    const video=card?.querySelector('video');
+    if(!video || !video.autoplay || !video.paused || video.ended ||
+        video.error || video===state.lastStartedVideo)return;
+    state.lastStartedVideo=video;
+    video.play().catch(()=>{});
+  };
+
   const settleOnScrollEnd=()=>{
     if(!enabled || !state.active || state.gesture)return;
-    const sinceResize=Date.now()-(state.lastResizeAt||0);
-    if(sinceResize<180){
-      // A scrollend may arrive while landscape is still measuring its
-      // viewport. Retry once after the rotation settles instead of losing it.
-      clearTimeout(state.healthTimer);
-      state.healthTimer=setTimeout(()=>state.onScrollEnd?.(),180-sinceResize);
+    const now=Date.now();
+    const sinceResize=now-(state.lastResizeAt||0);
+    const sinceScroll=now-(state.lastScrollAt||0);
+    if(sinceResize<180 || sinceScroll<85){
+      // Do not force a correction into the middle of X's own inertia.
+      clearTimeout(state.timer);
+      state.timer=setTimeout(()=>state.onScrollEnd?.(),
+        Math.max(180-sinceResize,85-sinceScroll,16));
       return;
     }
     const found=measure();
-    if(!found || found.cards.length<2)return;
-    prepareSlides(found);
-    const h=viewportHeight(found);
-    const visible=inspected(found).filter(e=>e.overlap>h*0.07);
-    if(visible.length<2)return;
+    if(!found || !found.cards.length)return;
     const current=centered(found);
     if(!current)return;
-    const recent=Date.now()-(state.lastSwipeAt||0)<2000 &&
+    const h=viewportHeight(found);
+    const recent=now-(state.lastSwipeAt||0)<1700 &&
       found.cards.includes(state.lastSwipeCard);
+    const visible=inspected(found).filter(e=>e.overlap>h*0.07);
     const target=recent ? visible.filter(e=>e.card!==state.lastSwipeCard &&
       (state.lastSwipeDirection>0 ? e.index>state.lastSwipeIndex :
         e.index<state.lastSwipeIndex) && e.overlap>=h*0.27)
       .sort((a,b)=>b.overlap-a.overlap)[0] : null;
     const selected=target?.card || current.card;
     if(!found.cards.includes(selected))return;
-    if(repairOffset(found,selected)){
-      state.anchorCard=selected;
-      state.anchorIndex=found.cards.indexOf(selected);
-      state.anchorKey=cardKey(selected);
+
+    // Normal full-screen, single-card snaps need ZERO work.
+    // Only correct after X finished scrolling, and only when two
+    // substantial portions of two cards occupy the screen.
+    const split=visible.length>1 &&
+      visible.filter(e=>e.overlap>h*0.11).length>1;
+    if(split){
+      const heightsWrong=visible.some(e=>e.rect.height<h*0.89);
+      if(heightsWrong)prepareSlides(found);
+      // Height repair changes scroll metrics. Align on the next frame.
+      if(heightsWrong){
+        requestAnimationFrame(()=>{
+          if(!state.active || state.gesture)return;
+          const fresh=measure();
+          if(fresh)repairOffset(fresh,selected);
+        });
+      }else{
+        repairOffset(found,selected);
+      }
     }
+    state.anchorCard=selected;
+    state.anchorIndex=found.cards.indexOf(selected);
+    state.anchorKey=cardKey(selected);
+    startSelectedVideo(selected);
   };
   state.onScrollEnd=()=>{
     if(state.settleRaf)cancelAnimationFrame(state.settleRaf);
@@ -1036,11 +1069,18 @@ private val X_IMMERSIVE_FIT_SCRIPT = """
       settleOnScrollEnd();
     });
   };
-  state.onScroll=prepareNextFrame;
+  // A passive scroll event only debounces the final check. It performs no
+  // DOM queries, CSS writes, media scans or per-frame reflows.
+  state.onScroll=()=>{
+    state.lastScrollAt=Date.now();
+    clearTimeout(state.timer);
+    state.timer=setTimeout(()=>state.onScrollEnd?.(),105);
+  };
   const attachScroller=found=>{
     const scroll=found.scroller;
     if(state.boundScroller===scroll)return;
     state.scrollObserver?.disconnect();
+    state.scrollObserver=null;
     if(state.boundScroller){
       state.boundScroller.removeEventListener('scroll',state.scrollHandler);
       state.boundScroller.removeEventListener('scrollend',state.scrollEndHandler);
@@ -1050,10 +1090,8 @@ private val X_IMMERSIVE_FIT_SCRIPT = """
     state.scrollEndHandler=()=>state.onScrollEnd?.();
     scroll.addEventListener('scroll',state.scrollHandler,{passive:true});
     scroll.addEventListener('scrollend',state.scrollEndHandler,{passive:true});
-    if(typeof MutationObserver!=='undefined'){
-      state.scrollObserver=new MutationObserver(()=>prepareNextFrame());
-      state.scrollObserver.observe(scroll,{childList:true,subtree:true});
-    }
+    // Do not use subtree MutationObserver on the X carousel. React changes
+    // video controls frequently and those callbacks caused scroll stutter.
   };
   state.attachScroller=attachScroller;
 
@@ -1136,112 +1174,20 @@ private val X_IMMERSIVE_FIT_SCRIPT = """
   if(!state.anchorCard || !state.anchorCard.isConnected)rememberVisible();
   const token=(resized || !wasActive)?++state.restoreToken:0;
   apply();stamp();
-  prepareNextFrame();
+  // One-time landscape preparation at entry/resize, never during swipes.
+  if(!wasActive || resized)prepareNextFrame();
   if(token)requestAnimationFrame(()=>restoreVisible(token));
   else if(!state.gesture && Date.now()-(state.lastUserTouch||0)>900)
     rememberVisible();
-  if(!state.gesture)healthCheck(false);
+  // Do not run a 950 ms layout health scan during playback; recovery
+  // is event-driven and uses the one-shot backup after a confirmed swipe.
 
-  // In landscape X sometimes stops between two immersive cards. Wait for
-  // its own momentum to settle before aligning the card that the swipe
-  // actually selected. Never resize/reparent a video or modify card heights.
-  const overlapHeight=(r,box)=>
-    Math.max(0,Math.min(r.bottom,box.bottom,innerHeight)-
-      Math.max(r.top,box.top,0));
-
-  const finishSwipe=(gesture,attempt=0)=>{
-    if(!state.active || state.gesture || Date.now()-(state.lastResizeAt||0)<400)
-      return;
-    // Even if the normal snap guard rejects the swipe, a persistent
-    // split-screen state must still be detected and repaired at rest.
-    clearTimeout(state.healthTimer);
-    state.healthTimer=setTimeout(()=>state.healthCheck?.(true),750);
-    const found=measure();
-    if(!found || gesture.scroller!==found.scroller)return;
-    const {scroller,cards,box}=found;
-    const viewportHeight=Math.min(box.height,innerHeight);
-    if(viewportHeight<140)return;
-    const top=scroller.scrollTop;
-    // X uses inertia. Only perform one correction after its scroll position
-    // has become stable, to avoid a second competing scroll/black video frame.
-    if(attempt<5 &&
-       (gesture.lastTop===undefined || Math.abs(gesture.lastTop-top)>2)){
-      gesture.lastTop=top;
-      clearTimeout(state.timer);
-      state.timer=setTimeout(()=>finishSwipe(gesture,attempt+1),55);
-      return;
-    }
-    const selected=centered(found);
-    if(!selected)return;
-    let target=selected;
-    const selectedChanged=selected.card!==gesture.fromCard;
-    const selectedInDirection=gesture.direction>0
-      ? selected.index>gesture.fromIndex
-      : selected.index<gesture.fromIndex;
-    if(!selectedChanged || !selectedInDirection){
-      // X sometimes stops short: the next card is already on screen, but
-      // the old one still crosses the center. Only finish a deliberate swipe
-      // when the new card occupies at least 30% of the viewport.
-      const candidates=cards.map((card,index)=>{
-        const rect=card.getBoundingClientRect();
-        return {card,index,rect,overlap:overlapHeight(rect,box)};
-      }).filter(item=>item.card!==gesture.fromCard &&
-        item.overlap>=viewportHeight*0.30 &&
-        (gesture.direction>0
-          ? item.index>gesture.fromIndex
-          : item.index<gesture.fromIndex));
-      candidates.sort((a,b)=>b.overlap-a.overlap);
-      if(candidates.length &&
-         Math.abs(gesture.distance)>=Math.max(55,viewportHeight*0.20))
-        target=candidates[0];
-      else
-        target=selected;
-    }
-    const targetMoved=target.card!==gesture.fromCard;
-    const targetInDirection=gesture.direction>0
-      ? target.index>gesture.fromIndex : target.index<gesture.fromIndex;
-    if(!targetMoved || !targetInDirection)return;
-
-    const delta=target.rect.top-box.top;
-    const visibleNeighbors=cards.some(card=>card!==target.card &&
-      overlapHeight(card.getBoundingClientRect(),box)>viewportHeight*0.08);
-    // Do not force a scroll when X has already snapped correctly. The range,
-    // distance and swipe direction guards prevent jumping to another video.
-    const scrollRange=scroller.scrollHeight-scroller.clientHeight;
-    const destination=top+delta;
-    const correctable=visibleNeighbors &&
-      Math.abs(delta)>10 && Math.abs(delta)<viewportHeight*0.72 &&
-      (gesture.direction>0 ? delta>0 : delta<0) &&
-      scrollRange>viewportHeight*0.35 &&
-      destination>=0 && destination<=scrollRange+1;
-    if(correctable){
-      // Instant, single small adjustment only. No CSS transforms, scroll-snap
-      // rewrites, scrolling animation or repeated correction while playing.
-      scroller.scrollTo({top:destination,behavior:'instant'});
-    }
-
-    // The user-swiped video, not a previous portrait card, is now the anchor.
-    state.anchorCard=target.card;
-    state.anchorIndex=target.index;
-    state.anchorKey=cardKey(target.card);
-    window.__mydownloadMediaZoom?.reset?.();
-    const newlyActiveCard=target.card;
-    clearTimeout(state.playbackTimer);
-    state.playbackTimer=setTimeout(()=>{
-      if(!state.active || state.gesture)return;
-      const still=measure();
-      if(!still || centered(still)?.card!==newlyActiveCard)return;
-      const video=newlyActiveCard.querySelector('video');
-      if(video?.autoplay && video.paused && !video.ended && !video.error &&
-          video.readyState>=1 && Date.now()-state.lastUserTouch>500){
-        video.play().catch(()=>{});
-      }
-    },650);
-  };
+  // X owns swipe momentum. Commit playback on scrollend, not a timer.
+  // The slower health check remains a fallback for browsers that miss it.
 
   const startGesture=(x,y)=>{
     if(!state.active || state.gesture)return;
-    const found=apply();
+    const found=measure();
     if(!found)return;
     const current=centered(found);
     if(!current)return;
@@ -1251,8 +1197,7 @@ private val X_IMMERSIVE_FIT_SCRIPT = """
     };
     state.lastUserTouch=Date.now();
     state.lastHealthTop=null;
-    const beforeSwipe=measure();
-    if(beforeSwipe)prepareSlides(beforeSwipe);
+    state.lastStartedVideo=null;
     clearTimeout(state.healthTimer);
     clearTimeout(state.timer);
     clearTimeout(state.playbackTimer);
@@ -1268,9 +1213,13 @@ private val X_IMMERSIVE_FIT_SCRIPT = """
     state.lastSwipeDirection=gesture.direction;
     state.lastSwipeCard=gesture.fromCard;
     state.lastSwipeIndex=gesture.fromIndex;
+    // X controls its momentum; scrollend or the debounced passive scroll
+    // listener commits the new clip. A short backup covers touch-only
+    // carousel transitions that do not dispatch a native scroll event.
     clearTimeout(state.timer);
-    // No artificial wait: let scrollend handle normal native snapping.
-    state.timer=setTimeout(()=>finishSwipe(gesture),70);
+    state.timer=setTimeout(()=>state.onScrollEnd?.(),140);
+    clearTimeout(state.healthTimer);
+    state.healthTimer=setTimeout(()=>state.healthCheck?.(true),780);
   };
   const cancelGesture=()=>{
     state.gesture=null;
