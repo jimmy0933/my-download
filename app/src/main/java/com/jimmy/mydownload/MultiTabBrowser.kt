@@ -713,64 +713,141 @@ private fun xVideoFullscreenScript(enabled: Boolean): String =
     X_VIDEO_FULLSCREEN_SCRIPT.replace("__ENABLED__", enabled.toString())
 
 /**
- * A/B isolation test: use X's unmodified carousel for landscape and portrait.
- * No injected slide sizing, scroll correction, swipe listener, or delayed play.
- * The fullscreen overlay and video gestures outside this test remain intact.
+ * Lightweight landscape fix. X still owns touch handling, video playback and
+ * the scroll animation. Only the carousel's outer slide sizing and CSS snap
+ * are adjusted, at mount/resize rather than at each swipe.
  */
-private val X_IMMERSIVE_NATIVE_TEST_SCRIPT = """
+private val X_LANDSCAPE_CAROUSEL_SCRIPT = """
 (() => {
   if (!/^(?:www\.)?(?:x\.com|twitter\.com)$/.test(location.hostname))
     return 'not-x';
 
-  // Isolation test: leave X's own immersive carousel, card geometry,
-  // scroll snapping, autoplay and touch navigation entirely untouched.
-  // Clean up any legacy fixer left in the live page from an earlier injection.
-  if (window.__mydownloadNativeCarouselCleaned) return 'native';
-  const old=window.__mydownloadImmersiveFit;
-  if (old) {
-    old.active=false;
-    old.gesture=null;
-    old.restoreToken=(old.restoreToken||0)+1;
-    clearTimeout(old.timer);
-    clearTimeout(old.playbackTimer);
-    clearTimeout(old.healthTimer);
-    old.scrollObserver?.disconnect?.();
-    if (old.prepareRaf) cancelAnimationFrame(old.prepareRaf);
-    if (old.settleRaf) cancelAnimationFrame(old.settleRaf);
-    if (old.boundScroller) {
-      old.boundScroller.removeEventListener('scroll',old.scrollHandler);
-      old.boundScroller.removeEventListener('scrollend',old.scrollEndHandler);
-      old.boundScroller=null;
+  // Clean leftovers from the earlier, more invasive landscape workaround.
+  // The current WebView process may survive a UI mode change.
+  if (!window.__mydownloadNativeCarouselCleaned) {
+    const old=window.__mydownloadImmersiveFit;
+    if (old) {
+      old.active=false;
+      old.gesture=null;
+      old.restoreToken=(old.restoreToken||0)+1;
+      clearTimeout(old.timer);
+      clearTimeout(old.playbackTimer);
+      clearTimeout(old.healthTimer);
+      old.scrollObserver?.disconnect?.();
+      if (old.prepareRaf) cancelAnimationFrame(old.prepareRaf);
+      if (old.settleRaf) cancelAnimationFrame(old.settleRaf);
+      if (old.boundScroller) {
+        old.boundScroller.removeEventListener('scroll',old.scrollHandler);
+        old.boundScroller.removeEventListener('scrollend',old.scrollEndHandler);
+        old.boundScroller=null;
+      }
+      old.handleResize=()=>{};
+      old.onScroll=()=>{};
+      old.onScrollEnd=()=>{};
+      old.healthCheck=()=>{};
+      old.prepareSlides=()=>{};
+      old.attachScroller=()=>{};
+      old.nativeStart=()=>{};
+      old.nativeFinish=()=>{};
+      old.nativeCancel=()=>{};
     }
-    // Older document-level listeners may remain registered. Keep them inert.
-    old.handleResize=()=>{};
-    old.onScroll=()=>{};
-    old.onScrollEnd=()=>{};
-    old.healthCheck=()=>{};
-    old.prepareSlides=()=>{};
-    old.attachScroller=()=>{};
-    old.nativeStart=()=>{};
-    old.nativeFinish=()=>{};
-    old.nativeCancel=()=>{};
+    document.getElementById('mydownload-immersive-layout-repair')?.remove();
+    document.getElementById('mydownload-fullscreen-card-size')?.remove();
+    document.querySelectorAll('[data-mydownload-immersive-slide],'+
+      '[data-mydownload-fullscreen-card],'+
+      '[data-mydownload-fullscreen-scroll]').forEach(el=>{
+        el.removeAttribute('data-mydownload-immersive-slide');
+        el.removeAttribute('data-mydownload-fullscreen-card');
+        el.removeAttribute('data-mydownload-fullscreen-scroll');
+      });
+    window.__mydownloadNativeCarouselCleaned=true;
   }
-  document.getElementById('mydownload-immersive-layout-repair')?.remove();
-  document.getElementById('mydownload-fullscreen-card-size')?.remove();
-  document.querySelectorAll('[data-mydownload-immersive-slide],'+
-    '[data-mydownload-fullscreen-card],'+
-    '[data-mydownload-fullscreen-scroll]').forEach(el=>{
-      el.removeAttribute('data-mydownload-immersive-slide');
-      el.removeAttribute('data-mydownload-fullscreen-card');
-      el.removeAttribute('data-mydownload-fullscreen-scroll');
-    });
-  window.__mydownloadNativeCarouselCleaned=true;
-  return 'native';
+
+  const state=window.__mydownloadLandscapeCarousel ||
+    (window.__mydownloadLandscapeCarousel={track:null,scroll:null,height:0});
+  const trackAttr='data-mydownload-landscape-track';
+  const scrollAttr='data-mydownload-landscape-scroll';
+  const styleId='mydownload-landscape-track-css';
+
+  const clear=()=>{
+    state.track?.removeAttribute(trackAttr);
+    state.scroll?.removeAttribute(scrollAttr);
+    document.getElementById(styleId)?.remove();
+    state.track=null;
+    state.scroll=null;
+    state.height=0;
+  };
+
+  // Portrait and non-fullscreen are 100% X-native. Do not leave CSS behind
+  // when rotating back or closing the floating fullscreen mode.
+  const landscape=__ENABLED__ && innerWidth>innerHeight*1.12;
+  if (!landscape) {
+    if (state.track || state.scroll || state.height) clear();
+    return 'native';
+  }
+
+  const scroll=document.querySelector('[data-testid="vss-scroll-view"]');
+  if (!scroll) return 'no-carousel';
+
+  // Find the direct parent of X's immersive cards. Never attach card styles
+  // to the <video> element, its compositing layer or playback controls.
+  let track=scroll.firstElementChild;
+  let cardCount=0;
+  for (let depth=0;track && depth<6;depth++) {
+    const children=[...track.children].filter(el=>el instanceof HTMLElement);
+    if (!children.length) {track=null;break;}
+    const media=children.filter(el=>el.querySelector(
+      'video,[data-testid^="immersive-tweet-ui-content-container"]'));
+    if (media.length>1 || (media.length===1 && children.length>1)) {
+      cardCount=media.length;
+      break;
+    }
+    if (media.length===1 && children.length===1 &&
+        media[0].querySelectorAll('video').length<=1) {
+      cardCount=1;
+      break;
+    }
+    if (children.length!==1) {track=null;break;}
+    track=children[0];
+  }
+  if (!track || !cardCount) return 'no-cards';
+  const rect=scroll.getBoundingClientRect();
+  const height=Math.round(Math.min(rect.height||scroll.clientHeight,innerHeight));
+  if (height<150) return 'not-ready';
+
+  // Updates occur only if X replaces its entire carousel or the viewport
+  // height changes. Virtualized cards inherit the single CSS rule automatically.
+  if (state.track!==track || state.scroll!==scroll) {
+    clear();
+    state.track=track;
+    state.scroll=scroll;
+    track.setAttribute(trackAttr,'1');
+    scroll.setAttribute(scrollAttr,'1');
+  }
+  if (state.height!==height || !document.getElementById(styleId)) {
+    const css='['+trackAttr+'="1"] > * {'+
+      'min-height:'+height+'px !important;'+
+      'scroll-snap-align:start !important;'+
+      'box-sizing:border-box !important;'+
+      '} ['+scrollAttr+'="1"] {'+
+      'scroll-snap-type:y mandatory !important;'+
+      'scroll-padding-top:0 !important;'+
+      '}';
+    let style=document.getElementById(styleId);
+    if (!style) {
+      style=document.createElement('style');
+      style.id=styleId;
+      (document.head||document.documentElement).appendChild(style);
+    }
+    if (style.textContent!==css) style.textContent=css;
+    state.height=height;
+  }
+  return 'landscape-ready';
 })()
 """.trimIndent()
 
-// Keep the old call sites for fullscreen and route changes. This test performs
-// one-time cleanup only; it never measures, resizes or scrolls an X video card.
-private fun xImmersiveFitScript(@Suppress("UNUSED_PARAMETER") enabled: Boolean): String =
-    X_IMMERSIVE_NATIVE_TEST_SCRIPT
+private fun xImmersiveFitScript(enabled: Boolean): String =
+    X_LANDSCAPE_CAROUSEL_SCRIPT.replace("__ENABLED__", enabled.toString())
 
 private val X_VIDEO_DOUBLE_TAP_SEEK_SCRIPT = """
 (() => {
