@@ -425,7 +425,9 @@ private val X_MEDIA_PINCH_ZOOM_SCRIPT = """
   };
   const ensure = () => {
     if (state.path!==location.pathname ||
-        (state.media && !state.media.isConnected)) {
+        (state.media && (!state.media.isConnected ||
+          (document.querySelector('[data-testid="vss-scroll-view"]') &&
+           !visible(state.media.getBoundingClientRect()))))) {
       reset();
       state.path=location.pathname;
     }
@@ -666,6 +668,7 @@ private val X_IMMERSIVE_FIT_SCRIPT = """
 
   const clear=()=>{
     clearTimeout(state.timer);
+    clearTimeout(state.playbackTimer);
     state.timer=0;state.gesture=null;
     document.getElementById(styleId)?.remove();
     document.querySelectorAll('['+cardAttr+']').forEach(el=>
@@ -708,42 +711,19 @@ private val X_IMMERSIVE_FIT_SCRIPT = """
     return {scroller,cards,box:scroller.getBoundingClientRect()};
   };
   const apply=()=>{
-    if(!state.active)return null;
+    // X owns card heights, scroll snapping and video surfaces.
+    // Overriding these on every scan could unmount the playing card mid-swipe.
     const found=measure();
-    if(!found)return null;
-    const {scroller,cards}=found;
-    const height=Math.round(window.visualViewport?.height||innerHeight);
-    if(height<140)return null;
-    state.scroll=scroller;state.cards=cards;state.lastHeight=height;
-    document.querySelectorAll('['+cardAttr+']').forEach(el=>{
-      if(!cards.includes(el))el.removeAttribute(cardAttr);
-    });
-    for(const card of cards){
-      if(!card.hasAttribute(cardAttr))card.setAttribute(cardAttr,'1');
+    if(found){
+      state.scroll=found.scroller;
+      state.cards=found.cards;
     }
-    if(!scroller.hasAttribute(scrollAttr))scroller.setAttribute(scrollAttr,'1');
-    let style=document.getElementById(styleId);
-    if(!style){
-      style=document.createElement('style');style.id=styleId;
-      (document.head||document.documentElement).appendChild(style);
-    }
-    // Resize the carousel and ask the browser to snap each *card* to its
-    // beginning, instead of carrying portrait-sized snap offsets into
-    // landscape. The real video/player surface is never transformed.
-    const css='[data-testid="vss-scroll-view"]['+scrollAttr+'] {'+
-      'height:'+height+'px !important;min-height:'+height+'px !important;'+
-      'max-height:'+height+'px !important;box-sizing:border-box !important;'+
-      'scroll-snap-type:y mandatory !important;'+
-      'scroll-padding-block:0 !important;'+
-      '}'+
-      '['+cardAttr+'="1"] {'+
-      'height:'+height+'px !important;min-height:'+height+'px !important;'+
-      'max-height:'+height+'px !important;flex:0 0 '+height+'px !important;'+
-      'box-sizing:border-box !important;'+
-      'scroll-snap-align:start !important;'+
-      'scroll-snap-stop:always !important;'+
-      'scroll-margin-block:0 !important;}';
-    if(style.textContent!==css)style.textContent=css;
+    // Also clean up CSS from an older injected runtime if any.
+    document.getElementById(styleId)?.remove();
+    document.querySelectorAll('['+cardAttr+']').forEach(el=>
+      el.removeAttribute(cardAttr));
+    document.querySelectorAll('['+scrollAttr+']').forEach(el=>
+      el.removeAttribute(scrollAttr));
     return found;
   };
 
@@ -783,20 +763,17 @@ private val X_IMMERSIVE_FIT_SCRIPT = """
     let card=found.cards.includes(state.anchorCard)?state.anchorCard:null;
     if(!card && state.anchorKey)
       card=found.cards.find(c=>cardKey(c)===state.anchorKey);
-    if(!card)card=found.cards[state.anchorIndex];
+    // Do not fall back to numeric position: X virtualizes and reorders cards,
+    // so the same index can point at an unrelated video after a swipe.
     if(!card)return;
     const delta=card.getBoundingClientRect().top-found.box.top;
-    if(Math.abs(delta)>2){
+    // Keep a resize correction narrowly scoped to the original video.
+    // X itself remains responsible for normal next/previous swipes.
+    if(Math.abs(delta)>8 && Math.abs(delta)<found.box.height*1.5){
       const scroll=found.scroller;
-      const snap=scroll.style.scrollSnapType;
-      const behavior=scroll.style.scrollBehavior;
-      scroll.style.scrollSnapType='none';
-      scroll.style.scrollBehavior='auto';
-      scroll.scrollTop+=delta;
-      scroll.style.scrollSnapType=snap;
-      scroll.style.scrollBehavior=behavior;
+      scroll.scrollTo({top:scroll.scrollTop+delta,behavior:'instant'});
     }
-    if(attempt<3)requestAnimationFrame(()=>restoreVisible(token,attempt+1));
+    if(attempt<2)requestAnimationFrame(()=>restoreVisible(token,attempt+1));
   };
   // Orientation events can arrive before the next 950 ms polling cycle.
   // Use the already-saved card immediately, without changing the playing
@@ -853,33 +830,24 @@ private val X_IMMERSIVE_FIT_SCRIPT = """
       ? current.index>gesture.fromIndex
       : current.index<gesture.fromIndex;
     if(!changed || !inDirection)return;
+    // X already snapped to the new card. A second scrollTop can detach the
+    // playing video and leave a completely black WebView video surface.
     state.anchorCard=current.card;
     state.anchorIndex=current.index;
     state.anchorKey=cardKey(current.card);
-    const delta=current.rect.top-box.top;
-    // Only correct an under-snap (e.g. new post starts 125px below top).
-    // A full-card jump here would move the user backwards, so disallow it.
-    if(Math.abs(delta)<10 || Math.abs(delta)>box.height*0.42)return;
-    const target=scroller.scrollTop+delta;
-    const range=scroller.scrollHeight-scroller.clientHeight;
-    if(range<=20 || target<0 || target>range+2)return;
-    // Only move in the user's intended swipe direction.
-    if(gesture.direction>0 && delta<=0)return;
-    if(gesture.direction<0 && delta>=0)return;
-    if(attempt<1){
-      // Wait until X's momentum animation has settled, so we don't fight it.
-      const savedTop=scroller.scrollTop;
-      state.timer=setTimeout(()=>{
-        if(!state.active||state.gesture)return;
-        if(Math.abs(scroller.scrollTop-savedTop)>5){
-          finishSwipe(gesture,1);
-        }else{
-          scroller.scrollTop=target;
-        }
-      },110);
-    }else{
-      scroller.scrollTop=target;
-    }
+    window.__mydownloadMediaZoom?.reset?.();
+    const newlyActiveCard=current.card;
+    clearTimeout(state.playbackTimer);
+    state.playbackTimer=setTimeout(()=>{
+      if(!state.active || state.gesture)return;
+      const still=measure();
+      if(!still || centered(still)?.card!==newlyActiveCard)return;
+      const video=newlyActiveCard.querySelector('video');
+      if(video?.autoplay && video.paused && !video.ended && !video.error &&
+          video.readyState>=1){
+        video.play().catch(()=>{});
+      }
+    },650);
   };
 
   const startGesture=(x,y)=>{
@@ -1986,7 +1954,7 @@ fun MultiTabBrowser(
                     modifier = Modifier.align(Alignment.BottomEnd)
                         // Keep clear of X's bottom actions and the draggable
                         // download icon, which may be anchored to the corner.
-                        .padding(end = 16.dp, bottom = 16.dp)
+                        .padding(end = 16.dp, bottom = 72.dp)
                         .clip(CircleShape)
                         .background(Color(0xB0000000))
                 ) {
@@ -2402,7 +2370,7 @@ fun MultiTabBrowser(
                     // the device back button remains available as well.
                     Box(
                         modifier = Modifier.align(Alignment.BottomEnd)
-                            .padding(end = 16.dp, bottom = 16.dp)
+                            .padding(end = 16.dp, bottom = 72.dp)
                             .clip(CircleShape)
                             .background(Color(0xB0000000))
                     ) {
