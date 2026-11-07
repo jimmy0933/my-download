@@ -54,6 +54,13 @@ private val X_VIDEO_PROGRESS_OVERLAY_SCRIPT = """
           [data-testid*="video-scrub" i])
       { visibility:hidden !important; pointer-events:none !important; }
       html[data-mydownload-custom-progress="1"]
+      [data-mydownload-native-seek="1"],
+      html[data-mydownload-custom-progress="1"]
+      [data-mydownload-native-seek="1"]::before,
+      html[data-mydownload-custom-progress="1"]
+      [data-mydownload-native-seek="1"]::after
+      { visibility:hidden !important; pointer-events:none !important; }
+      html[data-mydownload-custom-progress="1"]
       video::-webkit-media-controls-timeline
       { display:none !important; }
     `;
@@ -64,6 +71,109 @@ private val X_VIDEO_PROGRESS_OVERLAY_SCRIPT = """
       'data-mydownload-custom-progress','1');
     else document.documentElement.removeAttribute(
       'data-mydownload-custom-progress');
+  };
+
+  // X renders its video seek track in several different layers. In some
+  // immersive viewers it is a plain div, a sibling of videoPlayerControls,
+  // and not a [role=slider]. Styling only videoPlayer descendants missed it.
+  // Locate narrow, wide seek tracks near the ACTIVE video, without touching
+  // play/pause, volume, fullscreen or the vertical-swipe carousel.
+  state.nativeSeekMarks=state.nativeSeekMarks||new Set();
+  const clearNativeSeeks=()=>{
+    for(const el of state.nativeSeekMarks){
+      if(el.isConnected)el.removeAttribute('data-mydownload-native-seek');
+    }
+    state.nativeSeekMarks.clear();
+  };
+  const nativeCandidates=[
+    '[role="slider"]','input[type="range"]',
+    '[data-testid*="seek" i]','[data-testid*="scrub" i]',
+    '[data-testid*="progress" i]','[data-testid*="timeline" i]',
+    '[aria-label*="seek" i]','[aria-label*="scrub" i]',
+    '[aria-label*="timeline" i]','[aria-label*="progress" i]',
+    '[aria-label*="進度"]','[aria-label*="時間軸"]',
+    '[class*="seek" i]','[class*="scrub" i]',
+    '[class*="progress" i]','progress'
+  ].join(',');
+  const markNativeSeeks=video=>{
+    if(!video){clearNativeSeeks();state.nativeSeekVideo=null;return;}
+    const now=Date.now();
+    if(state.nativeSeekVideo===video && now-(state.nativeSeekAt||0)<700)return;
+    state.nativeSeekVideo=video;state.nativeSeekAt=now;
+    clearNativeSeeks();
+
+    const vr=video.getBoundingClientRect();
+    const threshold=Math.max(106,Math.min(200,vr.width*0.4));
+    const earliestY=Math.max(0,Math.min(vr.top+vr.height*0.40,innerHeight*0.62)-40);
+    const inTrackArea=node=>{
+      if(!node.isConnected||node.closest('#mydownload-video-progress'))return false;
+      if(node.closest('button,[role="button"],nav,[role="navigation"]'))return false;
+      const r=node.getBoundingClientRect();
+      if(r.width<threshold||r.height<1||r.height>58)return false;
+      if(r.top<earliestY||r.top>=innerHeight||r.bottom<=0)return false;
+      if(Math.min(r.right,innerWidth)<=0||r.left>=innerWidth)return false;
+      const overlap=Math.min(r.right,vr.right)-Math.max(r.left,vr.left);
+      return overlap>=Math.min(72,vr.width*0.28);
+    };
+    const mark=node=>{
+      if(state.nativeSeekMarks.has(node))return;
+      let target=node;
+      const parent=node.parentElement;
+      if(parent && parent!==document.body && parent!==document.documentElement &&
+          !parent.querySelector('button,[role="button"],video')){
+        const r=parent.getBoundingClientRect(),n=node.getBoundingClientRect();
+        if(r.height>0&&r.height<=42&&r.width>=n.width*0.8)target=parent;
+      }
+      target.setAttribute('data-mydownload-native-seek','1');
+      state.nativeSeekMarks.add(target);
+    };
+    // The semantic search is global because X can portal controls outside
+    // videoPlayer and even outside #layers. Geometry keeps other posts intact.
+    for(const node of document.querySelectorAll(nativeCandidates)){
+      if(!inTrackArea(node))continue;
+      const label=((node.getAttribute('aria-label')||'')+' '+
+        (node.getAttribute('data-testid')||'')+' '+
+        (typeof node.className==='string'?node.className:'')).toLowerCase();
+      if(/volume|speaker|mute|sound|音量|靜音|亮度/.test(label))continue;
+      const slider=node.matches('[role="slider"],input[type="range"]');
+      const seekName=/seek|scrub|timeline|progress|播放進度|播放位置|時間軸|進度/.test(label);
+      // Ignore download/loading progress bars, which are not video timelines.
+      if(!slider&&!seekName)continue;
+      mark(node);
+    }
+
+    // The immersive X timeline can be an unlabelled 2-6px line. Inspect
+    // only the selected player's subtree, never the entire feed.
+    const player=video.closest(
+      '[data-testid="videoPlayer"],[data-testid="videoComponent"]');
+    const viewer=video.closest(
+      '[data-testid="vss-scroll-view"],[data-testid="immersive-viewer"],'+
+      '#layers [role="dialog"],[data-testid="photoViewer"]');
+    let scope=viewer||player;
+    if(!scope){
+      scope=video;
+      for(let hop=0;hop<6&&scope.parentElement;hop++)scope=scope.parentElement;
+    }
+    const nodes=scope.querySelectorAll('div,span');
+    const count=Math.min(nodes.length,1800);
+    for(let i=0;i<count;i++){
+      const node=nodes[i];
+      if(!inTrackArea(node))continue;
+      const r=node.getBoundingClientRect();
+      if(r.height>12)continue;
+      const style=getComputedStyle(node);
+      if(style.display==='none'||Number(style.opacity)===0)continue;
+      const color=style.backgroundColor;
+      const before=getComputedStyle(node,'::before');
+      const after=getComputedStyle(node,'::after');
+      const colored=value=>!!value&&value!=='transparent'&&
+        value!=='rgba(0, 0, 0, 0)'&&value!=='rgba(0,0,0,0)';
+      const trackPaint=colored(color)||style.backgroundImage!=='none'||
+        (before.content!=='none'&&colored(before.backgroundColor))||
+        (after.content!=='none'&&colored(after.backgroundColor));
+      if(!trackPaint)continue;
+      mark(node);
+    }
   };
 
   const create=()=>{
@@ -202,6 +312,7 @@ private val X_VIDEO_PROGRESS_OVERLAY_SCRIPT = """
     state.visible=!!playable;
     if(!playable){
       showCustomTimeline(false);
+      markNativeSeeks(null);
       state.root.style.display='none';
       state.video=null;
       return;
@@ -209,6 +320,7 @@ private val X_VIDEO_PROGRESS_OVERLAY_SCRIPT = """
     state.video=video;
     state.root.style.display='block';
     showCustomTimeline(true);
+    markNativeSeeks(video);
     state.root.style.opacity=String(opts.opacity/100);
     state.root.style.bottom=(innerWidth>innerHeight?
       opts.landscapeBottom:opts.portraitBottom)+'px';
@@ -224,6 +336,7 @@ private val X_VIDEO_PROGRESS_OVERLAY_SCRIPT = """
 
   if(!config.enabled){
     showCustomTimeline(false);
+    markNativeSeeks(null);
     clearTimeout(state.timer);state.timer=0;state.visible=false;
     if(state.root)state.root.style.display='none';
     return 'disabled';
