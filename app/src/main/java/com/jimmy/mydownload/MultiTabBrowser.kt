@@ -216,8 +216,8 @@ private fun BoxScope.MovableFullscreenButton(
         ) {
             Icon(
                 if (fullscreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
-                contentDescription = if (fullscreen) "退出全螢幕，長按拖曳可移動按鈕"
-                    else "切換全螢幕，長按拖曳可移動按鈕",
+                contentDescription = if (fullscreen) "退出全螢幕，拖曳可移動按鈕"
+                    else "切換全螢幕，拖曳可移動按鈕",
                 tint = BrowserGreen, modifier = Modifier.size(28.dp)
             )
         }
