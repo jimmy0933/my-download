@@ -247,40 +247,99 @@ private val X_DISPLAY_SCRIPT = """
   if (flags[12]) selectors.push(
     '#layers [role="dialog"]:has([data-testid="tweetPhoto"],video) [data-testid="share"]'
   );
-  // X's media page can be a full-screen route, not a role=dialog modal.
-  // Detect the *visible seekbar* without touching player event handlers.
+  // X's portrait / immersive video viewer often has neither a dialog nor
+  // a native role=slider seekbar. Scope CSS to the active media viewer, rather
+  // than requiring both markers (the old rule failed on these layouts).
+  const videoNodes = Array.from(document.querySelectorAll('video'));
+  const visibleVideos = videoNodes.filter(node => {
+    const r = node.getBoundingClientRect();
+    return r.width >= 120 && r.height >= 90 &&
+      r.right > 0 && r.left < innerWidth &&
+      r.bottom > 0 && r.top < innerHeight;
+  });
+  const immersiveRoot = document.querySelector(
+    '[data-testid="vss-scroll-view"],[data-testid="immersive-viewer"]'
+  );
+  const modalRoot = document.querySelector(
+    '#layers [role="dialog"]:has(video,[data-testid="videoPlayer"])'
+  );
   const mediaRoute = /\/status\/\d+\/(?:photo|video)\/\d+\/?$/.test(location.pathname) ||
     /^\/i\/status\/\d+\/?$/.test(location.pathname);
-  const modal = !!document.querySelector('#layers [role="dialog"]:has(video,[data-testid="videoPlayer"])');
-  const liveVideo = Array.from(document.querySelectorAll('video')).some(node => {
-    const rect = node.getBoundingClientRect();
-    return rect.width >= 120 && rect.height >= 90 && rect.bottom > 0 &&
-      rect.top < innerHeight;
-  });
   const seekbarVisible = Array.from(document.querySelectorAll(
     '[role="slider"],input[type="range"],[data-testid="videoPlayer"] [aria-valuenow]'
   )).some(node => {
     const rect = node.getBoundingClientRect();
     const css = getComputedStyle(node);
     return rect.width >= 80 && rect.height > 0 && rect.bottom > 0 &&
-      rect.top < innerHeight && css.display !== 'none' && css.visibility !== 'hidden';
+      rect.top < innerHeight && css.display !== 'none' &&
+      css.visibility !== 'hidden';
   });
-  document.documentElement.dataset.mydownloadXSeek =
-    (liveVideo && (mediaRoute || modal) && seekbarVisible) ? '1' : '0';
-  const seekViewer = 'html[data-mydownload-x-seek="1"]';
-  if (flags[13]) selectors.push(
-    seekViewer + ' [data-testid="tweetText"]',
-    seekViewer + ' [data-testid="media-caption"]',
-    seekViewer + ' [data-testid="video-caption"]',
-    seekViewer + ' [data-testid="videoDescription"]'
+  const playingViewer = visibleVideos.length > 0 && !!(
+    immersiveRoot || modalRoot ||
+    (mediaRoute && seekbarVisible) ||
+    (window.__mydownloadVideoFullscreen?.enabled && seekbarVisible)
   );
-  if (flags[14]) selectors.push(
-    seekViewer + ' [data-testid="User-Name"]',
-    seekViewer + ' [data-testid="UserName"]',
-    seekViewer + ' [data-testid="User-Names"]',
-    seekViewer + ' [data-testid^="UserAvatar-Container"]',
-    seekViewer + ' [data-testid="Tweet-User-Avatar"]',
-    seekViewer + ' [data-testid="videoTitle"]'
+  document.documentElement.dataset.mydownloadXSeek =
+    playingViewer ? '1' : '0';
+
+  const scopeAttr = 'data-mydownload-video-details-root';
+  document.querySelectorAll('[' + scopeAttr + '="1"]').forEach(el =>
+    el.removeAttribute(scopeAttr));
+  const markScope = el => {
+    if (el && el.nodeType === 1) el.setAttribute(scopeAttr,'1');
+  };
+  if (playingViewer) {
+    markScope(immersiveRoot);
+    markScope(modalRoot);
+    if (!immersiveRoot && !modalRoot) {
+      // For X's full-page media route, find the smallest parent containing
+      // both the visible player and its post details.
+      const activeVideo = visibleVideos.sort((a,b) => {
+        const ar=a.getBoundingClientRect(),br=b.getBoundingClientRect();
+        return br.width*br.height-ar.width*ar.height;
+      })[0];
+      let container=activeVideo;
+      for (let depth=0;container && depth<14;depth++) {
+        if (container===document.body || container===document.documentElement)
+          break;
+        const caption=container.querySelector?.(
+          '[data-testid="tweetText"],[data-testid="videoDescription"],' +
+          '[data-testid^="immersive-tweet-ui-content-container"]'
+        );
+        if (caption) { markScope(container); break; }
+        container=container.parentElement;
+      }
+      if (!document.querySelector('['+scopeAttr+'="1"]')) {
+        markScope(activeVideo.closest('article[data-testid="tweet"]'));
+      }
+    }
+  }
+
+  const playbackScope = '['+scopeAttr+'="1"]';
+  const detailSelectors = [
+    '[data-testid="tweetText"]',
+    '[data-testid="media-caption"]',
+    '[data-testid="video-caption"]',
+    '[data-testid="videoDescription"]',
+    '[data-testid="tweetContent"]',
+    '[data-testid="videoTitle"]'
+  ];
+  const authorSelectors = [
+    '[data-testid="User-Name"]',
+    '[data-testid="UserName"]',
+    '[data-testid="User-Names"]',
+    '[data-testid^="UserAvatar-Container"]',
+    '[data-testid="Tweet-User-Avatar"]'
+  ];
+  // The combined switch hides caption + author with a single action.
+  // Independent switches below it still work when the combined switch is off.
+  if (flags[13] || flags[15]) detailSelectors.forEach(sel =>
+    selectors.push(playbackScope+' '+sel));
+  if (flags[14] || flags[15]) authorSelectors.forEach(sel =>
+    selectors.push(playbackScope+' '+sel));
+  if (flags[13] || flags[15]) selectors.push(
+    playbackScope+' [data-testid^="immersive-tweet-ui-content-container"] [lang]',
+    playbackScope+' [data-testid^="immersive-tweet-ui-content-container"] [dir="auto"]'
   );
   const id = 'mydownload-x-display';
   let style = document.getElementById(id);
@@ -305,7 +364,8 @@ private fun xDisplayScript(options: XDisplayOptions): String {
         options.hideBottomHome, options.hideBottomSearch,
         options.hideBottomGrok, options.hideBottomChat,
         options.hideBottomNotifications, options.hideBottomShare,
-        options.hideVideoPlaybackText, options.hideVideoPlaybackTitle
+        options.hideVideoPlaybackText, options.hideVideoPlaybackTitle,
+        options.hideVideoBelowProgressDetails
     ).joinToString(",") { it.toString() }
     return X_DISPLAY_SCRIPT.replace("__FLAGS__", flags)
 }
