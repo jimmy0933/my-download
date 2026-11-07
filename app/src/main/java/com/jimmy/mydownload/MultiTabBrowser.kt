@@ -153,6 +153,77 @@ private fun BoxScope.MovableDownloadButton(
     }
 }
 
+/**
+ * Movable fullscreen button. A tap still toggles fullscreen; dragging the
+ * button never pans the video. The onMoveFinished callback persists its place.
+ * Unmodified orientations keep the old bottom-right 16dp / 72dp default.
+ */
+@Composable
+private fun BoxScope.MovableFullscreenButton(
+    containerWidth: Int,
+    containerHeight: Int,
+    position: FloatingDownloadPosition?,
+    fullscreen: Boolean,
+    onMove: (FloatingDownloadPosition) -> Unit,
+    onMoveFinished: (FloatingDownloadPosition) -> Unit,
+    onClick: () -> Unit
+) {
+    val density = LocalDensity.current
+    val buttonSize = with(density) { 47.dp.roundToPx() }
+    val endMargin = with(density) { 16.dp.roundToPx() }
+    val bottomMargin = with(density) { 72.dp.roundToPx() }
+    val rangeX = (containerWidth - buttonSize).coerceAtLeast(0)
+    val rangeY = (containerHeight - buttonSize).coerceAtLeast(0)
+    val defaultPosition = FloatingDownloadPosition(
+        if (rangeX > 0) ((rangeX - endMargin).coerceAtLeast(0).toFloat() / rangeX)
+            .coerceIn(0f, 1f) else 1f,
+        if (rangeY > 0) ((rangeY - bottomMargin).coerceAtLeast(0).toFloat() / rangeY)
+            .coerceIn(0f, 1f) else 1f
+    )
+    val current = position ?: defaultPosition
+    val posX = (current.xFraction.coerceIn(0f, 1f) * rangeX).roundToInt()
+    val posY = (current.yFraction.coerceIn(0f, 1f) * rangeY).roundToInt()
+    val currentPosition by rememberUpdatedState(position)
+    val currentDefault by rememberUpdatedState(defaultPosition)
+    val currentOnMove by rememberUpdatedState(onMove)
+    val currentOnFinished by rememberUpdatedState(onMoveFinished)
+
+    Box(
+        modifier = Modifier.align(Alignment.TopStart)
+            .offset { IntOffset(posX, posY) }
+            .size(47.dp)
+            .clip(CircleShape)
+            .background(Color(0xB0000000))
+            .pointerInput(rangeX, rangeY) {
+                var dragPosition = currentPosition ?: currentDefault
+                detectDragGestures(
+                    onDragStart = { dragPosition = currentPosition ?: currentDefault },
+                    onDragEnd = { currentOnFinished(dragPosition) },
+                    onDragCancel = { currentOnFinished(dragPosition) }
+                ) { change, dragAmount ->
+                    change.consume()
+                    dragPosition = dragPosition.movedBy(
+                        dragAmount.x, dragAmount.y, rangeX, rangeY
+                    )
+                    currentOnMove(dragPosition)
+                }
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        IconButton(
+            onClick = onClick,
+            modifier = Modifier.fillMaxSize()
+        ) {
+            Icon(
+                if (fullscreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
+                contentDescription = if (fullscreen) "退出全螢幕，長按拖曳可移動按鈕"
+                    else "切換全螢幕，長按拖曳可移動按鈕",
+                tint = BrowserGreen, modifier = Modifier.size(28.dp)
+            )
+        }
+    }
+}
+
 private class TabViewState(record: BrowserTabRecord) {
     val id: String = record.id
     var url by mutableStateOf(record.url)
@@ -1084,6 +1155,13 @@ fun MultiTabBrowser(
     var floatingDownloadPosition by remember(context) {
         mutableStateOf(DownloadSettings.floatingDownloadPosition(context))
     }
+    // Separate saved locations: rotation must not move the control offscreen.
+    var fullscreenPortraitPosition by remember(context) {
+        mutableStateOf(DownloadSettings.floatingFullscreenPosition(context, false))
+    }
+    var fullscreenLandscapePosition by remember(context) {
+        mutableStateOf(DownloadSettings.floatingFullscreenPosition(context, true))
+    }
 
     val session = remember(context) { BrowserStore.loadSession(context) }
     val tabs = remember(context) {
@@ -1956,25 +2034,24 @@ fun MultiTabBrowser(
             val xVideoVisible = BrowserVideoDiscovery.isXPage(selected.url) &&
                 videoElements.videos.isNotEmpty()
             if (visible && (xVideoVisible || browserVideoFullscreen)) {
-                Box(
-                    modifier = Modifier.align(Alignment.BottomEnd)
-                        // Keep clear of X's bottom actions and the draggable
-                        // download icon, which may be anchored to the corner.
-                        .padding(end = 16.dp, bottom = 72.dp)
-                        .clip(CircleShape)
-                        .background(Color(0xB0000000))
-                ) {
-                    IconButton(onClick = {
-                        setVideoFullscreen(!browserVideoFullscreen)
-                    }, modifier = Modifier.size(47.dp)) {
-                        Icon(
-                            if (browserVideoFullscreen) Icons.Default.FullscreenExit
-                            else Icons.Default.Fullscreen,
-                            contentDescription = if (browserVideoFullscreen) "退出全螢幕" else "切換全螢幕",
-                            tint = BrowserGreen, modifier = Modifier.size(28.dp)
-                        )
-                    }
-                }
+                val landscape = viewportWidth > viewportHeight
+                MovableFullscreenButton(
+                    containerWidth = viewportWidth,
+                    containerHeight = viewportHeight,
+                    position = if (landscape) fullscreenLandscapePosition
+                        else fullscreenPortraitPosition,
+                    fullscreen = browserVideoFullscreen,
+                    onMove = { moved ->
+                        if (landscape) fullscreenLandscapePosition = moved
+                        else fullscreenPortraitPosition = moved
+                    },
+                    onMoveFinished = { saved ->
+                        if (landscape) fullscreenLandscapePosition = saved
+                        else fullscreenPortraitPosition = saved
+                        DownloadSettings.setFloatingFullscreenPosition(context, landscape, saved)
+                    },
+                    onClick = { setVideoFullscreen(!browserVideoFullscreen) }
+                )
             }
             if (selected.url == BrowserAddress.BLANK_TAB) {
                 Column(
@@ -2374,23 +2451,24 @@ fun MultiTabBrowser(
                     )
                     // X/HTML5 native fullscreen keeps an explicit exit action;
                     // the device back button remains available as well.
-                    Box(
-                        modifier = Modifier.align(Alignment.BottomEnd)
-                            .padding(end = 16.dp, bottom = 72.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xB0000000))
-                    ) {
-                        IconButton(
-                            onClick = { currentWebView()?.webChromeClient?.onHideCustomView() },
-                            modifier = Modifier.size(47.dp)
-                        ) {
-                            Icon(
-                                Icons.Default.FullscreenExit,
-                                contentDescription = "退出全螢幕",
-                                tint = BrowserGreen, modifier = Modifier.size(28.dp)
-                            )
-                        }
-                    }
+                    val landscape = fullscreenWidth > fullscreenHeight
+                    MovableFullscreenButton(
+                        containerWidth = fullscreenWidth,
+                        containerHeight = fullscreenHeight,
+                        position = if (landscape) fullscreenLandscapePosition
+                            else fullscreenPortraitPosition,
+                        fullscreen = true,
+                        onMove = { moved ->
+                            if (landscape) fullscreenLandscapePosition = moved
+                            else fullscreenPortraitPosition = moved
+                        },
+                        onMoveFinished = { saved ->
+                            if (landscape) fullscreenLandscapePosition = saved
+                            else fullscreenPortraitPosition = saved
+                            DownloadSettings.setFloatingFullscreenPosition(context, landscape, saved)
+                        },
+                        onClick = { currentWebView()?.webChromeClient?.onHideCustomView() }
+                    )
                     if (BrowserVideoDiscovery.isXPage(selected.url)) {
                         MovableDownloadButton(
                             containerWidth = fullscreenWidth,
