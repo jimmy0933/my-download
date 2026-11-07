@@ -484,8 +484,9 @@ private val X_VIDEO_FULLSCREEN_SCRIPT = """
       rect.bottom > 0 && rect.top < innerHeight;
   });
   if (!playingVideo) {
-    state.enabled = false;
-    return 'no-video';
+    // On a swipe X may temporarily have no visible video while the next frame
+    // mounts. Preserve an already-enabled fullscreen session in that gap.
+    return state.enabled ? 'fullscreen' : 'no-video';
   }
   // Only a UI/immersive-mode flag. No video.pause(), play(), seek(), reload()
   // or DOM re-parenting, so landscape behaves like portrait.
@@ -916,6 +917,11 @@ fun MultiTabBrowser(
                     view?.evaluateJavascript(xDisplayScript(currentXOptions), null)
                     view?.evaluateJavascript(X_MEDIA_PINCH_ZOOM_SCRIPT, null)
                     view?.evaluateJavascript(X_VIDEO_DOUBLE_TAP_SEEK_SCRIPT, null)
+                    if (browserVideoFullscreen) {
+                        // A document replacement can occur on X; restore the
+                        // fullscreen UI state without seeking or reopening video.
+                        view?.evaluateJavascript(xVideoFullscreenScript(true), null)
+                    }
                 }
                 saveSession()
             }
