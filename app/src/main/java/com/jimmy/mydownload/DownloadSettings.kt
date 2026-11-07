@@ -47,6 +47,7 @@ object DownloadSettings {
     private const val FOLDER = "destination_tree"
     private const val BLOCK = "block_ads"
     private const val AUTO_REPAIR = "auto_repair_mp4"
+    private const val VIDEO_PLAYER = "preferred_video_player"
     private const val X_HIDE_REPLY = "x_hide_reply"
     private const val X_HIDE_REPOST = "x_hide_repost"
     private const val X_HIDE_VIEWS = "x_hide_views"
@@ -126,6 +127,17 @@ object DownloadSettings {
     fun setAutoRepairMp4(context: Context, enabled: Boolean) {
         context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
             .edit().putBoolean(AUTO_REPAIR, enabled).apply()
+    }
+
+    /** Empty string = system default; other IDs are installed app package names. */
+    fun videoPlayer(context: Context): String =
+        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+            .getString(VIDEO_PLAYER, VideoPlayerApps.SYSTEM).orEmpty()
+
+    fun setVideoPlayer(context: Context, id: String) {
+        context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit()
+            .putString(VIDEO_PLAYER, id)
+            .apply()
     }
 
     fun xDisplayOptions(context: Context): XDisplayOptions {
