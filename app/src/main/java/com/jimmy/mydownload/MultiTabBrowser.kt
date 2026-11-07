@@ -1181,15 +1181,22 @@ fun MultiTabBrowser(
         } else browser.loadUrl(url)
     }
 
-    fun offerDetectedVideo(video: VisibleVideo? = null) {
+    fun offerDetectedVideo(video: VisibleVideo? = null, strictActive: Boolean = false) {
         val page = selected.url
+        if (strictActive && video == null) {
+            discoveryMessage = "尚未找到目前正在播放的影片，請播放後再點下載。"
+            return
+        }
+        val videoPostUrl = video?.postUrl.orEmpty()
+            .takeIf { BrowserVideoDiscovery.isXPage(it) }
+            ?: page
         val title = if (BrowserVideoDiscovery.isXPage(page)) {
             VideoTitle.preferred(
-                video?.postText.orEmpty().ifBlank { videoElements.pageText },
-                selected.title,
-                video?.postUrl.orEmpty().ifBlank {
-                    videoElements.pagePostUrl.ifBlank { page }
+                video?.postText.orEmpty().ifBlank {
+                    if (strictActive) "" else videoElements.pageText
                 },
+                if (strictActive) "" else selected.title,
+                videoPostUrl,
                 video?.mediaId.orEmpty()
             )
         } else StreamResolver.safeTitle(
@@ -1201,7 +1208,7 @@ fun MultiTabBrowser(
             val kind = BrowserVideoDiscovery.kind(fromPlayer) ?: "mp4"
             currentDetectedVideos(listOf(StreamChoice(
                 title, if (kind == "mp4") "MP4" else "HLS",
-                fromPlayer, kind, page,
+                fromPlayer, kind, videoPostUrl,
                 MediaCandidateResolver.group(fromPlayer), webUserAgent
             )))
             return
@@ -1220,25 +1227,57 @@ fun MultiTabBrowser(
             val discovered = (selected.mediaSources + fromPerformance)
                 .filter { BrowserVideoDiscovery.kind(it) != null }
                 .distinct()
-            val associated = video?.mediaId?.takeIf { it.isNotBlank() }?.let { id ->
-                discovered.filter { MediaCandidateResolver.mediaId(it) == id }
-            }.orEmpty()
-            // Prefer the clicked player's media ID when X exposes a thumbnail.
-            // Never mix candidates from a different video when the ID matches.
-            val all = (if (associated.isNotEmpty()) associated else discovered).take(10)
+            val mediaId = video?.mediaId.orEmpty()
+            val associated = if (mediaId.isNotBlank()) discovered.filter {
+                MediaCandidateResolver.mediaId(it) == mediaId
+            } else emptyList()
+            // Strict mode is for the current X video after a swipe. Never use
+            // historic resource entries belonging to earlier feed videos.
+            val all = when {
+                strictActive -> associated
+                associated.isNotEmpty() -> associated
+                else -> discovered
+            }.take(10)
             if (all.isEmpty()) {
-                discoveryMessage = if (BrowserVideoDiscovery.isXPage(page))
+                discoveryMessage = if (strictActive)
+                    "目前無法確認這部影片的下載來源，為避免下載上一部，請播放幾秒再試。"
+                else if (BrowserVideoDiscovery.isXPage(page))
                     "已找到 X 影片播放器，但目前只看到網站內部串流（例如 blob:），沒有可直接下載的 MP4／M3U8。可以播放影片後再試；受 X 下載權限或保護限制的內容無法直接儲存。"
                 else "目前網頁沒有提供可直接下載的 MP4／M3U8。請先播放影片再試。"
             } else {
                 currentDetectedVideos(all.map { url ->
                     val kind = BrowserVideoDiscovery.kind(url) ?: "mp4"
                     StreamChoice(
-                        title, kind.uppercase(), url, kind, page,
+                        title, kind.uppercase(), url, kind, videoPostUrl,
                         MediaCandidateResolver.group(url), webUserAgent
                     )
                 })
             }
+        }
+    }
+
+    /**
+     * The live DOM is authoritative after a vertical swipe. Do not use
+     * videoElements.videos.firstOrNull(): it may still refer to the previous clip.
+     */
+    fun downloadCurrentXVideo(onResolved: (() -> Unit)? = null) {
+        val browser = currentWebView()
+        if (browser == null) {
+            discoveryMessage = "尚未開啟瀏覽器。"
+            return
+        }
+        val tabId = selected.id
+        browser.evaluateJavascript(BrowserVideoDiscovery.ACTIVE_VIDEO_SCAN_SCRIPT) { response ->
+            if (tabId != activeId || webViews[tabId] !== browser) return@evaluateJavascript
+            val activeVideo = BrowserVideoDiscovery.decode(response).videos.singleOrNull()
+            if (activeVideo == null) {
+                discoveryMessage = "目前畫面找不到影片，請播放影片後重試。"
+                return@evaluateJavascript
+            }
+            // If the active clip source is still a blob, the media-ID filter
+            // inside offerDetectedVideo prevents mixing resources between posts.
+            offerDetectedVideo(activeVideo, strictActive = true)
+            onResolved?.invoke()
         }
     }
 
@@ -1685,7 +1724,9 @@ fun MultiTabBrowser(
                     },
                     onClick = {
                         if (directDownload) currentDownload(direct)
-                        else offerDetectedVideo(videoElements.videos.firstOrNull())
+                        else if (BrowserVideoDiscovery.isXPage(direct)) {
+                            downloadCurrentXVideo()
+                        } else offerDetectedVideo(videoElements.videos.firstOrNull())
                     }
                 )
             }
@@ -1991,9 +2032,9 @@ fun MultiTabBrowser(
                                 DownloadSettings.setFloatingDownloadPosition(context, position)
                             },
                             onClick = {
-                                val currentVideo = videoElements.videos.firstOrNull()
-                                currentWebView()?.webChromeClient?.onHideCustomView()
-                                offerDetectedVideo(currentVideo)
+                                downloadCurrentXVideo {
+                                    currentWebView()?.webChromeClient?.onHideCustomView()
+                                }
                             }
                         )
                     }
