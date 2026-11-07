@@ -733,7 +733,8 @@ private val X_IMMERSIVE_FIT_SCRIPT = """
     lastViewportWidth:0,lastViewportHeight:0,
     anchorCard:null,anchorIndex:-1,anchorKey:'',restoreToken:0,
     healthTimer:0,lastHealthTop:null,stillSince:0,lastRepairAt:0,
-    layoutRepair:false,layoutHeight:0
+    layoutRepair:false,layoutHeight:0,
+    boundScroller:null,scrollObserver:null,prepareRaf:0,settleRaf:0
   });
   const cardAttr='data-mydownload-fullscreen-card';
   const scrollAttr='data-mydownload-fullscreen-scroll';
@@ -745,6 +746,16 @@ private val X_IMMERSIVE_FIT_SCRIPT = """
     clearTimeout(state.timer);
     clearTimeout(state.playbackTimer);
     clearTimeout(state.healthTimer);
+    state.scrollObserver?.disconnect();
+    state.scrollObserver=null;
+    if(state.boundScroller){
+      state.boundScroller.removeEventListener('scroll',state.scrollHandler);
+      state.boundScroller.removeEventListener('scrollend',state.scrollEndHandler);
+      state.boundScroller=null;
+    }
+    if(state.prepareRaf)cancelAnimationFrame(state.prepareRaf);
+    if(state.settleRaf)cancelAnimationFrame(state.settleRaf);
+    state.prepareRaf=0;state.settleRaf=0;
     state.timer=0;state.gesture=null;
     document.getElementById(repairStyleId)?.remove();
     document.querySelectorAll('['+repairAttr+']').forEach(el=>
@@ -797,6 +808,8 @@ private val X_IMMERSIVE_FIT_SCRIPT = """
     if(found){
       state.scroll=found.scroller;
       state.cards=found.cards;
+      state.attachScroller?.(found);
+      state.prepareSlides?.(found);
     }
     // Also clean up CSS from an older injected runtime if any.
     document.getElementById(styleId)?.remove();
@@ -867,6 +880,33 @@ private val X_IMMERSIVE_FIT_SCRIPT = """
     });
     return previousHeight!==state.layoutHeight;
   };
+  // Ensure new landscape cards occupy the full viewport before swiping.
+  // The outer slide gets only min-height and snap alignment, never the
+  // video layer's dimensions or transforms.
+  const prepareSlides=found=>{
+    if(!state.active || !enabled || !found)return;
+    const h=viewportHeight(found);
+    if(h<140 || !found.cards.length)return;
+    if(state.layoutRepair){
+      repairSlideHeight(found,h);
+      return;
+    }
+    const short=found.cards.some(card=>{
+      const rh=card.getBoundingClientRect().height;
+      return rh>0 && rh<h*0.97;
+    });
+    if(short)repairSlideHeight(found,h);
+  };
+  state.prepareSlides=prepareSlides;
+  const prepareNextFrame=()=>{
+    if(state.prepareRaf || !state.active)return;
+    state.prepareRaf=requestAnimationFrame(()=>{
+      state.prepareRaf=0;
+      const found=measure();
+      if(found)prepareSlides(found);
+    });
+  };
+
   const repairOffset=(found,card)=>{
     if(!card?.isConnected || !found.cards.includes(card))return false;
     const scroll=found.scroller;
@@ -957,6 +997,59 @@ private val X_IMMERSIVE_FIT_SCRIPT = """
   };
   state.healthCheck=healthCheck;
 
+  const settleOnScrollEnd=()=>{
+    if(!enabled || !state.active || state.gesture)return;
+    if(Date.now()-(state.lastResizeAt||0)<180)return;
+    const found=measure();
+    if(!found || found.cards.length<2)return;
+    prepareSlides(found);
+    const h=viewportHeight(found);
+    const visible=inspected(found).filter(e=>e.overlap>h*0.07);
+    if(visible.length<2)return;
+    const current=centered(found);
+    if(!current)return;
+    const recent=Date.now()-(state.lastSwipeAt||0)<2000 &&
+      found.cards.includes(state.lastSwipeCard);
+    const target=recent ? visible.filter(e=>e.card!==state.lastSwipeCard &&
+      (state.lastSwipeDirection>0 ? e.index>state.lastSwipeIndex :
+        e.index<state.lastSwipeIndex) && e.overlap>=h*0.27)
+      .sort((a,b)=>b.overlap-a.overlap)[0] : null;
+    const selected=target?.card || current.card;
+    if(!found.cards.includes(selected))return;
+    if(repairOffset(found,selected)){
+      state.anchorCard=selected;
+      state.anchorIndex=found.cards.indexOf(selected);
+      state.anchorKey=cardKey(selected);
+    }
+  };
+  state.onScrollEnd=()=>{
+    if(state.settleRaf)cancelAnimationFrame(state.settleRaf);
+    state.settleRaf=requestAnimationFrame(()=>{
+      state.settleRaf=0;
+      settleOnScrollEnd();
+    });
+  };
+  state.onScroll=prepareNextFrame;
+  const attachScroller=found=>{
+    const scroll=found.scroller;
+    if(state.boundScroller===scroll)return;
+    state.scrollObserver?.disconnect();
+    if(state.boundScroller){
+      state.boundScroller.removeEventListener('scroll',state.scrollHandler);
+      state.boundScroller.removeEventListener('scrollend',state.scrollEndHandler);
+    }
+    state.boundScroller=scroll;
+    state.scrollHandler=()=>state.onScroll?.();
+    state.scrollEndHandler=()=>state.onScrollEnd?.();
+    scroll.addEventListener('scroll',state.scrollHandler,{passive:true});
+    scroll.addEventListener('scrollend',state.scrollEndHandler,{passive:true});
+    if(typeof MutationObserver!=='undefined'){
+      state.scrollObserver=new MutationObserver(()=>prepareNextFrame());
+      state.scrollObserver.observe(scroll,{childList:true,subtree:true});
+    }
+  };
+  state.attachScroller=attachScroller;
+
   // Keep the visible video card, not its old portrait scrollTop, when changing
   // orientation. Otherwise a landscape card height selects another clip.
   const cardKey=card=>card?.querySelector('a[href*="/status/"]')?.getAttribute('href') ||
@@ -994,6 +1087,7 @@ private val X_IMMERSIVE_FIT_SCRIPT = """
     state.lastHealthTop=null;
     clearTimeout(state.healthTimer);
     clearTimeout(state.timer);
+    prepareNextFrame();
     const found=measure();
     if(!found || state.gesture)return;
     // React can replace the card node on rotation, so match the video's
@@ -1035,6 +1129,7 @@ private val X_IMMERSIVE_FIT_SCRIPT = """
   if(!state.anchorCard || !state.anchorCard.isConnected)rememberVisible();
   const token=(resized || !wasActive)?++state.restoreToken:0;
   apply();stamp();
+  prepareNextFrame();
   if(token)requestAnimationFrame(()=>restoreVisible(token));
   else if(!state.gesture && Date.now()-(state.lastUserTouch||0)>900)
     rememberVisible();
@@ -1062,11 +1157,11 @@ private val X_IMMERSIVE_FIT_SCRIPT = """
     const top=scroller.scrollTop;
     // X uses inertia. Only perform one correction after its scroll position
     // has become stable, to avoid a second competing scroll/black video frame.
-    if(attempt<4 &&
+    if(attempt<5 &&
        (gesture.lastTop===undefined || Math.abs(gesture.lastTop-top)>2)){
       gesture.lastTop=top;
       clearTimeout(state.timer);
-      state.timer=setTimeout(()=>finishSwipe(gesture,attempt+1),100);
+      state.timer=setTimeout(()=>finishSwipe(gesture,attempt+1),55);
       return;
     }
     const selected=centered(found);
@@ -1149,6 +1244,8 @@ private val X_IMMERSIVE_FIT_SCRIPT = """
     };
     state.lastUserTouch=Date.now();
     state.lastHealthTop=null;
+    const beforeSwipe=measure();
+    if(beforeSwipe)prepareSlides(beforeSwipe);
     clearTimeout(state.healthTimer);
     clearTimeout(state.timer);
     clearTimeout(state.playbackTimer);
@@ -1165,7 +1262,8 @@ private val X_IMMERSIVE_FIT_SCRIPT = """
     state.lastSwipeCard=gesture.fromCard;
     state.lastSwipeIndex=gesture.fromIndex;
     clearTimeout(state.timer);
-    state.timer=setTimeout(()=>finishSwipe(gesture),350);
+    // No artificial wait: let scrollend handle normal native snapping.
+    state.timer=setTimeout(()=>finishSwipe(gesture),70);
   };
   const cancelGesture=()=>{
     state.gesture=null;
