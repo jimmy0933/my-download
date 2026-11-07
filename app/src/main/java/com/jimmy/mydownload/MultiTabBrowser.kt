@@ -1897,8 +1897,10 @@ fun MultiTabBrowser(
                 videoElements.videos.isNotEmpty()
             if (visible && (xVideoVisible || browserVideoFullscreen)) {
                 Box(
-                    modifier = Modifier.align(Alignment.TopEnd)
-                        .padding(top = if (browserVideoFullscreen) 8.dp else 12.dp, end = 12.dp)
+                    modifier = Modifier.align(Alignment.BottomEnd)
+                        // Keep clear of X's bottom actions and the draggable
+                        // download icon, which may be anchored to the corner.
+                        .padding(end = 16.dp, bottom = 90.dp)
                         .clip(CircleShape)
                         .background(Color(0xB0000000))
                 ) {
@@ -2313,8 +2315,8 @@ fun MultiTabBrowser(
                     // X/HTML5 native fullscreen keeps an explicit exit action;
                     // the device back button remains available as well.
                     Box(
-                        modifier = Modifier.align(Alignment.TopStart)
-                            .padding(12.dp)
+                        modifier = Modifier.align(Alignment.BottomEnd)
+                            .padding(end = 16.dp, bottom = 90.dp)
                             .clip(CircleShape)
                             .background(Color(0xB0000000))
                     ) {
