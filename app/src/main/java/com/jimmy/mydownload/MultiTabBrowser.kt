@@ -907,7 +907,7 @@ private val X_IMMERSIVE_FIT_SCRIPT = """
     if(state.layoutRepair)repairSlideHeight(found,viewportHeight(found));
     const entries=inspected(found);
     const h=viewportHeight(found);
-    const visible=entries.filter(e=>e.overlap>h*0.11);
+    const visible=entries.filter(e=>e.overlap>h*0.06);
     if(visible.length<2)return;
     // The playing video is the best anchor after a slide transition.
     // Otherwise use the card at viewport center, rather than a cached
@@ -915,10 +915,21 @@ private val X_IMMERSIVE_FIT_SCRIPT = """
     const playing=visible.filter(e=>e.video && !e.video.paused &&
       !e.video.ended && e.video.readyState>=2);
     const centeredCard=centered(found)?.card;
-    const chosen=(playing.length===1 && playing[0].overlap>h*0.22)
-      ? playing[0]
-      : visible.find(e=>e.card===centeredCard) ||
-        visible.slice().sort((a,b)=>b.overlap-a.overlap)[0];
+    // During a transition the previous clip may keep playing briefly.
+    // Prefer where the viewer is actually centered; do not snap backwards
+    // merely because the departing video has not paused yet.
+    const recentSwipe=now-(state.lastSwipeAt||0)<3000;
+    const directed=recentSwipe && found.cards.includes(state.lastSwipeCard)
+      ? visible.filter(e=>e.card!==state.lastSwipeCard &&
+          (state.lastSwipeDirection>0
+            ? e.index>state.lastSwipeIndex : e.index<state.lastSwipeIndex))
+          .filter(e=>e.overlap>=h*0.28)
+          .sort((a,b)=>b.overlap-a.overlap)[0]
+      : null;
+    const chosen=directed ||
+      visible.find(e=>e.card===centeredCard) ||
+      (playing.length===1 && playing[0].overlap>=h*0.40 ? playing[0] : null) ||
+      visible.slice().sort((a,b)=>b.overlap-a.overlap)[0];
     if(!chosen)return;
     const shortCards=visible.some(e=>e.rect.height<h*0.87);
     if(shortCards){
@@ -1149,6 +1160,10 @@ private val X_IMMERSIVE_FIT_SCRIPT = """
     if(Math.abs(dy)<55 || Math.abs(dy)<Math.abs(dx)*1.3)return;
     gesture.direction=dy<0?1:-1;
     gesture.distance=Math.abs(dy);
+    state.lastSwipeAt=Date.now();
+    state.lastSwipeDirection=gesture.direction;
+    state.lastSwipeCard=gesture.fromCard;
+    state.lastSwipeIndex=gesture.fromIndex;
     clearTimeout(state.timer);
     state.timer=setTimeout(()=>finishSwipe(gesture),350);
   };
