@@ -321,7 +321,6 @@ private val X_DISPLAY_SCRIPT = """
     '[data-testid="media-caption"]',
     '[data-testid="video-caption"]',
     '[data-testid="videoDescription"]',
-    '[data-testid="tweetContent"]',
     '[data-testid="videoTitle"]'
   ];
   const authorSelectors = [
