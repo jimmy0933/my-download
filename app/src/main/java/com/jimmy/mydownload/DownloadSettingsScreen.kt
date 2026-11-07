@@ -272,6 +272,138 @@ fun DownloadSettingsScreen(
             }
         }
 
+        // All controls are preferences for our own overlay; no source swapping
+        // or DOM changes to the X player's video/snap carousel are performed.
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF142333)),
+            shape = RoundedCornerShape(20.dp)
+        ) {
+            Column(
+                Modifier.fillMaxWidth().padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(11.dp)
+            ) {
+                Text(
+                    "X 播放進度條",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF27DBB3)
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("顯示自訂進度條", fontWeight = FontWeight.Medium)
+                        Text(
+                            "可點擊或拖曳快轉，不更換影片、不影響 X 上下切換",
+                            color = Color(0xFF9CAFC0),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    Switch(
+                        checked = xDisplayOptions.showVideoProgressOverlay,
+                        onCheckedChange = {
+                            onXDisplayChange(xDisplayOptions.copy(showVideoProgressOverlay = it))
+                        }
+                    )
+                }
+                if (xDisplayOptions.showVideoProgressOverlay) {
+                    HorizontalDivider(color = Color(0xFF304458))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("直向距離底部", fontWeight = FontWeight.Medium)
+                        Text("${xDisplayOptions.progressPortraitBottomDp} dp",
+                            color = Color(0xFF27DBB3))
+                    }
+                    Slider(
+                        value = xDisplayOptions.progressPortraitBottomDp.toFloat(),
+                        onValueChange = { value ->
+                            onXDisplayChange(xDisplayOptions.copy(
+                                progressPortraitBottomDp = value.roundToInt().coerceIn(4, 140)
+                            ))
+                        },
+                        valueRange = 4f..140f
+                    )
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("橫向距離底部", fontWeight = FontWeight.Medium)
+                        Text("${xDisplayOptions.progressLandscapeBottomDp} dp",
+                            color = Color(0xFF27DBB3))
+                    }
+                    Slider(
+                        value = xDisplayOptions.progressLandscapeBottomDp.toFloat(),
+                        onValueChange = { value ->
+                            onXDisplayChange(xDisplayOptions.copy(
+                                progressLandscapeBottomDp = value.roundToInt().coerceIn(4, 100)
+                            ))
+                        },
+                        valueRange = 4f..100f
+                    )
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("線條粗細", fontWeight = FontWeight.Medium)
+                        Text("${xDisplayOptions.progressThicknessDp} dp",
+                            color = Color(0xFF27DBB3))
+                    }
+                    Slider(
+                        value = xDisplayOptions.progressThicknessDp.toFloat(),
+                        onValueChange = { value ->
+                            onXDisplayChange(xDisplayOptions.copy(
+                                progressThicknessDp = value.roundToInt().coerceIn(2, 14)
+                            ))
+                        },
+                        valueRange = 2f..14f, steps = 11
+                    )
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("進度條透明度", fontWeight = FontWeight.Medium)
+                        Text("${xDisplayOptions.progressOpacityPercent}%",
+                            color = Color(0xFF27DBB3))
+                    }
+                    Slider(
+                        value = xDisplayOptions.progressOpacityPercent.toFloat(),
+                        onValueChange = { value ->
+                            onXDisplayChange(xDisplayOptions.copy(
+                                progressOpacityPercent =
+                                    (value / 5f).roundToInt().times(5).coerceIn(20, 100)
+                            ))
+                        },
+                        valueRange = 20f..100f, steps = 15
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("顯示目前影片解析度", fontWeight = FontWeight.Medium)
+                            Text(
+                                "例如 1920 × 1080，代表目前解碼畫面尺寸",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color(0xFF9CAFC0)
+                            )
+                        }
+                        Switch(
+                            checked = xDisplayOptions.showVideoResolution,
+                            onCheckedChange = {
+                                onXDisplayChange(xDisplayOptions.copy(showVideoResolution = it))
+                            }
+                        )
+                    }
+                    TextButton(
+                        onClick = {
+                            onXDisplayChange(xDisplayOptions.copy(
+                                progressPortraitBottomDp = 54,
+                                progressLandscapeBottomDp = 26,
+                                progressThicknessDp = 5,
+                                progressOpacityPercent = 90
+                            ))
+                        }
+                    ) { Text("恢復進度條預設設定") }
+                }
+                HorizontalDivider(color = Color(0xFF304458))
+                Text(
+                    "影片畫質由 X 網頁播放器控制。若影片選單有「畫質／Quality」齒輪，可在網站內選擇自動、720p 或 1080p；未提供選項時無法強制切換。上方解析度僅供查看，不會修改來源品質。",
+                    color = Color(0xFFB4C8D5),
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Text(
+                    "這條進度條只在 X 影片檢視器出現，可能與 X 原本的控制列同時顯示。修改後立即套用，並自動儲存。",
+                    color = Color(0xFF9CAFC0),
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        }
+
         Card(
             colors = CardDefaults.cardColors(containerColor = Color(0xFF142333)),
             shape = RoundedCornerShape(20.dp)
