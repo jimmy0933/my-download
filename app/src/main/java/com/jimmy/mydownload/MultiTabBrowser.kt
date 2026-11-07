@@ -600,6 +600,12 @@ private val X_IMMERSIVE_FIT_SCRIPT = """
     if(!children.length)break;
     cards=children.filter(e=>e.querySelector(
       'video,[data-testid^="immersive-tweet-ui-content-container"]'));
+    // A single wrapper containing multiple videos is the entire timeline,
+    // not a slide. Descend once more rather than shrinking the whole feed.
+    if(cards.length===1 && children.length===1 &&
+        cards[0].querySelectorAll('video').length>1){
+      list=children[0];continue;
+    }
     if(cards.length||children.length>1)break;
     list=children[0];
   }
