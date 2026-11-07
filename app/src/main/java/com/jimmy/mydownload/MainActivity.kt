@@ -94,10 +94,7 @@ private fun openVideo(context: android.content.Context, item: DownloadRecord) {
     }
     val mime = context.contentResolver.getType(uri)
         ?: if (item.savedExtension == "ts") "video/mp2t" else "video/*"
-    context.startActivity(Intent(Intent.ACTION_VIEW).apply {
-        setDataAndType(uri, mime)
-        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-    })
+    VideoPlayerApps.open(context, uri, mime)
 }
 
 private fun deleteVideo(context: android.content.Context, item: DownloadRecord) {
