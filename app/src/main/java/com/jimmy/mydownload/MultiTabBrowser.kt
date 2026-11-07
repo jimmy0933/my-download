@@ -7,7 +7,6 @@ import android.net.Uri
 import android.os.Message
 import android.view.View
 import android.view.ScaleGestureDetector
-import android.view.MotionEvent
 import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.DownloadListener
@@ -714,547 +713,64 @@ private fun xVideoFullscreenScript(enabled: Boolean): String =
     X_VIDEO_FULLSCREEN_SCRIPT.replace("__ENABLED__", enabled.toString())
 
 /**
- * Double tap the left/right side of the *playing video* to seek -/+10 seconds.
- * Uses touch capture only for completed double taps. Single taps, vertical
- * carousel swipes and two-finger zoom remain owned by X.
+ * A/B isolation test: use X's unmodified carousel for landscape and portrait.
+ * No injected slide sizing, scroll correction, swipe listener, or delayed play.
+ * The fullscreen overlay and video gestures outside this test remain intact.
  */
-/**
- * Resize X's mobile immersive carousel (not the video layer) to the *actual*
- * landscape WebView viewport. X retains ownership of vertical swipe snapping.
- */
-private val X_IMMERSIVE_FIT_SCRIPT = """
+private val X_IMMERSIVE_NATIVE_TEST_SCRIPT = """
 (() => {
-  if (!/^(?:www\.)?(?:x\.com|twitter\.com)$/.test(location.hostname)) return;
-  const enabled=__ENABLED__ && innerWidth>innerHeight*1.12;
-  const stateKey='__mydownloadImmersiveFit';
-  const state=window[stateKey]||(window[stateKey]={
-    active:false, listenerInstalled:false, gesture:null, timer:0,
-    scroll:null, cards:[], lastHeight:0,
-    lastViewportWidth:0,lastViewportHeight:0,
-    anchorCard:null,anchorIndex:-1,anchorKey:'',restoreToken:0,
-    healthTimer:0,lastHealthTop:null,stillSince:0,lastRepairAt:0,
-    layoutRepair:false,layoutHeight:0,
-    boundScroller:null,scrollObserver:null,prepareRaf:0,settleRaf:0,
-    lastScrollAt:0,lastStartedVideo:null
-  });
-  const cardAttr='data-mydownload-fullscreen-card';
-  const scrollAttr='data-mydownload-fullscreen-scroll';
-  const styleId='mydownload-fullscreen-card-size';
-  const repairStyleId='mydownload-immersive-layout-repair';
-  const repairAttr='data-mydownload-immersive-slide';
+  if (!/^(?:www\\.)?(?:x\\.com|twitter\\.com)$/.test(location.hostname))
+    return 'not-x';
 
-  const clear=()=>{
-    clearTimeout(state.timer);
-    clearTimeout(state.playbackTimer);
-    clearTimeout(state.healthTimer);
-    state.scrollObserver?.disconnect();
-    state.scrollObserver=null;
-    if(state.boundScroller){
-      state.boundScroller.removeEventListener('scroll',state.scrollHandler);
-      state.boundScroller.removeEventListener('scrollend',state.scrollEndHandler);
-      state.boundScroller=null;
+  // Isolation test: leave X's own immersive carousel, card geometry,
+  // scroll snapping, autoplay and touch navigation entirely untouched.
+  // Clean up any legacy fixer left in the live page from an earlier injection.
+  if (window.__mydownloadNativeCarouselCleaned) return 'native';
+  const old=window.__mydownloadImmersiveFit;
+  if (old) {
+    old.active=false;
+    old.gesture=null;
+    old.restoreToken=(old.restoreToken||0)+1;
+    clearTimeout(old.timer);
+    clearTimeout(old.playbackTimer);
+    clearTimeout(old.healthTimer);
+    old.scrollObserver?.disconnect?.();
+    if (old.prepareRaf) cancelAnimationFrame(old.prepareRaf);
+    if (old.settleRaf) cancelAnimationFrame(old.settleRaf);
+    if (old.boundScroller) {
+      old.boundScroller.removeEventListener('scroll',old.scrollHandler);
+      old.boundScroller.removeEventListener('scrollend',old.scrollEndHandler);
+      old.boundScroller=null;
     }
-    if(state.prepareRaf)cancelAnimationFrame(state.prepareRaf);
-    if(state.settleRaf)cancelAnimationFrame(state.settleRaf);
-    state.prepareRaf=0;state.settleRaf=0;
-    state.timer=0;state.gesture=null;
-    document.getElementById(repairStyleId)?.remove();
-    document.querySelectorAll('['+repairAttr+']').forEach(el=>
-      el.removeAttribute(repairAttr));
-    state.layoutRepair=false;state.layoutHeight=0;
-    document.getElementById(styleId)?.remove();
-    document.querySelectorAll('['+cardAttr+']').forEach(el=>
-      el.removeAttribute(cardAttr));
-    document.querySelectorAll('['+scrollAttr+']').forEach(el=>
-      el.removeAttribute(scrollAttr));
-    state.scroll=null;state.cards=[];state.lastHeight=0;
-  };
-  const wasActive=state.active;
-
-  const findCards=scroller=>{
-    let list=scroller.firstElementChild;
-    for(let depth=0;list&&depth<5;depth++){
-      const children=[...list.children].filter(el=>el instanceof HTMLElement);
-      if(!children.length)return [];
-      const videos=children.filter(el=>el.querySelector(
-        'video,[data-testid^="immersive-tweet-ui-content-container"]'));
-      if(videos.length>1)return videos;
-      if(videos.length===1 && children.length===1 &&
-          videos[0].querySelectorAll('video').length>1){
-        list=children[0];continue;
-      }
-      if(videos.length===1 && children.length>1)return videos;
-      if(videos.length===1 && children.length===1){
-        // A single post may be the only mounted card; keep that card unless
-        // its child is clearly another wrapper around multiple media posts.
-        return videos;
-      }
-      // No media at this level, descend through the sole wrapper.
-      if(children.length!==1)return [];
-      list=children[0];
-    }
-    return [];
-  };
-  const measure=()=>{
-    const scroller=document.querySelector('[data-testid="vss-scroll-view"]');
-    if(!scroller)return null;
-    const cards=findCards(scroller);
-    if(!cards.length)return null;
-    return {scroller,cards,box:scroller.getBoundingClientRect()};
-  };
-  const apply=()=>{
-    // X owns card heights, scroll snapping and video surfaces.
-    // Overriding these on every scan could unmount the playing card mid-swipe.
-    const found=measure();
-    if(found){
-      state.scroll=found.scroller;
-      state.cards=found.cards;
-      state.attachScroller?.(found);
-      // Do not measure or write card dimensions on every poll or
-      // during finger movement: this forced synchronous layout in WebView.
-    }
-    // Also clean up CSS from an older injected runtime if any.
-    document.getElementById(styleId)?.remove();
-    document.querySelectorAll('['+cardAttr+']').forEach(el=>
-      el.removeAttribute(cardAttr));
-    document.querySelectorAll('['+scrollAttr+']').forEach(el=>
-      el.removeAttribute(scrollAttr));
-    return found;
-  };
-
-  // Choose the card which owns the center of the visible screen. A thin
-  // remnant of the preceding card at the top cannot win this comparison.
-  const centered=({scroller,cards,box})=>{
-    const cy=Math.max(box.top,0)+
-      Math.min(box.height,innerHeight)/2;
-    let chosen=null,best=-Infinity;
-    cards.forEach((card,index)=>{
-      const r=card.getBoundingClientRect();
-      const overlap=Math.max(0,Math.min(r.bottom,box.bottom,innerHeight)-
-        Math.max(r.top,box.top,0));
-      const contains=cy>=r.top && cy<=r.bottom;
-      const score=(contains?100000:0)+overlap-
-        Math.abs((r.top+r.bottom)/2-cy)*0.12;
-      if(score>best){best=score;chosen={card,index,rect:r,overlap};}
-    });
-    return chosen && chosen.overlap>Math.min(innerHeight,box.height)*0.22
-      ? chosen : null;
-  };
-
-  /**
-   * Some X WebView carousel sessions retain portrait-size slide wrappers or
-   * an off-grid scroll offset after a landscape swipe. Once this happens,
-   * every next clip inherits the same split viewport. Repair the CAROUSEL
-   * wrapper only, never scale/reparent/reload video or change its playback.
-   * The health check runs while idle too, so an earlier bad swipe can recover.
-   */
-  const viewportHeight=found=>
-    Math.min(found.box.height,found.scroller.clientHeight,innerHeight);
-  const inspected=found=>{
-    const h=viewportHeight(found);
-    return found.cards.map((card,index)=>{
-      const rect=card.getBoundingClientRect();
-      const overlap=Math.max(0,Math.min(rect.bottom,found.box.bottom,innerHeight)-
-        Math.max(rect.top,found.box.top,0));
-      return {card,index,rect,overlap,h,video:card.querySelector('video')};
-    }).filter(item=>item.overlap>0);
-  };
-  const repairSlideHeight=(found,h)=>{
-    const previousHeight=state.layoutHeight;
-    state.layoutHeight=Math.round(h);
-    if(state.layoutHeight<140)return;
-    state.layoutRepair=true;
-    let style=document.getElementById(repairStyleId);
-    if(!style){
-      style=document.createElement('style');
-      style.id=repairStyleId;
-      (document.head||document.documentElement).appendChild(style);
-    }
-    // Only min-height on the OUTER card. In contrast to the old fix this
-    // never forces a max-height, flex basis, video dimensions or transforms.
-    const css='['+repairAttr+'="1"] {'+
-      'min-height:'+state.layoutHeight+'px !important;'+
-      'box-sizing:border-box !important;'+
-      'scroll-snap-align:start !important;}';
-    if(style.textContent!==css)style.textContent=css;
-    found.cards.forEach(card=>{
-      if(!card.hasAttribute(repairAttr))card.setAttribute(repairAttr,'1');
-    });
-    return previousHeight!==state.layoutHeight;
-  };
-  // Ensure new landscape cards occupy the full viewport before swiping.
-  // The outer slide gets only min-height and snap alignment, never the
-  // video layer's dimensions or transforms.
-  const prepareSlides=found=>{
-    if(!state.active || !enabled || !found)return;
-    const h=viewportHeight(found);
-    if(h<140 || !found.cards.length)return;
-    if(state.layoutRepair){
-      repairSlideHeight(found,h);
-      return;
-    }
-    const short=found.cards.some(card=>{
-      const rh=card.getBoundingClientRect().height;
-      return rh>0 && rh<h*0.97;
-    });
-    if(short)repairSlideHeight(found,h);
-  };
-  state.prepareSlides=prepareSlides;
-  const prepareNextFrame=()=>{
-    if(state.prepareRaf || !state.active)return;
-    state.prepareRaf=requestAnimationFrame(()=>{
-      state.prepareRaf=0;
-      const found=measure();
-      if(found)prepareSlides(found);
-    });
-  };
-
-  const repairOffset=(found,card)=>{
-    if(!card?.isConnected || !found.cards.includes(card))return false;
-    const scroll=found.scroller;
-    const range=scroll.scrollHeight-scroll.clientHeight;
-    if(range<15)return false;
-    const delta=card.getBoundingClientRect().top-found.box.top;
-    if(Math.abs(delta)<9 || Math.abs(delta)>viewportHeight(found)*1.5)
-      return false;
-    const next=Math.max(0,Math.min(range,scroll.scrollTop+delta));
-    if(Math.abs(next-scroll.scrollTop)<5)return false;
-    // Disable only the scroller's snap for this single synchronous correction.
-    // Re-enable immediately after layout, leaving X's video DOM untouched.
-    const originalSnap=scroll.style.scrollSnapType;
-    scroll.style.scrollSnapType='none';
-    scroll.scrollTop=next;
-    requestAnimationFrame(()=>{
-      if(scroll.isConnected && scroll.style.scrollSnapType==='none')
-        scroll.style.scrollSnapType=originalSnap;
-    });
-    state.lastRepairAt=Date.now();
-    return true;
-  };
-  const healthCheck=(fromSwipe=false)=>{
-    if(!state.active || state.gesture || !enabled)return;
-    const now=Date.now();
-    if(now-(state.lastResizeAt||0)<650 || now-(state.lastUserTouch||0)<500)
-      return;
-    const found=measure();
-    if(!found || found.cards.length<2 || viewportHeight(found)<140)return;
-    const currentTop=found.scroller.scrollTop;
-    if(state.lastHealthTop===null || Math.abs(state.lastHealthTop-currentTop)>2){
-      state.lastHealthTop=currentTop;
-      state.stillSince=now;
-      return;
-    }
-    if(!fromSwipe && now-state.stillSince<300)return;
-    if(now-state.lastRepairAt<700)return;
-    const entries=inspected(found);
-    const h=viewportHeight(found);
-    const visible=entries.filter(e=>e.overlap>h*0.06);
-    if(visible.length<2)return;
-    // The playing video is the best anchor after a slide transition.
-    // Otherwise use the card at viewport center, rather than a cached
-    // array index which X can recycle for a different post.
-    const playing=visible.filter(e=>e.video && !e.video.paused &&
-      !e.video.ended && e.video.readyState>=2);
-    const centeredCard=centered(found)?.card;
-    // During a transition the previous clip may keep playing briefly.
-    // Prefer where the viewer is actually centered; do not snap backwards
-    // merely because the departing video has not paused yet.
-    const recentSwipe=now-(state.lastSwipeAt||0)<3000;
-    const directed=recentSwipe && found.cards.includes(state.lastSwipeCard)
-      ? visible.filter(e=>e.card!==state.lastSwipeCard &&
-          (state.lastSwipeDirection>0
-            ? e.index>state.lastSwipeIndex : e.index<state.lastSwipeIndex))
-          .filter(e=>e.overlap>=h*0.28)
-          .sort((a,b)=>b.overlap-a.overlap)[0]
-      : null;
-    const chosen=directed ||
-      visible.find(e=>e.card===centeredCard) ||
-      (playing.length===1 && playing[0].overlap>=h*0.40 ? playing[0] : null) ||
-      visible.slice().sort((a,b)=>b.overlap-a.overlap)[0];
-    if(!chosen)return;
-    const shortCards=visible.some(e=>e.rect.height<h*0.87);
-    if(shortCards){
-      // The source of the sticky split-screen state is frequently a
-      // portrait-sized slide retained in landscape. Repair layout once,
-      // then align after the browser has performed that reflow.
-      repairSlideHeight(found,h);
-      state.lastRepairAt=now;
-      const token=++state.restoreToken;
-      const card=chosen.card;
-      requestAnimationFrame(()=>{
-        if(token===state.restoreToken && state.active && !state.gesture){
-          const fresh=measure();
-          if(fresh)repairOffset(fresh,card);
-        }
-      });
-    }else{
-      // Two full-height cards are visible: this is an inherited partial
-      // scroll offset rather than the wrong height. Correct it at rest.
-      repairOffset(found,chosen.card);
-    }
-    state.anchorCard=chosen.card;
-    state.anchorIndex=chosen.index;
-    state.anchorKey=cardKey(chosen.card);
-  };
-  state.healthCheck=healthCheck;
-
-  // Once the user has selected a new X clip, ask that SAME video element
-  // to start immediately rather than waiting for a 650 ms watchdog.
-  // X still owns its authenticated stream, buffering and pause controls.
-  const startSelectedVideo=card=>{
-    if(Date.now()-(state.lastSwipeAt||0)>1700 ||
-        card===state.lastSwipeCard)return;
-    const video=card?.querySelector('video');
-    if(!video || !video.autoplay || !video.paused || video.ended ||
-        video.error || video===state.lastStartedVideo)return;
-    state.lastStartedVideo=video;
-    video.play().catch(()=>{});
-  };
-
-  const settleOnScrollEnd=()=>{
-    if(!enabled || !state.active || state.gesture)return;
-    const now=Date.now();
-    const sinceResize=now-(state.lastResizeAt||0);
-    const sinceScroll=now-(state.lastScrollAt||0);
-    if(sinceResize<180 || sinceScroll<85){
-      // Do not force a correction into the middle of X's own inertia.
-      clearTimeout(state.timer);
-      state.timer=setTimeout(()=>state.onScrollEnd?.(),
-        Math.max(180-sinceResize,85-sinceScroll,16));
-      return;
-    }
-    const found=measure();
-    if(!found || !found.cards.length)return;
-    const current=centered(found);
-    if(!current)return;
-    const h=viewportHeight(found);
-    const recent=now-(state.lastSwipeAt||0)<1700 &&
-      found.cards.includes(state.lastSwipeCard);
-    const visible=inspected(found).filter(e=>e.overlap>h*0.07);
-    const target=recent ? visible.filter(e=>e.card!==state.lastSwipeCard &&
-      (state.lastSwipeDirection>0 ? e.index>state.lastSwipeIndex :
-        e.index<state.lastSwipeIndex) && e.overlap>=h*0.27)
-      .sort((a,b)=>b.overlap-a.overlap)[0] : null;
-    const selected=target?.card || current.card;
-    if(!found.cards.includes(selected))return;
-
-    // Normal full-screen, single-card snaps need ZERO work.
-    // Only correct after X finished scrolling, and only when two
-    // substantial portions of two cards occupy the screen.
-    const split=visible.length>1 &&
-      visible.filter(e=>e.overlap>h*0.11).length>1;
-    if(split){
-      const heightsWrong=visible.some(e=>e.rect.height<h*0.89);
-      if(heightsWrong)prepareSlides(found);
-      // Height repair changes scroll metrics. Align on the next frame.
-      if(heightsWrong){
-        requestAnimationFrame(()=>{
-          if(!state.active || state.gesture)return;
-          const fresh=measure();
-          if(fresh)repairOffset(fresh,selected);
-        });
-      }else{
-        repairOffset(found,selected);
-      }
-    }
-    state.anchorCard=selected;
-    state.anchorIndex=found.cards.indexOf(selected);
-    state.anchorKey=cardKey(selected);
-    startSelectedVideo(selected);
-  };
-  state.onScrollEnd=()=>{
-    if(state.settleRaf)cancelAnimationFrame(state.settleRaf);
-    state.settleRaf=requestAnimationFrame(()=>{
-      state.settleRaf=0;
-      settleOnScrollEnd();
-    });
-  };
-  // A passive scroll event only debounces the final check. It performs no
-  // DOM queries, CSS writes, media scans or per-frame reflows.
-  state.onScroll=()=>{
-    state.lastScrollAt=Date.now();
-    clearTimeout(state.timer);
-    state.timer=setTimeout(()=>state.onScrollEnd?.(),105);
-  };
-  const attachScroller=found=>{
-    const scroll=found.scroller;
-    if(state.boundScroller===scroll)return;
-    state.scrollObserver?.disconnect();
-    state.scrollObserver=null;
-    if(state.boundScroller){
-      state.boundScroller.removeEventListener('scroll',state.scrollHandler);
-      state.boundScroller.removeEventListener('scrollend',state.scrollEndHandler);
-    }
-    state.boundScroller=scroll;
-    state.scrollHandler=()=>state.onScroll?.();
-    state.scrollEndHandler=()=>state.onScrollEnd?.();
-    scroll.addEventListener('scroll',state.scrollHandler,{passive:true});
-    scroll.addEventListener('scrollend',state.scrollEndHandler,{passive:true});
-    // Do not use subtree MutationObserver on the X carousel. React changes
-    // video controls frequently and those callbacks caused scroll stutter.
-  };
-  state.attachScroller=attachScroller;
-
-  // Keep the visible video card, not its old portrait scrollTop, when changing
-  // orientation. Otherwise a landscape card height selects another clip.
-  const cardKey=card=>card?.querySelector('a[href*="/status/"]')?.getAttribute('href') ||
-    card?.querySelector('video')?.currentSrc || '';
-  const rememberVisible=()=>{
-    const found=measure(), selected=found&&centered(found);
-    if(!selected)return;
-    state.anchorCard=selected.card;state.anchorIndex=selected.index;
-    state.anchorKey=cardKey(selected.card);
-  };
-  const restoreVisible=(token,attempt=0)=>{
-    if(token!==state.restoreToken || state.gesture)return;
-    const found=measure();
-    if(!found)return;
-    let card=found.cards.includes(state.anchorCard)?state.anchorCard:null;
-    if(!card && state.anchorKey)
-      card=found.cards.find(c=>cardKey(c)===state.anchorKey);
-    // Do not fall back to numeric position: X virtualizes and reorders cards,
-    // so the same index can point at an unrelated video after a swipe.
-    if(!card)return;
-    const delta=card.getBoundingClientRect().top-found.box.top;
-    // Keep a resize correction narrowly scoped to the original video.
-    // X itself remains responsible for normal next/previous swipes.
-    if(Math.abs(delta)>8 && Math.abs(delta)<found.box.height*1.5){
-      const scroll=found.scroller;
-      scroll.scrollTo({top:scroll.scrollTop+delta,behavior:'instant'});
-    }
-    if(attempt<2)requestAnimationFrame(()=>restoreVisible(token,attempt+1));
-  };
-  // Orientation events can arrive before the next 950 ms polling cycle.
-  // Use the already-saved card immediately, without changing the playing
-  // video element, source URL or playback position.
-  state.handleResize=()=>{
-    state.lastResizeAt=Date.now();
-    state.lastHealthTop=null;
-    clearTimeout(state.healthTimer);
-    clearTimeout(state.timer);
-    prepareNextFrame();
-    const found=measure();
-    if(!found || state.gesture)return;
-    // React can replace the card node on rotation, so match the video's
-    // stable post/media key as well. Never guess based on array index.
-    const present=found.cards.includes(state.anchorCard) ||
-      (state.anchorKey && found.cards.some(c=>cardKey(c)===state.anchorKey));
-    if(!present)return;
-    const token=++state.restoreToken;
-    requestAnimationFrame(()=>restoreVisible(token));
-  };
-  if(!state.resizeInstalled){
-    state.resizeInstalled=true;
-    window.addEventListener('resize',()=>state.handleResize?.(),{passive:true});
-    window.visualViewport?.addEventListener('resize',
-      ()=>state.handleResize?.(),{passive:true});
+    // Older document-level listeners may remain registered. Keep them inert.
+    old.handleResize=()=>{};
+    old.onScroll=()=>{};
+    old.onScrollEnd=()=>{};
+    old.healthCheck=()=>{};
+    old.prepareSlides=()=>{};
+    old.attachScroller=()=>{};
+    old.nativeStart=()=>{};
+    old.nativeFinish=()=>{};
+    old.nativeCancel=()=>{};
   }
-  const width=innerWidth, height=Math.round(window.visualViewport?.height||innerHeight);
-  const resized=state.lastViewportWidth>0 &&
-    (Math.abs(width-state.lastViewportWidth)>20 ||
-     Math.abs(height-state.lastViewportHeight)>20);
-  const stamp=()=>{state.lastViewportWidth=width;state.lastViewportHeight=height;};
-  if(!enabled){
-    state.active=false;
-    if(wasActive || resized){
-      const token=++state.restoreToken;
-      clear();stamp();
-      requestAnimationFrame(()=>restoreVisible(token));
-    }else{
-      if(!state.gesture)rememberVisible();
-      stamp();
-    }
-    return 'disabled';
-  }
-  state.active=true;
-  if(!wasActive){
-    state.lastResizeAt=Date.now();
-    state.lastHealthTop=null;
-  }
-  if(!state.anchorCard || !state.anchorCard.isConnected)rememberVisible();
-  const token=(resized || !wasActive)?++state.restoreToken:0;
-  apply();stamp();
-  // One-time landscape preparation at entry/resize, never during swipes.
-  if(!wasActive || resized)prepareNextFrame();
-  if(token)requestAnimationFrame(()=>restoreVisible(token));
-  else if(!state.gesture && Date.now()-(state.lastUserTouch||0)>900)
-    rememberVisible();
-  // Do not run a 950 ms layout health scan during playback; recovery
-  // is event-driven and uses the one-shot backup after a confirmed swipe.
-
-  // X owns swipe momentum. Commit playback on scrollend, not a timer.
-  // The slower health check remains a fallback for browsers that miss it.
-
-  const startGesture=(x,y)=>{
-    if(!state.active || state.gesture)return;
-    const found=measure();
-    if(!found)return;
-    const current=centered(found);
-    if(!current)return;
-    state.gesture={
-      x,y,fromIndex:current.index,fromCard:current.card,
-      scroller:found.scroller
-    };
-    state.lastUserTouch=Date.now();
-    state.lastHealthTop=null;
-    state.lastStartedVideo=null;
-    clearTimeout(state.healthTimer);
-    clearTimeout(state.timer);
-    clearTimeout(state.playbackTimer);
-  };
-  const completeGesture=(dx,dy)=>{
-    const gesture=state.gesture;
-    if(!gesture)return;
-    state.gesture=null;
-    if(Math.abs(dy)<55 || Math.abs(dy)<Math.abs(dx)*1.3)return;
-    gesture.direction=dy<0?1:-1;
-    gesture.distance=Math.abs(dy);
-    state.lastSwipeAt=Date.now();
-    state.lastSwipeDirection=gesture.direction;
-    state.lastSwipeCard=gesture.fromCard;
-    state.lastSwipeIndex=gesture.fromIndex;
-    // X controls its momentum; scrollend or the debounced passive scroll
-    // listener commits the new clip. A short backup covers touch-only
-    // carousel transitions that do not dispatch a native scroll event.
-    clearTimeout(state.timer);
-    state.timer=setTimeout(()=>state.onScrollEnd?.(),140);
-    clearTimeout(state.healthTimer);
-    state.healthTimer=setTimeout(()=>state.healthCheck?.(true),780);
-  };
-  const cancelGesture=()=>{
-    state.gesture=null;
-    clearTimeout(state.timer);
-  };
-  // Android's WebView also forwards a swipe here when X swallows DOM touch
-  // events. Both paths share one gesture record and cannot snap twice.
-  state.nativeStart=startGesture;
-  state.nativeFinish=completeGesture;
-  state.nativeCancel=cancelGesture;
-  if(!state.listenerInstalled){
-    state.listenerInstalled=true;
-    document.addEventListener('touchstart',event=>{
-      if(!state.active || event.touches.length!==1)return;
-      const t=event.touches[0];
-      startGesture(t.clientX,t.clientY);
-    },{capture:true,passive:true});
-    document.addEventListener('touchend',event=>{
-      if(event.touches.length!==0 || event.changedTouches.length!==1){
-        cancelGesture();return;
-      }
-      const gesture=state.gesture;
-      if(!gesture)return;
-      const t=event.changedTouches[0];
-      completeGesture(t.clientX-gesture.x,t.clientY-gesture.y);
-    },{capture:true,passive:true});
-    document.addEventListener('touchcancel',cancelGesture,
-      {capture:true,passive:true});
-  }
-  return 'applied';
+  document.getElementById('mydownload-immersive-layout-repair')?.remove();
+  document.getElementById('mydownload-fullscreen-card-size')?.remove();
+  document.querySelectorAll('[data-mydownload-immersive-slide],'+
+    '[data-mydownload-fullscreen-card],'+
+    '[data-mydownload-fullscreen-scroll]').forEach(el=>{
+      el.removeAttribute('data-mydownload-immersive-slide');
+      el.removeAttribute('data-mydownload-fullscreen-card');
+      el.removeAttribute('data-mydownload-fullscreen-scroll');
+    });
+  window.__mydownloadNativeCarouselCleaned=true;
+  return 'native';
 })()
 """.trimIndent()
 
-private fun xImmersiveFitScript(enabled: Boolean): String =
-    X_IMMERSIVE_FIT_SCRIPT.replace("__ENABLED__", enabled.toString())
+// Keep the old call sites for fullscreen and route changes. This test performs
+// one-time cleanup only; it never measures, resizes or scrolls an X video card.
+private fun xImmersiveFitScript(@Suppress("UNUSED_PARAMETER") enabled: Boolean): String =
+    X_IMMERSIVE_NATIVE_TEST_SCRIPT
 
 private val X_VIDEO_DOUBLE_TAP_SEEK_SCRIPT = """
 (() => {
@@ -1772,54 +1288,14 @@ fun MultiTabBrowser(
                 }
             }
         )
-        var swipeStartX = 0f
-        var swipeStartY = 0f
-        var wasMultiTouch = false
         web.setOnTouchListener { _, event ->
             if (BrowserVideoDiscovery.isXPage(tab.url)) {
+                // Keep the pre-existing two-finger media zoom, but forward
+                // single-finger vertical swipes directly to X without any
+                // injected Android carousel callbacks.
                 mediaScaleDetector.onTouchEvent(event)
-                if (browserVideoFullscreen) {
-                    when (event.actionMasked) {
-                        MotionEvent.ACTION_DOWN -> {
-                            swipeStartX = event.x
-                            swipeStartY = event.y
-                            wasMultiTouch = false
-                            web.evaluateJavascript(
-                                "window.__mydownloadImmersiveFit?.nativeStart(" +
-                                    "${event.x},${event.y})", null
-                            )
-                        }
-                        MotionEvent.ACTION_POINTER_DOWN -> {
-                            wasMultiTouch = true
-                            web.evaluateJavascript(
-                                "window.__mydownloadImmersiveFit?.nativeCancel()", null
-                            )
-                        }
-                        MotionEvent.ACTION_UP -> {
-                            if (!wasMultiTouch) {
-                                val dx = event.x - swipeStartX
-                                val dy = event.y - swipeStartY
-                                if (kotlin.math.abs(dy) > 55f &&
-                                    kotlin.math.abs(dy) > kotlin.math.abs(dx) * 1.3f
-                                ) {
-                                    web.evaluateJavascript(
-                                        "window.__mydownloadImmersiveFit?.nativeFinish(" +
-                                            dx.toString() + "," + dy.toString() + ")", null
-                                    )
-                                } else {
-                                    web.evaluateJavascript(
-                                        "window.__mydownloadImmersiveFit?.nativeCancel()", null
-                                    )
-                                }
-                            }
-                        }
-                        MotionEvent.ACTION_CANCEL -> web.evaluateJavascript(
-                            "window.__mydownloadImmersiveFit?.nativeCancel()", null
-                        )
-                    }
-                }
             }
-            false  // Existing X single-finger swipes, taps and seek remain native.
+            false
         }
 
         web.setOnScrollChangeListener { _, _, y, _, _ ->
@@ -1861,7 +1337,7 @@ fun MultiTabBrowser(
         val web = currentWebView() ?: return
         if (!BrowserVideoDiscovery.isXPage(selected.url)) return
         if (enabled) {
-            // Snapshot the current carousel card before changing the viewport.
+            // Native-carousel test: only clear legacy injected styling.
             web.evaluateJavascript(xImmersiveFitScript(false), null)
             web.evaluateJavascript(xVideoFullscreenScript(true)) { result ->
                 if (result == "\"fullscreen\"") browserVideoFullscreen = true
@@ -2100,10 +1576,9 @@ fun MultiTabBrowser(
                     browser.evaluateJavascript(xDisplayScript(currentXOptions), null)
                     browser.evaluateJavascript(X_MEDIA_PINCH_ZOOM_SCRIPT, null)
                     browser.evaluateJavascript(X_VIDEO_DOUBLE_TAP_SEEK_SCRIPT, null)
-                    // Snapshot the current video in portrait too, before a rotation.
+                    // Native-carousel test: no card alignment or scroll repair.
+                    // Cleanup runs only once per document, even with polling.
                     browser.evaluateJavascript(xImmersiveFitScript(browserVideoFullscreen), null)
-                    // X's own carousel owns the vertical swipe and snap.
-                    // Do not call scrollTo/scrollIntoView after the gesture.
                 }
                 browser.evaluateJavascript(BrowserVideoDiscovery.SCAN_SCRIPT) { result ->
                     if (activeId == checkedId) {
