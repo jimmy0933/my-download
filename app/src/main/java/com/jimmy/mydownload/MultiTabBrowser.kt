@@ -850,6 +850,8 @@ private val X_IMMERSIVE_FIT_SCRIPT = """
   // Use the already-saved card immediately, without changing the playing
   // video element, source URL or playback position.
   state.handleResize=()=>{
+    state.lastResizeAt=Date.now();
+    clearTimeout(state.timer);
     const found=measure();
     if(!found || state.gesture)return;
     // React can replace the card node on rotation, so match the video's
@@ -890,29 +892,86 @@ private val X_IMMERSIVE_FIT_SCRIPT = """
   if(token)requestAnimationFrame(()=>restoreVisible(token));
   else if(!state.gesture)rememberVisible();
 
-  // X normally handles the snap itself. Correct only a *small remaining*
-  // offset after a confirmed swipe to a different card. Never call
-  // scrollIntoView, never select the old card, never use smooth scroll.
+  // In landscape X sometimes stops between two immersive cards. Wait for
+  // its own momentum to settle before aligning the card that the swipe
+  // actually selected. Never resize/reparent a video or modify card heights.
+  const overlapHeight=(r,box)=>
+    Math.max(0,Math.min(r.bottom,box.bottom,innerHeight)-
+      Math.max(r.top,box.top,0));
+
   const finishSwipe=(gesture,attempt=0)=>{
-    if(!state.active||state.gesture)return;
-    const found=apply();
-    if(!found)return;
+    if(!state.active || state.gesture || Date.now()-(state.lastResizeAt||0)<400)
+      return;
+    const found=measure();
+    if(!found || gesture.scroller!==found.scroller)return;
     const {scroller,cards,box}=found;
-    if(gesture.scroller!==scroller)return;
-    const current=centered(found);
-    if(!current)return;
-    const changed=current.card!==gesture.fromCard;
-    const inDirection=gesture.direction>0
-      ? current.index>gesture.fromIndex
-      : current.index<gesture.fromIndex;
-    if(!changed || !inDirection)return;
-    // X already snapped to the new card. A second scrollTop can detach the
-    // playing video and leave a completely black WebView video surface.
-    state.anchorCard=current.card;
-    state.anchorIndex=current.index;
-    state.anchorKey=cardKey(current.card);
+    const viewportHeight=Math.min(box.height,innerHeight);
+    if(viewportHeight<140)return;
+    const top=scroller.scrollTop;
+    // X uses inertia. Only perform one correction after its scroll position
+    // has become stable, to avoid a second competing scroll/black video frame.
+    if(attempt<4 &&
+       (gesture.lastTop===undefined || Math.abs(gesture.lastTop-top)>2)){
+      gesture.lastTop=top;
+      clearTimeout(state.timer);
+      state.timer=setTimeout(()=>finishSwipe(gesture,attempt+1),100);
+      return;
+    }
+    const selected=centered(found);
+    if(!selected)return;
+    let target=selected;
+    const selectedChanged=selected.card!==gesture.fromCard;
+    const selectedInDirection=gesture.direction>0
+      ? selected.index>gesture.fromIndex
+      : selected.index<gesture.fromIndex;
+    if(!selectedChanged || !selectedInDirection){
+      // X sometimes stops short: the next card is already on screen, but
+      // the old one still crosses the center. Only finish a deliberate swipe
+      // when the new card occupies at least 30% of the viewport.
+      const candidates=cards.map((card,index)=>{
+        const rect=card.getBoundingClientRect();
+        return {card,index,rect,overlap:overlapHeight(rect,box)};
+      }).filter(item=>item.card!==gesture.fromCard &&
+        item.overlap>=viewportHeight*0.30 &&
+        (gesture.direction>0
+          ? item.index>gesture.fromIndex
+          : item.index<gesture.fromIndex));
+      candidates.sort((a,b)=>b.overlap-a.overlap);
+      if(candidates.length &&
+         Math.abs(gesture.distance)>=Math.max(55,viewportHeight*0.20))
+        target=candidates[0];
+      else
+        target=selected;
+    }
+    const targetMoved=target.card!==gesture.fromCard;
+    const targetInDirection=gesture.direction>0
+      ? target.index>gesture.fromIndex : target.index<gesture.fromIndex;
+    if(!targetMoved || !targetInDirection)return;
+
+    const delta=target.rect.top-box.top;
+    const visibleNeighbors=cards.some(card=>card!==target.card &&
+      overlapHeight(card.getBoundingClientRect(),box)>viewportHeight*0.08);
+    // Do not force a scroll when X has already snapped correctly. The range,
+    // distance and swipe direction guards prevent jumping to another video.
+    const scrollRange=scroller.scrollHeight-scroller.clientHeight;
+    const destination=top+delta;
+    const correctable=visibleNeighbors &&
+      Math.abs(delta)>10 && Math.abs(delta)<viewportHeight*0.72 &&
+      (gesture.direction>0 ? delta>0 : delta<0) &&
+      scrollRange>viewportHeight*0.35 &&
+      destination>=0 && destination<=scrollRange+1;
+    if(correctable){
+      // Instant, single small adjustment only. No CSS transforms, scroll-snap
+      // rewrites, scrolling animation or repeated correction while playing.
+      scroller.scrollTo({top:destination,behavior:'instant'});
+    }
+
+    // The user-swiped video, not a previous portrait card, is now the anchor.
+    state.anchorCard=target.card;
+    state.anchorIndex=target.index;
+    state.anchorKey=cardKey(target.card);
     window.__mydownloadMediaZoom?.reset?.();
-    const newlyActiveCard=current.card;
+    const newlyActiveCard=target.card;
     clearTimeout(state.playbackTimer);
     state.playbackTimer=setTimeout(()=>{
       if(!state.active || state.gesture)return;
@@ -938,6 +997,7 @@ private val X_IMMERSIVE_FIT_SCRIPT = """
     };
     state.lastUserTouch=Date.now();
     clearTimeout(state.timer);
+    clearTimeout(state.playbackTimer);
   };
   const completeGesture=(dx,dy)=>{
     const gesture=state.gesture;
@@ -945,6 +1005,7 @@ private val X_IMMERSIVE_FIT_SCRIPT = """
     state.gesture=null;
     if(Math.abs(dy)<55 || Math.abs(dy)<Math.abs(dx)*1.3)return;
     gesture.direction=dy<0?1:-1;
+    gesture.distance=Math.abs(dy);
     clearTimeout(state.timer);
     state.timer=setTimeout(()=>finishSwipe(gesture),350);
   };
