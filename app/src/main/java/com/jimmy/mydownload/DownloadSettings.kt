@@ -24,7 +24,13 @@ data class XDisplayOptions(
     val hideBottomShare: Boolean = false,
     val hideVideoPlaybackText: Boolean = false,
     val hideVideoPlaybackTitle: Boolean = false,
-    val hideVideoBelowProgressDetails: Boolean = false
+    val hideVideoBelowProgressDetails: Boolean = false,
+    val showVideoProgressOverlay: Boolean = true,
+    val progressPortraitBottomDp: Int = 54,
+    val progressLandscapeBottomDp: Int = 26,
+    val progressThicknessDp: Int = 5,
+    val progressOpacityPercent: Int = 90,
+    val showVideoResolution: Boolean = true
 )
 
 /**
@@ -65,6 +71,12 @@ object DownloadSettings {
     private const val X_HIDE_VIDEO_PLAYBACK_TEXT = "x_hide_video_playback_text"
     private const val X_HIDE_VIDEO_PLAYBACK_TITLE = "x_hide_video_playback_title"
     private const val X_HIDE_VIDEO_BELOW_PROGRESS_DETAILS = "x_hide_video_below_progress_details"
+    private const val X_SHOW_VIDEO_PROGRESS = "x_show_video_progress"
+    private const val X_PROGRESS_PORTRAIT_BOTTOM = "x_progress_portrait_bottom"
+    private const val X_PROGRESS_LANDSCAPE_BOTTOM = "x_progress_landscape_bottom"
+    private const val X_PROGRESS_THICKNESS = "x_progress_thickness"
+    private const val X_PROGRESS_OPACITY = "x_progress_opacity"
+    private const val X_SHOW_VIDEO_RESOLUTION = "x_show_video_resolution"
     private const val FLOAT_BUTTON_X = "floating_download_x"
     private const val FLOAT_BUTTON_Y = "floating_download_y"
     private const val FLOAT_BUTTON_OPACITY = "floating_download_opacity"
@@ -163,7 +175,13 @@ object DownloadSettings {
             hideBottomShare = prefs.getBoolean(X_HIDE_BOTTOM_SHARE, false),
             hideVideoPlaybackText = prefs.getBoolean(X_HIDE_VIDEO_PLAYBACK_TEXT, false),
             hideVideoPlaybackTitle = prefs.getBoolean(X_HIDE_VIDEO_PLAYBACK_TITLE, false),
-            hideVideoBelowProgressDetails = prefs.getBoolean(X_HIDE_VIDEO_BELOW_PROGRESS_DETAILS, false)
+            hideVideoBelowProgressDetails = prefs.getBoolean(X_HIDE_VIDEO_BELOW_PROGRESS_DETAILS, false),
+            showVideoProgressOverlay = prefs.getBoolean(X_SHOW_VIDEO_PROGRESS, true),
+            progressPortraitBottomDp = prefs.getInt(X_PROGRESS_PORTRAIT_BOTTOM, 54).coerceIn(4, 140),
+            progressLandscapeBottomDp = prefs.getInt(X_PROGRESS_LANDSCAPE_BOTTOM, 26).coerceIn(4, 100),
+            progressThicknessDp = prefs.getInt(X_PROGRESS_THICKNESS, 5).coerceIn(2, 14),
+            progressOpacityPercent = prefs.getInt(X_PROGRESS_OPACITY, 90).coerceIn(20, 100),
+            showVideoResolution = prefs.getBoolean(X_SHOW_VIDEO_RESOLUTION, true)
         )
     }
 
@@ -186,6 +204,12 @@ object DownloadSettings {
             .putBoolean(X_HIDE_VIDEO_PLAYBACK_TEXT, options.hideVideoPlaybackText)
             .putBoolean(X_HIDE_VIDEO_PLAYBACK_TITLE, options.hideVideoPlaybackTitle)
             .putBoolean(X_HIDE_VIDEO_BELOW_PROGRESS_DETAILS, options.hideVideoBelowProgressDetails)
+            .putBoolean(X_SHOW_VIDEO_PROGRESS, options.showVideoProgressOverlay)
+            .putInt(X_PROGRESS_PORTRAIT_BOTTOM, options.progressPortraitBottomDp.coerceIn(4, 140))
+            .putInt(X_PROGRESS_LANDSCAPE_BOTTOM, options.progressLandscapeBottomDp.coerceIn(4, 100))
+            .putInt(X_PROGRESS_THICKNESS, options.progressThicknessDp.coerceIn(2, 14))
+            .putInt(X_PROGRESS_OPACITY, options.progressOpacityPercent.coerceIn(20, 100))
+            .putBoolean(X_SHOW_VIDEO_RESOLUTION, options.showVideoResolution)
             .apply()
     }
 
