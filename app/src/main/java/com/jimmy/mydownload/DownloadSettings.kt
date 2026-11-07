@@ -68,6 +68,10 @@ object DownloadSettings {
     private const val FLOAT_BUTTON_X = "floating_download_x"
     private const val FLOAT_BUTTON_Y = "floating_download_y"
     private const val FLOAT_BUTTON_OPACITY = "floating_download_opacity"
+    private const val FULLSCREEN_PORTRAIT_X = "floating_fullscreen_portrait_x"
+    private const val FULLSCREEN_PORTRAIT_Y = "floating_fullscreen_portrait_y"
+    private const val FULLSCREEN_LANDSCAPE_X = "floating_fullscreen_landscape_x"
+    private const val FULLSCREEN_LANDSCAPE_Y = "floating_fullscreen_landscape_y"
 
     fun folder(context: Context): String =
         context.getSharedPreferences(PREF, Context.MODE_PRIVATE).getString(FOLDER, "").orEmpty()
@@ -209,6 +213,35 @@ object DownloadSettings {
         context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit()
             .putFloat(FLOAT_BUTTON_X, position.xFraction.coerceIn(0f, 1f))
             .putFloat(FLOAT_BUTTON_Y, position.yFraction.coerceIn(0f, 1f))
+            .apply()
+    }
+
+    /**
+     * Fullscreen control has its own normalized position for portrait and
+     * landscape. Null means the user has never dragged it, so the overlay
+     * may use the existing default (16dp right / 72dp above bottom).
+     */
+    fun floatingFullscreenPosition(
+        context: Context, landscape: Boolean
+    ): FloatingDownloadPosition? {
+        val prefs = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+        val xKey = if (landscape) FULLSCREEN_LANDSCAPE_X else FULLSCREEN_PORTRAIT_X
+        val yKey = if (landscape) FULLSCREEN_LANDSCAPE_Y else FULLSCREEN_PORTRAIT_Y
+        if (!prefs.contains(xKey) || !prefs.contains(yKey)) return null
+        val x = prefs.getFloat(xKey, 1f)
+        val y = prefs.getFloat(yKey, 1f)
+        if (!x.isFinite() || !y.isFinite()) return null
+        return FloatingDownloadPosition(x.coerceIn(0f, 1f), y.coerceIn(0f, 1f))
+    }
+
+    fun setFloatingFullscreenPosition(
+        context: Context, landscape: Boolean, position: FloatingDownloadPosition
+    ) {
+        val xKey = if (landscape) FULLSCREEN_LANDSCAPE_X else FULLSCREEN_PORTRAIT_X
+        val yKey = if (landscape) FULLSCREEN_LANDSCAPE_Y else FULLSCREEN_PORTRAIT_Y
+        context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit()
+            .putFloat(xKey, position.xFraction.takeIf(Float::isFinite)?.coerceIn(0f, 1f) ?: 1f)
+            .putFloat(yKey, position.yFraction.takeIf(Float::isFinite)?.coerceIn(0f, 1f) ?: 1f)
             .apply()
     }
 
