@@ -719,7 +719,7 @@ private fun xVideoFullscreenScript(enabled: Boolean): String =
  */
 private val X_IMMERSIVE_NATIVE_TEST_SCRIPT = """
 (() => {
-  if (!/^(?:www\\.)?(?:x\\.com|twitter\\.com)$/.test(location.hostname))
+  if (!/^(?:www\.)?(?:x\.com|twitter\.com)$/.test(location.hostname))
     return 'not-x';
 
   // Isolation test: leave X's own immersive carousel, card geometry,
