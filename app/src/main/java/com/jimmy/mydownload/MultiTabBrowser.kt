@@ -482,12 +482,6 @@ private val X_MEDIA_PINCH_ZOOM_SCRIPT = """
     if (state.scale<=1.005) {state.scale=1;state.x=0;state.y=0;}
     render();
   };
-  const beginPan = p => {
-    if (!state.media || state.scale<=1.01) return;
-    state.mode='pan';
-    state.startX=p.clientX;state.startY=p.clientY;
-    state.startPanX=state.x;state.startPanY=state.y;
-  };
   const movePan = p => {
     if (!state.media) return;
     const rect=state.media.getBoundingClientRect();
