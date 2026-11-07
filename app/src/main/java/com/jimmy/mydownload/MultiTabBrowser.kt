@@ -436,7 +436,11 @@ private fun xDisplayScript(options: XDisplayOptions): String {
         options.hideVideoPlaybackText, options.hideVideoPlaybackTitle,
         options.hideVideoBelowProgressDetails
     ).joinToString(",") { it.toString() }
-    return X_DISPLAY_SCRIPT.replace("__FLAGS__", flags)
+    // Share the existing X display refresh: one JS evaluation updates both
+    // CSS preferences and our independent progress overlay. No extra WebView
+    // polling or carousel listener is created.
+    return X_DISPLAY_SCRIPT.replace("__FLAGS__", flags) +
+        ";\n" + xVideoOverlayScript(options)
 }
 
 /**
