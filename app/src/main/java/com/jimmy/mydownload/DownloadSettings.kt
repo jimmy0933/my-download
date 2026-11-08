@@ -24,7 +24,9 @@ data class XDisplayOptions(
     val hideBottomShare: Boolean = false,
     val hideVideoPlaybackText: Boolean = false,
     val hideVideoPlaybackTitle: Boolean = false,
-    val hideVideoBelowProgressDetails: Boolean = false
+    val hideVideoBelowProgressDetails: Boolean = false,
+    val hideViewerViews: Boolean = false,
+    val hideViewerShare: Boolean = false
 )
 
 /**
@@ -65,6 +67,8 @@ object DownloadSettings {
     private const val X_HIDE_VIDEO_PLAYBACK_TEXT = "x_hide_video_playback_text"
     private const val X_HIDE_VIDEO_PLAYBACK_TITLE = "x_hide_video_playback_title"
     private const val X_HIDE_VIDEO_BELOW_PROGRESS_DETAILS = "x_hide_video_below_progress_details"
+    private const val X_HIDE_VIEWER_VIEWS = "x_hide_viewer_views"
+    private const val X_HIDE_VIEWER_SHARE = "x_hide_viewer_share"
     private const val FLOAT_BUTTON_X = "floating_download_x"
     private const val FLOAT_BUTTON_Y = "floating_download_y"
     private const val FLOAT_BUTTON_OPACITY = "floating_download_opacity"
@@ -163,7 +167,9 @@ object DownloadSettings {
             hideBottomShare = prefs.getBoolean(X_HIDE_BOTTOM_SHARE, false),
             hideVideoPlaybackText = prefs.getBoolean(X_HIDE_VIDEO_PLAYBACK_TEXT, false),
             hideVideoPlaybackTitle = prefs.getBoolean(X_HIDE_VIDEO_PLAYBACK_TITLE, false),
-            hideVideoBelowProgressDetails = prefs.getBoolean(X_HIDE_VIDEO_BELOW_PROGRESS_DETAILS, false)
+            hideVideoBelowProgressDetails = prefs.getBoolean(X_HIDE_VIDEO_BELOW_PROGRESS_DETAILS, false),
+            hideViewerViews = prefs.getBoolean(X_HIDE_VIEWER_VIEWS, false),
+            hideViewerShare = prefs.getBoolean(X_HIDE_VIEWER_SHARE, false)
         )
     }
 
@@ -186,6 +192,8 @@ object DownloadSettings {
             .putBoolean(X_HIDE_VIDEO_PLAYBACK_TEXT, options.hideVideoPlaybackText)
             .putBoolean(X_HIDE_VIDEO_PLAYBACK_TITLE, options.hideVideoPlaybackTitle)
             .putBoolean(X_HIDE_VIDEO_BELOW_PROGRESS_DETAILS, options.hideVideoBelowProgressDetails)
+            .putBoolean(X_HIDE_VIEWER_VIEWS, options.hideViewerViews)
+            .putBoolean(X_HIDE_VIEWER_SHARE, options.hideViewerShare)
             .apply()
     }
 
