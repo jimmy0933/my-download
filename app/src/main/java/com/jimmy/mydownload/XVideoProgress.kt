@@ -29,7 +29,8 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
       playButton:null,pauseButton:null,elapsedNode:null,durationNode:null,
       seeking:false,pointerId:null,oldTracks:new Set(),authorLinks:new Set(),
       lastFraction:-1,observer:null,refresh:null,busy:false,
-      boundVideo:null,boundListener:null,settings:null
+      boundVideo:null,boundListener:null,settings:null,
+      nativeToggle:null,nativeToggleMarks:new Set()
     });
 
   state.settings=settings;
@@ -59,7 +60,22 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
         pointer-events:none !important;
       }
       html[data-mydownload-hide-x-author="1"]
-      [data-mydownload-x-author-shortcut="1"] {
+      [data-mydownload-x-author-shortcut="1"],
+      html[data-mydownload-hide-x-native-toggle="1"]
+      [data-mydownload-x-native-toggle="1"] {
+        opacity:0 !important;
+        pointer-events:none !important;
+      }
+      html[data-mydownload-hide-x-native-toggle="1"]
+      :is([data-testid="videoPlayer"],[data-testid="vss-scroll-view"],
+          [data-testid="immersive-viewer"])
+      :is(button,[role="button"]):is(
+          [aria-label="Play" i],[aria-label="Pause" i],
+          [aria-label="播放"],[aria-label="暫停"],
+          [data-testid="playButton"],[data-testid="pauseButton"],
+          [data-testid*="videoPlayButton" i],
+          [data-testid*="videoPauseButton" i]
+      ) {
         opacity:0 !important;
         pointer-events:none !important;
       }
@@ -83,10 +99,10 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
     root.id='mydownload-optional-x-progress';
     Object.assign(root.style,{
       position:'fixed',left:'12px',right:'12px',
-      bottom:'68px',height:'56px',zIndex:'2147482000',
+      bottom:'68px',height:'56px',zIndex:'2147483647',
       display:'none',alignItems:'center',gap:'7px',
       pointerEvents:'none',background:'transparent',
-      boxSizing:'border-box'
+      boxSizing:'border-box',isolation:'isolate'
     });
     const control=(text,label)=>{
       const button=document.createElement('button');
@@ -97,13 +113,16 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
       Object.assign(button.style,{
         flex:'0 0 38px',width:'38px',height:'38px',
         border:'1px solid rgba(215,235,242,.35)',borderRadius:'22px',
-        background:'rgba(9,20,33,.82)',color:'#f0ffff',
+        background:'rgba(9,20,33,.92)',color:'#f0ffff',
         fontSize:'19px',fontWeight:'700',padding:'0',
         display:'flex',alignItems:'center',justifyContent:'center',
+        appearance:'none',WebkitAppearance:'none',
+        zIndex:'2',position:'relative',
         cursor:'pointer',pointerEvents:'auto',touchAction:'manipulation'
       });
-      // Don't dispatch control taps into the site's fullscreen/author UI.
-      for(const type of ['pointerdown','pointerup','click']){
+      // X's author layer has pointer and click handlers. Prevent them
+      // receiving new control gestures, but keep our own click handler active.
+      for(const type of ['pointerdown','pointerup','touchstart','touchend']){
         button.addEventListener(type,event=>event.stopPropagation());
       }
       return button;
@@ -152,23 +171,43 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
     line.appendChild(fill);zone.appendChild(line);
     middle.appendChild(clocks);middle.appendChild(zone);
     root.appendChild(play);root.appendChild(middle);root.appendChild(pause);
-    (document.body||document.documentElement).appendChild(root);
+    // Stay above X's author/content portal. X mounts its video UI under
+    // #layers; placing our controls at the end of that layer avoids
+    // underlying profile links intercepting taps.
+    (document.getElementById('layers')||document.body||
+      document.documentElement).appendChild(root);
     state.root=root;state.zone=zone;state.line=line;state.fill=fill;
     state.playButton=play;state.pauseButton=pause;
     state.elapsedNode=elapsedNode;state.durationNode=durationNode;
     state.lastFraction=-1;
 
-    play.addEventListener('click',()=>{
+    // X sometimes keeps its own React-controlled play state. Dispatch the
+    // equivalent action through X's original toggle (hidden visually but
+    // preserved), then set HTMLVideoElement state as an idempotent fallback.
+    const setPlayback=shouldPlay=>{
       const video=state.video;
-      if(!video)return;
-      try{video.play()?.catch?.(()=>{});}catch(_){}
+      if(!video || (shouldPlay?!video.paused:video.paused))return;
+      const native=state.nativeToggle;
+      if(native?.isConnected){
+        try{native.click();}catch(_){}
+      }
+      try{
+        if(shouldPlay){
+          if(video.paused){
+            const result=video.play();
+            result?.catch?.(()=>{});
+          }
+        }else if(!video.paused)video.pause();
+      }catch(_){}
       state.updateClock?.();
+    };
+    play.addEventListener('click',event=>{
+      event.preventDefault();event.stopPropagation();
+      setPlayback(true);
     });
-    pause.addEventListener('click',()=>{
-      const video=state.video;
-      if(!video)return;
-      try{video.pause();}catch(_){}
-      state.updateClock?.();
+    pause.addEventListener('click',event=>{
+      event.preventDefault();event.stopPropagation();
+      setPlayback(false);
     });
 
     const setTime=event=>{
@@ -376,6 +415,71 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
     }
   };
 
+  // Only the native play/pause icon is removed while our own controls
+  // are visible. It is kept in the DOM so a programmatic click can still
+  // change X's React playback state. No parent/control bar is hidden.
+  const clearNativeToggle=()=>{
+    for(const el of state.nativeToggleMarks){
+      if(el.isConnected)el.removeAttribute('data-mydownload-x-native-toggle');
+    }
+    state.nativeToggleMarks.clear();
+    state.nativeToggle=null;
+    document.documentElement.removeAttribute('data-mydownload-hide-x-native-toggle');
+  };
+  const locateNativeToggle=video=>{
+    if(!video)return;
+    const vr=video.getBoundingClientRect();
+    const bottom=innerWidth>innerHeight?24:68;
+    const barTop=innerHeight-bottom-56;
+    const low=Math.max(vr.top+vr.height*.55,barTop-225);
+    const high=Math.min(innerHeight-36,barTop+35);
+    const candidates=document.querySelectorAll(
+      'button,[role="button"],[data-testid*="playButton" i],' +
+      '[data-testid*="pauseButton" i]');
+    let winner=null,best=-Infinity;
+    for(const el of candidates){
+      if(el.closest('#mydownload-optional-x-progress') ||
+          el.closest('nav,[role="navigation"]') ||
+          el.querySelector('video'))continue;
+      const r=el.getBoundingClientRect();
+      if(r.width<12||r.width>96||r.height<12||r.height>82||
+         r.top<low||r.top>high||r.left<vr.left-8||
+         r.right>Math.min(vr.left+Math.max(130,vr.width*.38),innerWidth))continue;
+      const descriptor=[
+        el.getAttribute('aria-label')||'',
+        el.getAttribute('title')||'',
+        el.getAttribute('data-testid')||''
+      ].join(' ').toLowerCase();
+      const explicit=/^(play|pause|播放|暫停)$/.test(descriptor.trim()) ||
+        /(?:play|pause)button|video.?play|video.?pause/.test(descriptor);
+      const excluded=/volume|mute|share|like|follow|back|close|sound|more|下載|音量|分享/.test(descriptor);
+      if(excluded)continue;
+      const viewer=video.closest(
+        '[data-testid="vss-scroll-view"],[data-testid="immersive-viewer"],' +
+        '#layers [role="dialog"],[data-testid="videoPlayer"]');
+      if(viewer && !viewer.contains(el) && !el.closest('#layers'))continue;
+      // Prefer positively identified playback controls; permit an
+      // unlabelled small SVG control only immediately above our seekbar.
+      if(!explicit){
+        if(!el.querySelector('svg') || r.width>58||r.height>58||
+           r.top<barTop-145||r.top>barTop+8)continue;
+      }
+      const score=(explicit?10000:0)-Math.abs(r.top-(barTop-95))*8-r.left;
+      if(score>best){best=score;winner=el;}
+    }
+    if(!winner)return;
+    for(const el of state.nativeToggleMarks){
+      if(el!==winner && el.isConnected){
+        el.removeAttribute('data-mydownload-x-native-toggle');
+        state.nativeToggleMarks.delete(el);
+      }
+    }
+    winner.setAttribute('data-mydownload-x-native-toggle','1');
+    state.nativeToggleMarks.add(winner);
+    state.nativeToggle=winner;
+    document.documentElement.setAttribute('data-mydownload-hide-x-native-toggle','1');
+  };
+
   // Hide only the profile shortcut link in X's active video viewer.
   // A valid X profile URL has one path segment (@handle), unlike status links.
   // Geometry limits removal to a small clickable target near the custom bar.
@@ -391,28 +495,45 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
     const viewer=video.closest(
       '[data-testid="vss-scroll-view"],[data-testid="immersive-viewer"],' +
       '#layers [role="dialog"]');
-    if(!viewer)return; // Never modify links in the ordinary tweet feed.
+    const layers=document.getElementById('layers');
+    // X's author/footer is often a sibling of the active video, not a
+    // descendant of its player. Restrict by media viewer + screen location.
+    if(!viewer && !layers)return;
     for(const el of state.authorLinks){
       if(!el.isConnected)state.authorLinks.delete(el);
     }
     const bottom=innerWidth>innerHeight?24:68;
     const barTop=innerHeight-bottom-56;
-    const minY=Math.max(innerHeight*.45,barTop-115);
-    for(const a of viewer.querySelectorAll('a[href]')){
-      if(a.closest('#mydownload-optional-x-progress'))continue;
-      if(a.querySelector('video,button,[role="button"]'))continue;
-      let target;
-      try{target=new URL(a.getAttribute('href'),location.href);}catch(_){continue;}
-      if(target.hostname!==location.hostname)continue;
-      if(!/^\/[A-Za-z0-9_]{1,15}\/?$/.test(target.pathname))continue;
-      const handle=target.pathname.slice(1).replace(/\/$/,'').toLowerCase();
-      if(/^(home|explore|search|notifications|messages|compose|settings|i|grok|login)$/.test(handle))continue;
-      const r=a.getBoundingClientRect();
-      if(r.width<12||r.width>Math.min(225,innerWidth*.55)||
-         r.height<12||r.height>88||r.left<0||r.left>innerWidth*.55||
-         r.top<minY||r.top>innerHeight-7||r.bottom>innerHeight+5)continue;
-      a.setAttribute('data-mydownload-x-author-shortcut','1');
-      state.authorLinks.add(a);
+    const minY=Math.max(innerHeight*.47,barTop-160);
+    const maxY=Math.min(innerHeight-10,barTop+105);
+    const candidates=document.querySelectorAll(
+      'a[href],[data-testid="User-Name"],[data-testid="UserName"],' +
+      '[data-testid="User-Names"],[data-testid^="UserAvatar-Container"]'
+    );
+    for(const candidate of candidates){
+      if(candidate.closest('#mydownload-optional-x-progress'))continue;
+      if(candidate.querySelector('video'))continue;
+      if(viewer && !viewer.contains(candidate) &&
+         !(layers?.contains(candidate)))continue;
+      const r=candidate.getBoundingClientRect();
+      if(r.width<8||r.width>innerWidth-8||r.height<8||r.height>90||
+         r.left<0||r.left>innerWidth*.63||
+         r.top<minY||r.top>maxY||r.bottom>innerHeight+5)continue;
+      let isProfile=false;
+      if(candidate.matches('a[href]')){
+        let target;
+        try{target=new URL(candidate.getAttribute('href'),location.href);}
+        catch(_){continue;}
+        if(target.hostname!==location.hostname)continue;
+        if(!/^\/[A-Za-z0-9_]{1,15}\/?$/.test(target.pathname))continue;
+        const handle=target.pathname.slice(1).replace(/\/$/,'').toLowerCase();
+        isProfile=!/^(home|explore|search|notifications|messages|compose|settings|i|grok|login)$/.test(handle);
+      }else{
+        isProfile=true; // Exact X User-Name/avatar testids only.
+      }
+      if(!isProfile)continue;
+      candidate.setAttribute('data-mydownload-x-author-shortcut','1');
+      state.authorLinks.add(candidate);
     }
   };
 
@@ -429,7 +550,7 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
   } else {
     clearAuthor();
   }
-  if(!settings.hideNative&&!settings.hideAuthor){
+  if(!settings.hideNative&&!settings.hideAuthor&&!settings.showCustom){
     state.observer?.disconnect();
     state.observer=null;
   }
@@ -444,6 +565,7 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
       if (settings.hideNative && video) hideNativeTracks(video);
       if (settings.hideAuthor && video) markAuthor(video);
       if (!settings.showCustom || !playable) {
+        clearNativeToggle();
         if (state.root) state.root.style.display='none';
         state.video=null;bindVideo(null);
         state.seeking=false;state.seekVideo=null;
@@ -454,6 +576,7 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
       bindVideo(video);
       state.root.style.bottom=(innerWidth>innerHeight?'24px':'68px');
       state.root.style.display='flex';
+      locateNativeToggle(video);
       if (!state.seeking) state.updateProgress(video.currentTime/video.duration);
       state.updateClock();
       return 'custom-visible';
@@ -466,9 +589,10 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
   // A MutationObserver runs at the DOM microtask checkpoint, before paint,
   // unlike the browser's existing 950ms refresh. Observe only structural
   // changes, and never touch the video or controls container.
-  if ((settings.hideNative || settings.hideAuthor) && !state.observer) {
+  if ((settings.hideNative || settings.hideAuthor || settings.showCustom) && !state.observer) {
     state.observer=new MutationObserver(mutations=>{
-      if (!(state.settings?.hideNative || state.settings?.hideAuthor) ||
+      if (!(state.settings?.hideNative || state.settings?.hideAuthor ||
+            state.settings?.showCustom) ||
           !mutations.some(m=>m.addedNodes.length||m.removedNodes.length))return;
       state.refresh?.();
     });
