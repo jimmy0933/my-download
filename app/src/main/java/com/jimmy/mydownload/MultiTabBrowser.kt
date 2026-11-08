@@ -77,7 +77,6 @@ import androidx.compose.ui.window.DialogWindowProvider
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
 import kotlinx.coroutines.delay
 import org.json.JSONArray
 import org.json.JSONObject
@@ -1745,38 +1744,35 @@ fun MultiTabBrowser(
         }
     }
 
-    // Enter immersive mode on the ACTIVITY window (our in-place X fullscreen
-    // keeps the same WebView). Re-apply when window focus returns, because
-    // Android/OEM navigation controls may reappear after a transient window.
-    // Do not manipulate the video element or its layout.
-    val immersiveMode = visible && (browserVideoFullscreen || fullscreenView != null)
-    DisposableEffect(context, immersiveMode) {
+    // X in-place fullscreen may hide the top status bar, but must ALWAYS
+    // retain Android's bottom Back/Home/Recents navigation buttons.
+    // Do not alter the video DOM or the swipe carousel.
+    val fullscreenMode = visible && (browserVideoFullscreen || fullscreenView != null)
+    DisposableEffect(context, fullscreenMode) {
         val window = (context as? Activity)?.window
-        if (immersiveMode && window != null) {
+        if (fullscreenMode && window != null) {
             val decor = window.decorView
             val controller = WindowCompat.getInsetsController(window, decor)
-            fun hideBars() {
-                controller.systemBarsBehavior =
-                    WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-                controller.hide(WindowInsetsCompat.Type.systemBars())
+            fun applyFullscreenBars() {
+                controller.show(WindowInsetsCompat.Type.navigationBars())
+                controller.hide(WindowInsetsCompat.Type.statusBars())
             }
-            hideBars()
+            applyFullscreenBars()
             val focusListener = ViewTreeObserver.OnWindowFocusChangeListener { hasFocus ->
-                if (hasFocus) hideBars()
+                if (hasFocus) applyFullscreenBars()
             }
             val observer = decor.viewTreeObserver
             observer.addOnWindowFocusChangeListener(focusListener)
-            // A WebView fullscreen transition can run before Android finishes
-            // attaching/insetting the window. Apply once more on the next frame.
-            decor.post { if (decor.hasWindowFocus() && decor.isAttachedToWindow) hideBars() }
+            decor.post {
+                if (decor.hasWindowFocus() && decor.isAttachedToWindow) applyFullscreenBars()
+            }
             onDispose {
                 if (observer.isAlive) observer.removeOnWindowFocusChangeListener(focusListener)
+                // Restore status on exit; do not conceal bottom navigation.
                 WindowCompat.getInsetsController(window, decor)
                     .show(WindowInsetsCompat.Type.systemBars())
             }
         } else {
-            // No show() here: an old effect is responsible for restoring bars,
-            // and normal browsing must not force any other system UI changes.
             onDispose { }
         }
     }
@@ -2347,11 +2343,12 @@ fun MultiTabBrowser(
             onDismissRequest = { currentWebView()?.webChromeClient?.onHideCustomView() },
             properties = DialogProperties(
                 usePlatformDefaultWidth = false,
-                decorFitsSystemWindows = false
+                // The HTML5 dialog must reserve space for the Android nav bar.
+                decorFitsSystemWindows = true
             )
         ) {
-            // HTML5 fullscreen opens a separate Android Dialog window. Hiding
-            // the Activity bars alone never hides that window's navigation bar.
+            // HTML5 fullscreen uses its own window; ensure Android's bottom
+            // Back/Home/Recents bar is visible in this window as well.
             var ancestor = LocalView.current.parent
             while (ancestor != null && ancestor !is DialogWindowProvider) {
                 ancestor = ancestor.parent
@@ -2361,19 +2358,20 @@ fun MultiTabBrowser(
                 if (dialogWindow != null) {
                     val decor = dialogWindow.decorView
                     val controller = WindowCompat.getInsetsController(dialogWindow, decor)
-                    fun hideDialogBars() {
-                        controller.systemBarsBehavior =
-                            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-                        controller.hide(WindowInsetsCompat.Type.systemBars())
+                    fun showNavigationAndHideStatus() {
+                        controller.show(WindowInsetsCompat.Type.navigationBars())
+                        controller.hide(WindowInsetsCompat.Type.statusBars())
                     }
-                    hideDialogBars()
+                    showNavigationAndHideStatus()
                     val observer = decor.viewTreeObserver
                     val focusListener = ViewTreeObserver.OnWindowFocusChangeListener { hasFocus ->
-                        if (hasFocus) hideDialogBars()
+                        if (hasFocus) showNavigationAndHideStatus()
                     }
                     observer.addOnWindowFocusChangeListener(focusListener)
                     decor.post {
-                        if (decor.hasWindowFocus() && decor.isAttachedToWindow) hideDialogBars()
+                        if (decor.hasWindowFocus() && decor.isAttachedToWindow) {
+                            showNavigationAndHideStatus()
+                        }
                     }
                     onDispose {
                         if (observer.isAlive) {
