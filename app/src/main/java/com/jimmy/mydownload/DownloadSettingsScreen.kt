@@ -359,6 +359,25 @@ fun DownloadSettingsScreen(
                     }
                 )
                 HorizontalDivider(color = Color(0xFF304458))
+                Text("X 影片底部操作列", style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold)
+                XVisibilitySetting(
+                    title = "影片底部隱藏觀看次數",
+                    description = "只隱藏影片播放畫面底下的觀看數及圖表按鈕，不影響播放進度條。",
+                    hidden = xDisplayOptions.hideViewerViews,
+                    onHiddenChange = {
+                        onXDisplayChange(xDisplayOptions.copy(hideViewerViews = it))
+                    }
+                )
+                XVisibilitySetting(
+                    title = "影片底部隱藏分享按鈕",
+                    description = "只隱藏影片下方的分享圖示，保留其他播放及下載功能。",
+                    hidden = xDisplayOptions.hideViewerShare,
+                    onHiddenChange = {
+                        onXDisplayChange(xDisplayOptions.copy(hideViewerShare = it))
+                    }
+                )
+                HorizontalDivider(color = Color(0xFF304458))
                 XVisibilitySetting(
                     title = "播放時隱藏進度條下方資訊",
                     description = "一鍵隱藏 X 影片進度條下方的帳號名稱、頭像及貼文說明；保留影片、進度條、播放控制與下載按鈕。",
