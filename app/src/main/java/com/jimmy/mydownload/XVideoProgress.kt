@@ -25,17 +25,35 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
   const state = window.__mydownloadOptionalXSeek ||
     (window.__mydownloadOptionalXSeek = {
       root:null,zone:null,line:null,fill:null,video:null,seekVideo:null,
-      seeking:false,pointerId:null,oldTracks:new Set(),lastFraction:-1
+      seeking:false,pointerId:null,oldTracks:new Set(),lastFraction:-1,
+      observer:null,refresh:null,busy:false
     });
 
   const cssId='mydownload-optional-native-seek-css';
   if (!document.getElementById(cssId)) {
     const style=document.createElement('style');
     style.id=cssId;
-    style.textContent=
-      'html[data-mydownload-hide-x-timeline="1"] ' +
-      '[data-mydownload-x-native-track="1"] {' +
-      'opacity:0 !important;pointer-events:none !important;}';
+    // Apply to future X controls BEFORE they are measured or individually
+    // tagged. CSS persists across React video changes, preventing a one-frame
+    // reappearance while the next seekbar mounts.
+    style.textContent=`
+      html[data-mydownload-hide-x-timeline="1"]
+      [data-mydownload-x-native-track="1"],
+      html[data-mydownload-hide-x-timeline="1"]
+      :is([data-testid="vss-scroll-view"],[data-testid="immersive-viewer"],
+          [data-testid="videoPlayer"],#layers [role="dialog"]:has(video))
+      :is(
+        [role="slider"]:not([aria-label*="volume" i]):not([aria-label*="音量"]):not([data-testid*="volume" i]),
+        input[type="range"]:not([aria-label*="volume" i]):not([aria-label*="音量"]),
+        [data-testid*="seek" i],[data-testid*="scrub" i],
+        [data-testid*="video-progress" i],[data-testid*="video-timeline" i],
+        [aria-label*="seek" i],[aria-label*="timeline" i],
+        [aria-label*="播放進度"]
+      ) {
+        opacity:0 !important;
+        pointer-events:none !important;
+      }
+    `;
     (document.head || document.documentElement).appendChild(style);
   }
 
@@ -166,7 +184,11 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
   };
 
   const hideNativeTracks=video=>{
-    clearNative();
+    // Never clear existing marks on a normal X refresh: that briefly paints
+    // the original progress before it is found again.
+    for (const el of state.oldTracks) {
+      if (!el.isConnected) state.oldTracks.delete(el);
+    }
     if (!video || !settings.hideNative) return;
     const vr=video.getBoundingClientRect();
     let scope=video.closest(
@@ -235,28 +257,58 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
         if (matches>=3) break;
       }
     }
-    if (matches) document.documentElement.setAttribute(
-      'data-mydownload-hide-x-timeline','1');
   };
 
-  const video=currentVideo();
-  const playable=video && Number.isFinite(video.duration) &&
-    video.duration>0 && video.readyState>=1;
-  // The two options are independent: users can show both or neither.
-  if (!settings.hideNative && state.oldTracks.size) clearNative();
-  if (settings.hideNative && playable) hideNativeTracks(video);
-  else clearNative();
-  if (!settings.showCustom || !playable) {
-    if (state.root) state.root.style.display='none';
-    state.video=null;
-    state.seeking=false;state.seekVideo=null;
-    return 'native-only';
+  // Markers and observer are active only while the user enables the option.
+  // Set the root flag immediately, even before loadedmetadata, so X's next
+  // seekbar is hidden by the persistent CSS on its very first paint.
+  if (settings.hideNative) {
+    document.documentElement.setAttribute('data-mydownload-hide-x-timeline','1');
+  } else {
+    state.observer?.disconnect();
+    state.observer=null;
+    clearNative();
   }
-  create();
-  state.video=video;
-  state.root.style.bottom=(innerWidth>innerHeight?'24px':'68px');
-  state.root.style.display='block';
-  if (!state.seeking) state.updateProgress(video.currentTime/video.duration);
-  return 'custom-visible';
+
+  state.refresh=()=>{
+    if (state.busy) return;
+    state.busy=true;
+    try {
+      const video=currentVideo();
+      const playable=video && Number.isFinite(video.duration) &&
+        video.duration>0 && video.readyState>=1;
+      if (settings.hideNative && video) hideNativeTracks(video);
+      if (!settings.showCustom || !playable) {
+        if (state.root) state.root.style.display='none';
+        state.video=null;
+        state.seeking=false;state.seekVideo=null;
+        return 'native-only';
+      }
+      create();
+      state.video=video;
+      state.root.style.bottom=(innerWidth>innerHeight?'24px':'68px');
+      state.root.style.display='block';
+      if (!state.seeking) state.updateProgress(video.currentTime/video.duration);
+      return 'custom-visible';
+    } finally {
+      state.busy=false;
+    }
+  };
+
+  // X's vertical carousel mounts the next controls without a page reload.
+  // A MutationObserver runs at the DOM microtask checkpoint, before paint,
+  // unlike the browser's existing 950ms refresh. Observe only structural
+  // changes, and never touch the video or controls container.
+  if (settings.hideNative && !state.observer) {
+    state.observer=new MutationObserver(mutations=>{
+      if (!settings.hideNative || !mutations.some(m=>
+          m.addedNodes.length || m.removedNodes.length)) return;
+      state.refresh?.();
+    });
+    state.observer.observe(document.documentElement,{
+      childList:true,subtree:true
+    });
+  }
+  return state.refresh();
 })()
 """.trimIndent()
