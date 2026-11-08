@@ -359,6 +359,37 @@ fun DownloadSettingsScreen(
                     }
                 )
                 HorizontalDivider(color = Color(0xFF304458))
+                Text("X 播放進度條", style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold)
+                Text(
+                    "預設保留 X 原本的進度條。兩個選項可獨立控制；若新進度條出現問題，關閉開關即可恢復。",
+                    color = Color(0xFF9CAFC0), style = MaterialTheme.typography.bodySmall
+                )
+                XVisibilitySetting(
+                    title = "隱藏 X 原本進度條",
+                    description = "僅隱藏影片進度線，保留播放、音量與其他控制按鈕。",
+                    hidden = xDisplayOptions.hideNativeXVideoProgress,
+                    onHiddenChange = {
+                        onXDisplayChange(xDisplayOptions.copy(hideNativeXVideoProgress = it))
+                    }
+                )
+                XVisibilitySetting(
+                    title = "顯示新版進度條",
+                    description = "顯示可點擊及拖曳快轉的細進度條，不替換影片或調整播放器版面。",
+                    hidden = xDisplayOptions.showCustomXVideoProgress,
+                    onHiddenChange = {
+                        onXDisplayChange(xDisplayOptions.copy(showCustomXVideoProgress = it))
+                    }
+                )
+                if (xDisplayOptions.hideNativeXVideoProgress &&
+                    !xDisplayOptions.showCustomXVideoProgress) {
+                    Text(
+                        "提醒：目前兩種進度條都不顯示。如需拖曳快轉，請開啟新版進度條或恢復 X 原本進度條。",
+                        color = Color(0xFFFFC48A),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                HorizontalDivider(color = Color(0xFF304458))
                 Text("X 影片底部操作列", style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold)
                 XVisibilitySetting(
