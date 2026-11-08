@@ -26,7 +26,9 @@ data class XDisplayOptions(
     val hideVideoPlaybackTitle: Boolean = false,
     val hideVideoBelowProgressDetails: Boolean = false,
     val hideViewerViews: Boolean = false,
-    val hideViewerShare: Boolean = false
+    val hideViewerShare: Boolean = false,
+    val hideNativeXVideoProgress: Boolean = false,
+    val showCustomXVideoProgress: Boolean = false
 )
 
 /**
@@ -69,6 +71,9 @@ object DownloadSettings {
     private const val X_HIDE_VIDEO_BELOW_PROGRESS_DETAILS = "x_hide_video_below_progress_details"
     private const val X_HIDE_VIEWER_VIEWS = "x_hide_viewer_views"
     private const val X_HIDE_VIEWER_SHARE = "x_hide_viewer_share"
+    // New keys intentionally do not reuse the deleted overlay defaults.
+    private const val X_HIDE_NATIVE_VIDEO_PROGRESS = "x_hide_native_video_progress_v2"
+    private const val X_SHOW_CUSTOM_VIDEO_PROGRESS = "x_show_custom_video_progress_v2"
     private const val FLOAT_BUTTON_X = "floating_download_x"
     private const val FLOAT_BUTTON_Y = "floating_download_y"
     private const val FLOAT_BUTTON_OPACITY = "floating_download_opacity"
@@ -169,7 +174,9 @@ object DownloadSettings {
             hideVideoPlaybackTitle = prefs.getBoolean(X_HIDE_VIDEO_PLAYBACK_TITLE, false),
             hideVideoBelowProgressDetails = prefs.getBoolean(X_HIDE_VIDEO_BELOW_PROGRESS_DETAILS, false),
             hideViewerViews = prefs.getBoolean(X_HIDE_VIEWER_VIEWS, false),
-            hideViewerShare = prefs.getBoolean(X_HIDE_VIEWER_SHARE, false)
+            hideViewerShare = prefs.getBoolean(X_HIDE_VIEWER_SHARE, false),
+            hideNativeXVideoProgress = prefs.getBoolean(X_HIDE_NATIVE_VIDEO_PROGRESS, false),
+            showCustomXVideoProgress = prefs.getBoolean(X_SHOW_CUSTOM_VIDEO_PROGRESS, false)
         )
     }
 
@@ -194,6 +201,8 @@ object DownloadSettings {
             .putBoolean(X_HIDE_VIDEO_BELOW_PROGRESS_DETAILS, options.hideVideoBelowProgressDetails)
             .putBoolean(X_HIDE_VIEWER_VIEWS, options.hideViewerViews)
             .putBoolean(X_HIDE_VIEWER_SHARE, options.hideViewerShare)
+            .putBoolean(X_HIDE_NATIVE_VIDEO_PROGRESS, options.hideNativeXVideoProgress)
+            .putBoolean(X_SHOW_CUSTOM_VIDEO_PROGRESS, options.showCustomXVideoProgress)
             .apply()
     }
 
