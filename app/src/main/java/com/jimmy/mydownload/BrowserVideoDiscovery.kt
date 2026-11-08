@@ -117,7 +117,10 @@ object BrowserVideoDiscovery {
     ? [...container.querySelectorAll('a[href*="/status/"]')].map(a=>a.href)
        .filter(url => /\/status\/\d{6,22}/.test(url)) : [];
 
-  let article = video.closest('article');
+  // Read the active video's own post, independently from whether X has
+  // hidden its caption visually. CSS display:none clears innerText, but
+  // textContent still holds the original post content.
+  const article = video.closest('article');
   const getText = node => {
     const candidate = node?.querySelector(
       '[data-testid="tweetText"],[data-testid="media-caption"],' +
@@ -126,52 +129,50 @@ object BrowserVideoDiscovery {
     return (candidate?.innerText?.trim() ||
       candidate?.textContent?.trim() || '').slice(0,1200);
   };
+  const ownLink = article?.querySelector('time')?.
+    closest('a[href*="/status/"]')?.href || '';
   let text = getText(article);
-  let url = statusLinks(article)[0] || '';
+  let url = ownLink || statusLinks(article)[0] || '';
 
-  // X media-viewer DOM may place video and caption in sibling nodes.
-  // Find the smallest ancestor with a caption or matching status link,
-  // without accidentally selecting the whole feed with an older post.
+  // A swipe can leave the old video and its caption mounted in X's DOM.
+  // Never walk into the feed or a carousel containing multiple posts/videos.
   if (!text || !url) {
     let node=video.parentElement;
-    for (let level=0;node && level<12;node=node.parentElement,level++) {
-      const candidateText=getText(node);
+    for (let depth=0;node && depth<12;node=node.parentElement,depth++) {
+      if (node===document.body || node===document.documentElement ||
+          node.id==='layers') break;
+      if (node.querySelectorAll('article').length>1 ||
+          node.querySelectorAll('video').length>1) break;
       const links=statusLinks(node);
       const matchingUrl=currentStatus ?
         links.find(link=>link.includes('/status/'+currentStatus)) : '';
       const candidateUrl=matchingUrl || (links.length===1?links[0]:'');
-      if ((!text && candidateText) || (!url && candidateUrl)) {
-        if (!text && candidateText) text=candidateText;
-        if (!url && candidateUrl) url=candidateUrl;
-      }
+      const candidateText=getText(node);
+      if (!text && candidateText) text=candidateText;
+      if (!url && candidateUrl) url=candidateUrl;
       if (text && url) break;
     }
   }
 
-  // If the viewer is on a specific status, resolve its caption from that
-  // post rather than borrowing another article's text.
+  // An explicit post URL can locate a caption in a separate X viewer portal.
+  // Only use it if the active video has no conflicting article/post identity.
   if (currentStatus) {
-    const exact = [...document.querySelectorAll('article')].find(node =>
-      statusLinks(node).some(link => link.includes('/status/'+currentStatus)));
-    if (exact && (article === exact || !text || !article)) {
-      text=getText(exact)||text;
+    const exact=[...document.querySelectorAll('article')].find(node =>
+      statusLinks(node).some(link=>link.includes('/status/'+currentStatus)));
+    if (exact && (!article || article===exact) &&
+        (!url || url.includes('/status/'+currentStatus))) {
+      text=getText(exact) || text;
     }
-    if (!url || !url.includes('/status/'+currentStatus)) url=location.href;
+    if (!url) url=location.href;
   }
 
-  // Final fallback: nearest visible caption to the active video, not the
-  // first tweet in the DOM. A distant/hidden caption is not accepted.
+  // For a single-video modal, its own hidden caption is still readable.
+  // Do not use "nearest visible tweet": that can belong to the previous clip.
   if (!text) {
-    const captions=[...document.querySelectorAll('[data-testid="tweetText"]')];
-    const scored=captions.map(node => {
-      const r=node.getBoundingClientRect();
-      const d=Math.abs((r.top+r.bottom)/2-(rect.top+rect.bottom)/2);
-      return {node,r,d};
-    }).filter(x=>x.r.width>20 && x.r.height>10 &&
-      x.r.bottom>0 && x.r.top<innerHeight &&
-      x.d<innerHeight*0.82).sort((a,b)=>a.d-b.d);
-    text=scored[0]?.node.innerText?.trim() ||
-      scored[0]?.node.textContent?.trim() || '';
+    const viewer=video.closest('[data-testid^="immersive-tweet-ui-content-container"]') ||
+      video.closest('#layers [role="dialog"]');
+    if (viewer && viewer.querySelectorAll('video').length===1)
+      text=getText(viewer);
   }
 
   const src=video.currentSrc || video.src ||
@@ -210,10 +211,16 @@ object BrowserVideoDiscovery {
     ? posts.find(article => [...article.querySelectorAll('a[href*="/status/"]')]
         .some(link => link.getAttribute('href')?.includes('/status/' + isStatus[1])))
     : null;
-  const detailPost = matchingPost || (isStatus ? posts[0] : null);
+  // Never borrow the first feed article when the current post is not found.
+  const detailPost = matchingPost;
   const dataFor = (article) => {
     if (!article) return {text:'', url:''};
-    const text = article.querySelector('[data-testid="tweetText"]')?.innerText || '';
+    const candidate = article.querySelector(
+      '[data-testid="tweetText"],[data-testid="media-caption"],' +
+      '[data-testid="video-caption"],[data-testid="videoDescription"]'
+    );
+    const text = candidate?.innerText?.trim() ||
+      candidate?.textContent?.trim() || '';
     const link = article.querySelector('time')?.closest('a[href*="/status/"]') ||
       article.querySelector('a[href*="/status/"]');
     return {text: text.slice(0, 1000), url: link?.href || ''};
@@ -231,7 +238,9 @@ object BrowserVideoDiscovery {
         rect.bottom <= 0 || rect.top >= innerHeight) continue;
     const raw = video.currentSrc || video.src ||
       video.querySelector('source')?.src || '';
-    const article = video.closest('article') || detailPost;
+    // Only pair a detached player with the route post when it is the sole clip.
+    const article = video.closest('article') ||
+      (detailPost && document.querySelectorAll('video').length===1 ? detailPost : null);
     const post = dataFor(article);
     const thumb = video.poster ||
       (article && [...article.querySelectorAll('img[src*="twimg.com"]')]
