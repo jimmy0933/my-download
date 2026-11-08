@@ -390,7 +390,7 @@ fun DownloadSettingsScreen(
                     }
                 )
                 Text(
-                    "新版進度條會在左側顯示播放、右側顯示暫停，並顯示已播放時間與總長度。",
+                    "新版進度條左側只有一顆播放／暫停切換鈕，會依影片狀態切換圖示，並顯示已播放時間與總長度。",
                     color = Color(0xFF9CAFC0), style = MaterialTheme.typography.bodySmall
                 )
                 if (xDisplayOptions.hideNativeXVideoProgress &&
