@@ -127,8 +127,9 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
       }
       return button;
     };
-    const play=control('▶','播放影片');
-    const pause=control('❚❚','暫停影片');
+    // A single toggle always stays on the LEFT. Its icon and accessible
+    // label follow the media's actual paused/playing state.
+    const toggle=control('▶','播放影片');
     const middle=document.createElement('div');
     Object.assign(middle.style,{
       flex:'1 1 auto',minWidth:'0',display:'flex',
@@ -170,14 +171,14 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
     });
     line.appendChild(fill);zone.appendChild(line);
     middle.appendChild(clocks);middle.appendChild(zone);
-    root.appendChild(play);root.appendChild(middle);root.appendChild(pause);
+    root.appendChild(toggle);root.appendChild(middle);
     // Stay above X's author/content portal. X mounts its video UI under
     // #layers; placing our controls at the end of that layer avoids
     // underlying profile links intercepting taps.
     (document.getElementById('layers')||document.body||
       document.documentElement).appendChild(root);
     state.root=root;state.zone=zone;state.line=line;state.fill=fill;
-    state.playButton=play;state.pauseButton=pause;
+    state.playButton=toggle;state.pauseButton=null;
     state.elapsedNode=elapsedNode;state.durationNode=durationNode;
     state.lastFraction=-1;
 
@@ -201,13 +202,13 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
       }catch(_){}
       state.updateClock?.();
     };
-    play.addEventListener('click',event=>{
+    toggle.addEventListener('click',event=>{
       event.preventDefault();event.stopPropagation();
-      setPlayback(true);
-    });
-    pause.addEventListener('click',event=>{
-      event.preventDefault();event.stopPropagation();
-      setPlayback(false);
+      const video=state.video;
+      if(!video)return;
+      // Derive intent at tap time from the active video, never from a cached
+      // icon, so external X playback/pauses remain in sync.
+      setPlayback(video.paused);
     });
 
     const setTime=event=>{
@@ -285,9 +286,17 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
     const duration=clock(video.duration);
     if(state.elapsedNode.nodeValue!==elapsed)state.elapsedNode.nodeValue=elapsed;
     if(state.durationNode.nodeValue!==duration)state.durationNode.nodeValue=duration;
-    if(state.playButton&&state.pauseButton){
-      state.playButton.style.opacity=video.paused?'1':'.73';
-      state.pauseButton.style.opacity=video.paused?'.73':'1';
+    if(state.playButton){
+      const paused=!!video.paused;
+      const nextIcon=paused?'▶':'❚❚';
+      const nextLabel=paused?'播放影片':'暫停影片';
+      if(state.playButton.textContent!==nextIcon)
+        state.playButton.textContent=nextIcon;
+      if(state.playButton.getAttribute('aria-label')!==nextLabel){
+        state.playButton.setAttribute('aria-label',nextLabel);
+        state.playButton.title=nextLabel;
+      }
+      state.playButton.style.opacity='1';
     }
   };
   const videoEvents=[
