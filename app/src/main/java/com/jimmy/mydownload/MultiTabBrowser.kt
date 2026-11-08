@@ -504,7 +504,10 @@ private fun xDisplayScript(options: XDisplayOptions): String {
         options.hideVideoBelowProgressDetails,
         options.hideViewerViews, options.hideViewerShare
     ).joinToString(",") { it.toString() }
-    return X_DISPLAY_SCRIPT.replace("__FLAGS__", flags)
+    // Optional seekbar options are separate from the X cosmetic CSS.
+    // Neither switch is enabled by default. No video DOM reparenting.
+    return X_DISPLAY_SCRIPT.replace("__FLAGS__", flags) +
+        ";\n" + xVideoProgressScript(options)
 }
 
 /**
