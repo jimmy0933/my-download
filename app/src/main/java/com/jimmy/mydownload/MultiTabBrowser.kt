@@ -385,6 +385,71 @@ private val X_DISPLAY_SCRIPT = """
     }
   }
 
+  // The full-screen / vertical X viewer uses its own bottom action strip.
+  // Keep these two opt-in switches independent of the ordinary tweet controls.
+  // Only the individual view-count and share actions are marked, never a
+  // player/container node, video, seek bar, or gesture surface.
+  const viewerViewAttribute = 'data-mydownload-hide-viewer-views';
+  const viewerShareAttribute = 'data-mydownload-hide-viewer-share';
+  const nextViewNodes = new Set();
+  const nextShareNodes = new Set();
+  const viewerActionScope = immersiveRoot || modalRoot;
+  const viewerParent = viewerActionScope?.parentElement;
+  const videoActionRoot = visibleVideos.length ?
+    visibleVideos[0].closest('article[data-testid="tweet"]') : null;
+  const actionIsInViewer = el => {
+    if (viewerActionScope?.contains(el)) return true;
+    if (viewerParent && viewerParent !== document.body &&
+        viewerParent !== document.documentElement &&
+        viewerParent.contains(el)) return true;
+    if (modalRoot && el.closest('#layers')) return true;
+    if (mediaRoute && videoActionRoot?.contains(el)) return true;
+    // X sometimes renders its action strip in a separate portal. Its
+    // fullscreen viewer must still be open and the control near the bottom.
+    return !!(immersiveRoot && el.closest('#layers'));
+  };
+  const markViewerAction = (candidate, attribute, next) => {
+    const el = candidate.closest('button,[role="button"],a[href]') || candidate;
+    if (el.closest('nav,[role="navigation"]') ||
+        el.querySelector('video') ||
+        el.querySelector('[data-testid="videoPlayer"]')) return;
+    const r = el.getBoundingClientRect();
+    if (r.width < 12 || r.height < 10 ||
+        r.width > Math.max(210,innerWidth*0.58) || r.height > 88 ||
+        r.top < innerHeight*0.63 || r.bottom > innerHeight+12 ||
+        r.left < -8 || r.right > innerWidth+12) return;
+    if (!actionIsInViewer(el)) return;
+    el.setAttribute(attribute,'1');
+    next.add(el);
+  };
+  if (playingViewer && (flags[16] || flags[17])) {
+    if (flags[16]) {
+      document.querySelectorAll(
+        '[data-testid="impressions"],[data-testid="analyticsButton"],' +
+        '[data-testid="analytics"],[data-testid="viewCount"],' +
+        'a[href$="/analytics"],a[href*="/analytics?"],' +
+        '[aria-label*="views" i],[aria-label*="觀看次數"],' +
+        '[aria-label*="次觀看"],[aria-label*="瀏覽次數"],' +
+        '[title*="views" i]'
+      ).forEach(el=>markViewerAction(el,viewerViewAttribute,nextViewNodes));
+    }
+    if (flags[17]) {
+      document.querySelectorAll(
+        '[data-testid="share"],[data-testid*="shareButton" i],' +
+        'button[aria-label*="share" i],button[aria-label*="分享"],' +
+        '[role="button"][aria-label*="share" i],' +
+        '[role="button"][aria-label*="分享"],' +
+        'svg[data-testid*="share" i]'
+      ).forEach(el=>markViewerAction(el,viewerShareAttribute,nextShareNodes));
+    }
+  }
+  for (const el of document.querySelectorAll(
+    '['+viewerViewAttribute+'],['+viewerShareAttribute+']'
+  )) {
+    if (!nextViewNodes.has(el)) el.removeAttribute(viewerViewAttribute);
+    if (!nextShareNodes.has(el)) el.removeAttribute(viewerShareAttribute);
+  }
+
   const playbackScope = '['+scopeAttr+'="1"]';
   const detailSelectors = [
     '[data-testid="tweetText"]',
@@ -420,7 +485,9 @@ private val X_DISPLAY_SCRIPT = """
   const css = selectors.join(',\n') + ' { display: none !important; }' +
     (mobileButtons.length ?
       '\n@media (max-width: 900px) { ' + mobileButtons.join(',\n') +
-      ' { display: none !important; } }' : '');
+      ' { display: none !important; } }' : '') +
+    '\n['+viewerViewAttribute+'="1"],['+viewerShareAttribute+'="1"]' +
+    ' { visibility: hidden !important; pointer-events: none !important; }';
   if (style.textContent !== css) style.textContent = css;
 })()
 """.trimIndent()
@@ -434,7 +501,8 @@ private fun xDisplayScript(options: XDisplayOptions): String {
         options.hideBottomGrok, options.hideBottomChat,
         options.hideBottomNotifications, options.hideBottomShare,
         options.hideVideoPlaybackText, options.hideVideoPlaybackTitle,
-        options.hideVideoBelowProgressDetails
+        options.hideVideoBelowProgressDetails,
+        options.hideViewerViews, options.hideViewerShare
     ).joinToString(",") { it.toString() }
     return X_DISPLAY_SCRIPT.replace("__FLAGS__", flags)
 }
