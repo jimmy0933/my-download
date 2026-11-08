@@ -9,7 +9,8 @@ package com.jimmy.mydownload
  */
 internal fun xVideoProgressScript(options: XDisplayOptions): String {
     val settings = "{hideNative:" + options.hideNativeXVideoProgress +
-        ",showCustom:" + options.showCustomXVideoProgress + "}"
+        ",showCustom:" + options.showCustomXVideoProgress +
+        ",hideAuthor:" + options.hideViewerAuthorShortcut + "}"
     return X_OPTIONAL_VIDEO_PROGRESS_SCRIPT.replace("__SETTINGS__", settings)
 }
 
@@ -20,15 +21,19 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
   const settings = __SETTINGS__;
   // Fully opt-in: with both switches off, leave X's DOM and playback
   // rendering unchanged. Previously saved overlay settings are not reused.
-  if (!settings.hideNative && !settings.showCustom &&
+  if (!settings.hideNative && !settings.showCustom && !settings.hideAuthor &&
       !window.__mydownloadOptionalXSeek) return 'untouched-native';
   const state = window.__mydownloadOptionalXSeek ||
     (window.__mydownloadOptionalXSeek = {
       root:null,zone:null,line:null,fill:null,video:null,seekVideo:null,
-      seeking:false,pointerId:null,oldTracks:new Set(),lastFraction:-1,
-      observer:null,refresh:null,busy:false
+      playButton:null,pauseButton:null,elapsedNode:null,durationNode:null,
+      seeking:false,pointerId:null,oldTracks:new Set(),authorLinks:new Set(),
+      lastFraction:-1,observer:null,refresh:null,busy:false,
+      boundVideo:null,boundListener:null,settings:null
     });
 
+  state.settings=settings;
+  state.authorLinks=state.authorLinks||new Set();
   const cssId='mydownload-optional-native-seek-css';
   if (!document.getElementById(cssId)) {
     const style=document.createElement('style');
@@ -53,6 +58,11 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
         opacity:0 !important;
         pointer-events:none !important;
       }
+      html[data-mydownload-hide-x-author="1"]
+      [data-mydownload-x-author-shortcut="1"] {
+        opacity:0 !important;
+        pointer-events:none !important;
+      }
     `;
     (document.head || document.documentElement).appendChild(style);
   }
@@ -67,15 +77,57 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
 
   const create=()=>{
     if (state.root?.isConnected) return;
-    // A narrow fixed bar with no filter, transform, video overlay or
-    // full-screen background: only the 30px seek zone handles touches.
+    // Only a narrow control strip receives touches; the rest of the
+    // WebView, video surface and X's vertical swipe carousel are untouched.
     const root=document.createElement('div');
     root.id='mydownload-optional-x-progress';
     Object.assign(root.style,{
-      position:'fixed',left:'14px',right:'14px',
-      bottom:'68px',height:'30px',zIndex:'2147482000',
-      display:'none',pointerEvents:'none',background:'transparent'
+      position:'fixed',left:'12px',right:'12px',
+      bottom:'68px',height:'56px',zIndex:'2147482000',
+      display:'none',alignItems:'center',gap:'7px',
+      pointerEvents:'none',background:'transparent',
+      boxSizing:'border-box'
     });
+    const control=(text,label)=>{
+      const button=document.createElement('button');
+      button.type='button';
+      button.textContent=text;
+      button.setAttribute('aria-label',label);
+      button.title=label;
+      Object.assign(button.style,{
+        flex:'0 0 38px',width:'38px',height:'38px',
+        border:'1px solid rgba(215,235,242,.35)',borderRadius:'22px',
+        background:'rgba(9,20,33,.82)',color:'#f0ffff',
+        fontSize:'19px',fontWeight:'700',padding:'0',
+        display:'flex',alignItems:'center',justifyContent:'center',
+        cursor:'pointer',pointerEvents:'auto',touchAction:'manipulation'
+      });
+      // Don't dispatch control taps into the site's fullscreen/author UI.
+      for(const type of ['pointerdown','pointerup','click']){
+        button.addEventListener(type,event=>event.stopPropagation());
+      }
+      return button;
+    };
+    const play=control('▶','播放影片');
+    const pause=control('❚❚','暫停影片');
+    const middle=document.createElement('div');
+    Object.assign(middle.style,{
+      flex:'1 1 auto',minWidth:'0',display:'flex',
+      flexDirection:'column',justifyContent:'center',gap:'3px'
+    });
+    const clocks=document.createElement('div');
+    Object.assign(clocks.style,{
+      display:'flex',justifyContent:'space-between',
+      color:'#f1fbff',fontSize:'12px',fontFamily:'system-ui,sans-serif',
+      lineHeight:'16px',textShadow:'0 1px 3px rgba(0,0,0,.85)',
+      fontVariantNumeric:'tabular-nums',pointerEvents:'none'
+    });
+    const elapsed=document.createElement('span');
+    const duration=document.createElement('span');
+    const elapsedNode=document.createTextNode('0:00');
+    const durationNode=document.createTextNode('--:--');
+    elapsed.appendChild(elapsedNode);duration.appendChild(durationNode);
+    clocks.appendChild(elapsed);clocks.appendChild(duration);
     const zone=document.createElement('div');
     zone.setAttribute('role','slider');
     zone.setAttribute('aria-label','自訂影片播放進度');
@@ -84,7 +136,7 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
     zone.setAttribute('aria-valuenow','0');
     zone.tabIndex=0;
     Object.assign(zone.style,{
-      height:'30px',width:'100%',display:'flex',alignItems:'center',
+      height:'27px',width:'100%',display:'flex',alignItems:'center',
       touchAction:'none',pointerEvents:'auto',cursor:'pointer'
     });
     const line=document.createElement('div');
@@ -97,10 +149,27 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
       height:'100%',width:'0%',background:'#27DBB3',
       borderRadius:'5px'
     });
-    line.appendChild(fill);zone.appendChild(line);root.appendChild(zone);
+    line.appendChild(fill);zone.appendChild(line);
+    middle.appendChild(clocks);middle.appendChild(zone);
+    root.appendChild(play);root.appendChild(middle);root.appendChild(pause);
     (document.body||document.documentElement).appendChild(root);
     state.root=root;state.zone=zone;state.line=line;state.fill=fill;
+    state.playButton=play;state.pauseButton=pause;
+    state.elapsedNode=elapsedNode;state.durationNode=durationNode;
     state.lastFraction=-1;
+
+    play.addEventListener('click',()=>{
+      const video=state.video;
+      if(!video)return;
+      try{video.play()?.catch?.(()=>{});}catch(_){}
+      state.updateClock?.();
+    });
+    pause.addEventListener('click',()=>{
+      const video=state.video;
+      if(!video)return;
+      try{video.pause();}catch(_){}
+      state.updateClock?.();
+    });
 
     const setTime=event=>{
       const v=state.seekVideo;
@@ -116,6 +185,7 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
       }
       try { v.currentTime=target; } catch (_) {}
       state.updateProgress(fraction);
+      state.updateClock?.();
     };
     zone.addEventListener('pointerdown',event=>{
       const v=state.video;
@@ -135,6 +205,7 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
       if (event.type==='pointerup') setTime(event);
       try { zone.releasePointerCapture(event.pointerId); } catch (_) {}
       state.seeking=false;state.seekVideo=null;state.pointerId=null;
+      state.updateClock?.();
     };
     zone.addEventListener('pointerup',finish);
     zone.addEventListener('pointercancel',finish);
@@ -157,6 +228,52 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
       state.zone.setAttribute('aria-valuenow',String(Math.round(100*safe)));
       state.lastFraction=safe;
     }
+  };
+
+  // Use existing <video> media events to update time without timers, video
+  // reloads or WebView polling. Text node changes don't trigger childList.
+  const clock=seconds=>{
+    if(!Number.isFinite(seconds)||seconds<0)return '--:--';
+    const n=Math.floor(seconds);
+    const h=Math.floor(n/3600),m=Math.floor(n%3600/60),sec=n%60;
+    const pad=v=>String(v).padStart(2,'0');
+    return h>0?h+':'+pad(m)+':'+pad(sec):m+':'+pad(sec);
+  };
+  state.updateClock=()=>{
+    const video=state.video;
+    if(!video||!state.elapsedNode||!state.durationNode)return;
+    const elapsed=clock(video.currentTime);
+    const duration=clock(video.duration);
+    if(state.elapsedNode.nodeValue!==elapsed)state.elapsedNode.nodeValue=elapsed;
+    if(state.durationNode.nodeValue!==duration)state.durationNode.nodeValue=duration;
+    if(state.playButton&&state.pauseButton){
+      state.playButton.style.opacity=video.paused?'1':'.73';
+      state.pauseButton.style.opacity=video.paused?'.73':'1';
+    }
+  };
+  const videoEvents=[
+    'timeupdate','durationchange','loadedmetadata','seeking','seeked',
+    'play','pause','playing','ended'
+  ];
+  const bindVideo=video=>{
+    if(state.boundVideo===video)return;
+    if(state.boundVideo&&state.boundListener){
+      for(const name of videoEvents){
+        state.boundVideo.removeEventListener(name,state.boundListener);
+      }
+    }
+    state.boundVideo=video;
+    if(!video)return;
+    if(!state.boundListener){
+      state.boundListener=()=>{
+        const active=state.video;
+        if(!active)return;
+        state.updateClock?.();
+        if(!state.seeking&&Number.isFinite(active.duration)&&active.duration>0)
+          state.updateProgress(active.currentTime/active.duration);
+      };
+    }
+    for(const name of videoEvents)video.addEventListener(name,state.boundListener);
   };
 
   const currentVideo=()=>{
@@ -259,15 +376,62 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
     }
   };
 
+  // Hide only the profile shortcut link in X's active video viewer.
+  // A valid X profile URL has one path segment (@handle), unlike status links.
+  // Geometry limits removal to a small clickable target near the custom bar.
+  const clearAuthor=()=>{
+    for(const el of state.authorLinks){
+      if(el.isConnected)el.removeAttribute('data-mydownload-x-author-shortcut');
+    }
+    state.authorLinks.clear();
+    document.documentElement.removeAttribute('data-mydownload-hide-x-author');
+  };
+  const markAuthor=video=>{
+    if(!video||!settings.hideAuthor)return;
+    const viewer=video.closest(
+      '[data-testid="vss-scroll-view"],[data-testid="immersive-viewer"],' +
+      '#layers [role="dialog"]');
+    if(!viewer)return; // Never modify links in the ordinary tweet feed.
+    for(const el of state.authorLinks){
+      if(!el.isConnected)state.authorLinks.delete(el);
+    }
+    const bottom=innerWidth>innerHeight?24:68;
+    const barTop=innerHeight-bottom-56;
+    const minY=Math.max(innerHeight*.45,barTop-115);
+    for(const a of viewer.querySelectorAll('a[href]')){
+      if(a.closest('#mydownload-optional-x-progress'))continue;
+      if(a.querySelector('video,button,[role="button"]'))continue;
+      let target;
+      try{target=new URL(a.getAttribute('href'),location.href);}catch(_){continue;}
+      if(target.hostname!==location.hostname)continue;
+      if(!/^\/[A-Za-z0-9_]{1,15}\/?$/.test(target.pathname))continue;
+      const handle=target.pathname.slice(1).replace(/\/$/,'').toLowerCase();
+      if(/^(home|explore|search|notifications|messages|compose|settings|i|grok|login)$/.test(handle))continue;
+      const r=a.getBoundingClientRect();
+      if(r.width<12||r.width>Math.min(225,innerWidth*.55)||
+         r.height<12||r.height>88||r.left<0||r.left>innerWidth*.55||
+         r.top<minY||r.top>innerHeight-7||r.bottom>innerHeight+5)continue;
+      a.setAttribute('data-mydownload-x-author-shortcut','1');
+      state.authorLinks.add(a);
+    }
+  };
+
   // Markers and observer are active only while the user enables the option.
   // Set the root flag immediately, even before loadedmetadata, so X's next
   // seekbar is hidden by the persistent CSS on its very first paint.
   if (settings.hideNative) {
     document.documentElement.setAttribute('data-mydownload-hide-x-timeline','1');
   } else {
+    clearNative();
+  }
+  if(settings.hideAuthor){
+    document.documentElement.setAttribute('data-mydownload-hide-x-author','1');
+  } else {
+    clearAuthor();
+  }
+  if(!settings.hideNative&&!settings.hideAuthor){
     state.observer?.disconnect();
     state.observer=null;
-    clearNative();
   }
 
   state.refresh=()=>{
@@ -278,17 +442,20 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
       const playable=video && Number.isFinite(video.duration) &&
         video.duration>0 && video.readyState>=1;
       if (settings.hideNative && video) hideNativeTracks(video);
+      if (settings.hideAuthor && video) markAuthor(video);
       if (!settings.showCustom || !playable) {
         if (state.root) state.root.style.display='none';
-        state.video=null;
+        state.video=null;bindVideo(null);
         state.seeking=false;state.seekVideo=null;
         return 'native-only';
       }
       create();
       state.video=video;
+      bindVideo(video);
       state.root.style.bottom=(innerWidth>innerHeight?'24px':'68px');
-      state.root.style.display='block';
+      state.root.style.display='flex';
       if (!state.seeking) state.updateProgress(video.currentTime/video.duration);
+      state.updateClock();
       return 'custom-visible';
     } finally {
       state.busy=false;
@@ -299,10 +466,10 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
   // A MutationObserver runs at the DOM microtask checkpoint, before paint,
   // unlike the browser's existing 950ms refresh. Observe only structural
   // changes, and never touch the video or controls container.
-  if (settings.hideNative && !state.observer) {
+  if ((settings.hideNative || settings.hideAuthor) && !state.observer) {
     state.observer=new MutationObserver(mutations=>{
-      if (!settings.hideNative || !mutations.some(m=>
-          m.addedNodes.length || m.removedNodes.length)) return;
+      if (!(state.settings?.hideNative || state.settings?.hideAuthor) ||
+          !mutations.some(m=>m.addedNodes.length||m.removedNodes.length))return;
       state.refresh?.();
     });
     state.observer.observe(document.documentElement,{
