@@ -595,25 +595,42 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
   };
 
   const currentVideo=()=>{
-    const immersive=document.querySelector(
-      '[data-testid="vss-scroll-view"],[data-testid="immersive-viewer"]');
-    const dialog=document.querySelector(
-      '#layers [role="dialog"]:has(video,[data-testid="videoPlayer"])');
     const fullscreen=!!window.__mydownloadVideoFullscreen?.enabled;
     const videoRoute=/\/status\/\d+\/(?:video|photo)\/\d+\/?$/.test(location.pathname) ||
       /^\/i\/status\/\d+\/?$/.test(location.pathname);
-    if (!immersive && !dialog && !fullscreen && !videoRoute) return null;
+
+    // The X home/search/profile feeds have autoplay video thumbnails.
+    // An offscreen or hidden React viewer must not make those thumbnails
+    // eligible for the global custom timeline/playback controls.
+    const viewers=Array.from(document.querySelectorAll(
+      '[data-testid="vss-scroll-view"],[data-testid="immersive-viewer"],' +
+      '#layers [role="dialog"]:has(video,[data-testid="videoPlayer"])'
+    )).filter(root=>{
+      if(root.closest('[aria-hidden="true"],[inert]'))return false;
+      const r=root.getBoundingClientRect();
+      if(r.width<120||r.height<120||r.right<=0||r.bottom<=0||
+         r.left>=innerWidth||r.top>=innerHeight)return false;
+      const css=getComputedStyle(root);
+      return css.display!=='none'&&css.visibility!=='hidden';
+    });
+    if(!viewers.length && !fullscreen && !videoRoute)return null;
+
     const cx=innerWidth/2,cy=innerHeight/2;
     let winner=null,rank=-Infinity;
-    for (const v of document.querySelectorAll('video')) {
+    for(const v of document.querySelectorAll('video')){
+      // On a feed URL, accept videos ONLY inside the currently visible
+      // immersive/dialog viewer. Do not select a feed autoplay thumbnail
+      // even if React has mounted an unrelated viewer elsewhere.
+      if(!fullscreen&&!videoRoute && !viewers.some(root=>root.contains(v)))
+        continue;
       const r=v.getBoundingClientRect();
       const visW=Math.max(0,Math.min(r.right,innerWidth)-Math.max(r.left,0));
       const visH=Math.max(0,Math.min(r.bottom,innerHeight)-Math.max(r.top,0));
-      if (visW<110||visH<65) continue;
+      if(visW<110||visH<65)continue;
       const centered=cx>=r.left&&cx<=r.right&&cy>=r.top&&cy<=r.bottom;
       const score=(centered?1e6:0)+visW*visH-
         Math.abs((r.top+r.bottom)/2-cy)*200;
-      if (score>rank){winner=v;rank=score;}
+      if(score>rank){winner=v;rank=score;}
     }
     return winner;
   };
@@ -842,7 +859,13 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
       const video=currentVideo();
       const playable=video && Number.isFinite(video.duration) &&
         video.duration>0 && video.readyState>=1;
-      if (settings.hideNative && video) hideNativeTracks(video);
+      // On X list pages, keep both the native and custom timeline as X
+      // originally renders them. Never leave a stale hidden native track
+      // marked from a previously opened viewer.
+      if (!video) {
+        if (settings.hideNative) clearNative();
+        clearAuthor();
+      } else if (settings.hideNative) hideNativeTracks(video);
       if (settings.hideAuthor && video) markAuthor(video);
       const videoChanged=state.overlayVideo!==video;
       if(videoChanged){
