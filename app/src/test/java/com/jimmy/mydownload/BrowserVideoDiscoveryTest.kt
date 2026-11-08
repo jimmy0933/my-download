@@ -13,6 +13,20 @@ class BrowserVideoDiscoveryTest {
         assertFalse(BrowserVideoDiscovery.isXPage("https://example.org/"))
     }
 
+    @Test fun hiddenXCaptionsRemainAvailableToBothDiscoveryPaths() {
+        // CSS display:none makes innerText empty but leaves textContent intact.
+        assertTrue(BrowserVideoDiscovery.ACTIVE_VIDEO_SCAN_SCRIPT
+            .contains("candidate?.textContent?.trim()"))
+        assertTrue(BrowserVideoDiscovery.SCAN_SCRIPT
+            .contains("candidate?.textContent?.trim()"))
+    }
+
+    @Test fun XScanNeverBorrowsAnUnrelatedFirstFeedPost() {
+        assertFalse(BrowserVideoDiscovery.SCAN_SCRIPT.contains("posts[0]"))
+        assertTrue(BrowserVideoDiscovery.ACTIVE_VIDEO_SCAN_SCRIPT
+            .contains("node.querySelectorAll('video').length>1"))
+    }
+
     @Test fun onlyDirectVideoFilesOrHlsPlaylistsAreDownloadCandidates() {
         assertEquals("mp4", BrowserVideoDiscovery.kind(
             "https://video.twimg.com/ext_tw_video/123/pu/vid/avc1/1280x720/abc.mp4?tag=10"))
