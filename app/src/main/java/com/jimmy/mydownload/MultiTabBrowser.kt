@@ -922,6 +922,32 @@ private val X_LANDSCAPE_CAROUSEL_SCRIPT = """
 private fun xImmersiveFitScript(enabled: Boolean): String =
     X_LANDSCAPE_CAROUSEL_SCRIPT.replace("__ENABLED__", enabled.toString())
 
+/**
+ * Detect an open X immersive/media viewer without treating every video card
+ * on the /home feed as a viewer. Read-only: do not navigate, alter layout or
+ * touch video playback.
+ */
+private val X_VIDEO_VIEWER_DOWNLOAD_VISIBILITY_SCRIPT = """
+(() => {
+  if (!/^(?:www\.)?(?:x\.com|twitter\.com)$/.test(location.hostname))
+    return false;
+  const viewers=document.querySelectorAll(
+    '[data-testid="vss-scroll-view"],[data-testid="immersive-viewer"],' +
+    '#layers [role="dialog"]:has(video,[data-testid="videoPlayer"])'
+  );
+  return Array.from(viewers).some(root=>{
+    const r=root.getBoundingClientRect();
+    if(r.width<120||r.height<120||r.right<=0||r.bottom<=0||
+       r.left>=innerWidth||r.top>=innerHeight)return false;
+    return Array.from(root.querySelectorAll('video')).some(video=>{
+      const v=video.getBoundingClientRect();
+      return v.width>=120&&v.height>=75&&v.right>0&&v.bottom>0&&
+        v.left<innerWidth&&v.top<innerHeight;
+    });
+  });
+})()
+""".trimIndent()
+
 private val X_VIDEO_DOUBLE_TAP_SEEK_SCRIPT = """
 (() => {
   if (!/^(?:www\.)?(?:x\.com|twitter\.com)$/.test(location.hostname)) return;
@@ -1144,6 +1170,8 @@ fun MultiTabBrowser(
     val context = LocalContext.current
     val density = LocalDensity.current
     var browserVideoFullscreen by remember { mutableStateOf(false) }
+    // A video in the X home feed does not mean the immersive viewer is open.
+    var xImmersiveViewerOpen by remember { mutableStateOf(false) }
     val currentDownload by rememberUpdatedState(onDownload)
     val currentDetectedVideos by rememberUpdatedState(onDetectedVideos)
     val currentDownloads by rememberUpdatedState(onDownloads)
@@ -1752,6 +1780,7 @@ fun MultiTabBrowser(
     }
 
     LaunchedEffect(selected.id, selected.url) {
+        xImmersiveViewerOpen = false
         // Keep the address bar in sync without clearing media on each gallery swipe.
         // updateUrl() and selectTab() already reset the scan for real navigation.
         addressInput = if (selected.url == BrowserAddress.BLANK_TAB) "" else selected.url
@@ -1785,12 +1814,24 @@ fun MultiTabBrowser(
                         if (activeId == checkedId) scanResults = decodeVideoPositions(result)
                     }
                 } else scanResults = VideoPositions()
+                if (!BrowserVideoDiscovery.isXPage(selected.url)) {
+                    xImmersiveViewerOpen = false
+                }
                 // Dynamic X pages reuse the document while navigating posts.
                 // Reinstate CSS if React recreates its head or mobile navigation.
                 if (BrowserVideoDiscovery.isXPage(selected.url)) {
                     browser.evaluateJavascript(xDisplayScript(currentXOptions), null)
                     browser.evaluateJavascript(X_MEDIA_PINCH_ZOOM_SCRIPT, null)
                     browser.evaluateJavascript(X_VIDEO_DOUBLE_TAP_SEEK_SCRIPT, null)
+                    // A React video card on /home must not show download.
+                    // Only a visible, open immersive viewer should do so.
+                    val checkedUrl = selected.url
+                    browser.evaluateJavascript(X_VIDEO_VIEWER_DOWNLOAD_VISIBILITY_SCRIPT) { result ->
+                        if (activeId == checkedId && selected.url == checkedUrl &&
+                            webViews[checkedId] === browser) {
+                            xImmersiveViewerOpen = result == "true"
+                        }
+                    }
                     // Native-carousel test: no card alignment or scroll repair.
                     // Cleanup runs only once per document, even with polling.
                     browser.evaluateJavascript(xImmersiveFitScript(browserVideoFullscreen), null)
@@ -2100,7 +2141,7 @@ fun MultiTabBrowser(
             // Native download badges beside each visible HTML5 video. These
             // don't modify the site's DOM or intercept taps outside the badge.
             if (visible && viewportWidth > 0 && videoElements.viewportWidth > 0f &&
-                !VideoTitle.isXStatus(selected.url)) {
+                !BrowserVideoDiscovery.isXPage(selected.url)) {
                 val ratio = viewportWidth.toFloat() / videoElements.viewportWidth
                 val badgeWidth = with(density) { 37.dp.roundToPx() }
                 val badgeHeight = with(density) { 35.dp.roundToPx() }
@@ -2129,8 +2170,9 @@ fun MultiTabBrowser(
                     }
                 }
             }
-            // A single movable download shortcut is shared by X posts, X feed
-            // video discovery, AV01 detail pages and directly-opened video URLs.
+            // A single movable shortcut is shown for an opened X media
+            // viewer/post, AV01 detail page or directly opened media URL.
+            // Do not draw downloads over the X home/profile/search feed.
             val direct = selected.url
             val directDownload = Av01BrowserLinks.isVideoLink(direct) ||
                 (BrowserAddress.isWebUrl(direct) &&
@@ -2138,7 +2180,8 @@ fun MultiTabBrowser(
                         it.endsWith(".mp4", true) || it.endsWith(".m3u8", true)
                     })
             val showXDownload = BrowserVideoDiscovery.isXPage(direct) &&
-                (VideoTitle.isXStatus(direct) || videoElements.videos.isEmpty())
+                (VideoTitle.isXStatus(direct) || browserVideoFullscreen ||
+                    xImmersiveViewerOpen)
             if (visible && (directDownload || showXDownload)) {
                 MovableDownloadButton(
                     containerWidth = viewportWidth,
