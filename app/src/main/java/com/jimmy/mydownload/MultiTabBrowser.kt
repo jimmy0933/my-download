@@ -1540,12 +1540,18 @@ fun MultiTabBrowser(
         val videoPostUrl = video?.postUrl.orEmpty()
             .takeIf { BrowserVideoDiscovery.isXPage(it) }
             ?: page
+        // Use only the caption belonging to the chosen clip. The WebView's
+        // title and a previous scan may belong to a different X post, especially
+        // just after swiping. When the caption is unavailable, use the post ID.
+        val postText = video?.postText.orEmpty().ifBlank {
+            if (video == null && !strictActive && VideoTitle.isXStatus(page))
+                videoElements.pageText
+            else ""
+        }
         val title = if (BrowserVideoDiscovery.isXPage(page)) {
             VideoTitle.preferred(
-                video?.postText.orEmpty().ifBlank {
-                    if (strictActive) "" else videoElements.pageText
-                },
-                if (strictActive) "" else selected.title,
+                postText,
+                "",
                 videoPostUrl,
                 video?.mediaId.orEmpty()
             )
