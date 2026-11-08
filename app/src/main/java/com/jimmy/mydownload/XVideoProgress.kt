@@ -33,7 +33,8 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
       boundVideo:null,boundListener:null,settings:null,
       nativeToggle:null,nativeToggleMarks:new Set(),
       barShown:false,autoHideTimer:null,autoHideDelay:null,
-      tapListenerInstalled:false,tapStart:null
+      tapListenerInstalled:false,tapStart:null,
+      bottomFadeNodes:new Set(),clearBottomFade:null,refreshBottomFade:null
     });
 
   state.settings=settings;
@@ -82,6 +83,21 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
         opacity:0 !important;
         pointer-events:none !important;
       }
+      /* Remove ONLY detected decorative dark gradients when the
+         custom progress is visible. Never hide/repaint the video,
+         fullscreen root or any control bar parent. */
+      html[data-mydownload-custom-progress-visible="1"]
+      [data-mydownload-x-bottom-fade="1"] {
+        background-image:none !important;
+        background-color:transparent !important;
+      }
+      html[data-mydownload-custom-progress-visible="1"]
+      [data-mydownload-x-bottom-fade="1"]::before,
+      html[data-mydownload-custom-progress-visible="1"]
+      [data-mydownload-x-bottom-fade="1"]::after {
+        background-image:none !important;
+        background-color:transparent !important;
+      }
     `;
     (document.head || document.documentElement).appendChild(style);
   }
@@ -92,6 +108,58 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
     }
     state.oldTracks.clear();
     document.documentElement.removeAttribute('data-mydownload-hide-x-timeline');
+  };
+
+  const fadeAttr='data-mydownload-x-bottom-fade';
+  state.bottomFadeNodes=state.bottomFadeNodes||new Set();
+  state.clearBottomFade=()=>{
+    document.documentElement.removeAttribute(
+      'data-mydownload-custom-progress-visible');
+    for(const node of state.bottomFadeNodes){
+      if(node.isConnected)node.removeAttribute(fadeAttr);
+    }
+    state.bottomFadeNodes.clear();
+  };
+  state.refreshBottomFade=()=>{
+    const video=state.video;
+    if(!video||!state.barShown||!state.settings?.showCustom)return;
+    // The bright video itself and its ancestors are NEVER modified.
+    const viewer=video.closest(
+      '[data-testid="vss-scroll-view"],[data-testid="immersive-viewer"],' +
+      '#layers [role="dialog"]');
+    if(!viewer)return;
+    const vr=video.getBoundingClientRect();
+    if(vr.width<120||vr.height<90)return;
+    document.documentElement.setAttribute(
+      'data-mydownload-custom-progress-visible','1');
+    let examined=0;
+    for(const node of viewer.querySelectorAll('div,section,aside')){
+      if(++examined>1200)break;
+      if(node===video||node.contains(video) ||
+         node.contains(state.root) ||
+         node.closest('#mydownload-optional-x-progress'))continue;
+      if(node.querySelector('video,canvas'))continue;
+      const r=node.getBoundingClientRect();
+      if(r.width<innerWidth*.62||r.height<30||
+         r.height>innerHeight*.44 ||
+         r.top<innerHeight*.48||r.bottom<innerHeight*.73||
+         r.left>innerWidth*.26||r.right<innerWidth*.74)continue;
+      const darkGradient=css=>{
+        const bg=css?.backgroundImage||'';
+        return /gradient\(/i.test(bg) &&
+          /rgba?\(\s*0\s*,\s*0\s*,\s*0|#0{3,8}\b|#111\b/i.test(bg);
+      };
+      let isFade=darkGradient(getComputedStyle(node));
+      if(!isFade){
+        try{
+          isFade=darkGradient(getComputedStyle(node,'::before')) ||
+            darkGradient(getComputedStyle(node,'::after'));
+        }catch(_){}
+      }
+      if(!isFade)continue;
+      node.setAttribute(fadeAttr,'1');
+      state.bottomFadeNodes.add(node);
+    }
   };
 
   const cancelHideTimer=()=>{
@@ -106,6 +174,7 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
     cancelHideTimer();
     state.barShown=true;
     state.root.style.display='flex';
+    state.refreshBottomFade?.();
     const seconds=Math.max(0,Math.min(30,
       Math.round(Number(state.settings.autoHideSeconds)||0)));
     // A seek drag can last longer than the timer. Only start counting when
@@ -117,6 +186,7 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
             state.root?.isConnected){
           state.root.style.display='none';
           state.barShown=false;
+          state.clearBottomFade?.();
         }
       },seconds*1000);
     }
@@ -202,7 +272,7 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
       Object.assign(button.style,{
         flex:'0 0 38px',width:'38px',height:'38px',
         border:'1px solid rgba(215,235,242,.35)',borderRadius:'22px',
-        background:'rgba(9,20,33,.92)',color:'#f0ffff',
+        background:'rgba(9,20,33,.68)',color:'#f0ffff',
         fontSize:'19px',fontWeight:'700',padding:'0',
         display:'flex',alignItems:'center',justifyContent:'center',
         appearance:'none',WebkitAppearance:'none',
@@ -672,6 +742,7 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
         state.barShown=false;
         state.autoHideDelay=null;
         clearNativeToggle();
+        state.clearBottomFade?.();
         if (state.root) state.root.style.display='none';
         state.video=null;bindVideo(null);
         state.seeking=false;state.seekVideo=null;
@@ -689,7 +760,13 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
       state.root.style.bottom=(innerWidth>innerHeight?'24px':'68px');
       // Do NOT force display:flex during routine React/950ms refresh.
       // Otherwise the bar would reappear immediately after auto hiding.
-      if(created||videoChanged||delayChanged)state.revealBar?.();
+      if(created||videoChanged||delayChanged){
+        state.clearBottomFade?.();
+        state.revealBar?.();
+      } else if(state.barShown && state.bottomFadeNodes.size===0){
+        // X can mount its decorative fade after the video has started.
+        state.refreshBottomFade?.();
+      }
       locateNativeToggle(video);
       if (!state.seeking) state.updateProgress(video.currentTime/video.duration);
       state.updateClock();
