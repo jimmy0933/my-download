@@ -11,6 +11,9 @@ internal fun xVideoProgressScript(options: XDisplayOptions): String {
     val settings = "{hideNative:" + options.hideNativeXVideoProgress +
         ",showCustom:" + options.showCustomXVideoProgress +
         ",hideAuthor:" + options.hideViewerAuthorShortcut +
+        ",hideNativeTitle:" + (options.hideVideoPlaybackTitle ||
+            options.hideVideoBelowProgressDetails ||
+            options.showCustomXVideoProgress) +
         ",autoHideSeconds:" + options.customXProgressAutoHideSeconds.coerceIn(0, 30) + "}"
     return X_OPTIONAL_VIDEO_PROGRESS_SCRIPT.replace("__SETTINGS__", settings)
 }
@@ -23,7 +26,8 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
   // Fully opt-in: with both switches off, leave X's DOM and playback
   // rendering unchanged. Previously saved overlay settings are not reused.
   if (!settings.hideNative && !settings.showCustom && !settings.hideAuthor &&
-      !window.__mydownloadOptionalXSeek) return 'untouched-native';
+      !settings.hideNativeTitle && !window.__mydownloadOptionalXSeek)
+    return 'untouched-native';
   const state = window.__mydownloadOptionalXSeek ||
     (window.__mydownloadOptionalXSeek = {
       root:null,zone:null,line:null,fill:null,video:null,seekVideo:null,
@@ -34,7 +38,9 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
       nativeToggle:null,nativeToggleMarks:new Set(),
       barShown:false,autoHideTimer:null,autoHideDelay:null,
       tapListenerInstalled:false,tapStart:null,
-      bottomFadeNodes:new Set(),clearBottomFade:null,refreshBottomFade:null
+      bottomFadeNodes:new Set(),clearBottomFade:null,refreshBottomFade:null,
+      nativeTitleNodes:new Set(),clearNativeTitle:null,refreshNativeTitle:null,
+      overlayVideo:null
     });
 
   state.settings=settings;
@@ -83,20 +89,25 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
         opacity:0 !important;
         pointer-events:none !important;
       }
-      /* Remove ONLY detected decorative dark gradients when the
-         custom progress is visible. Never hide/repaint the video,
-         fullscreen root or any control bar parent. */
-      html[data-mydownload-custom-progress-visible="1"]
-      [data-mydownload-x-bottom-fade="1"] {
+      /* These marks are applied only inside the active X video viewer.
+         Keep controls and video untouched; remove only dark gradient paint. */
+      html[data-mydownload-simplify-x-player="1"]
+      [data-mydownload-x-bottom-fade~="bg"] {
         background-image:none !important;
-        background-color:transparent !important;
       }
-      html[data-mydownload-custom-progress-visible="1"]
-      [data-mydownload-x-bottom-fade="1"]::before,
-      html[data-mydownload-custom-progress-visible="1"]
-      [data-mydownload-x-bottom-fade="1"]::after {
+      html[data-mydownload-simplify-x-player="1"]
+      [data-mydownload-x-bottom-fade~="before"]::before {
         background-image:none !important;
-        background-color:transparent !important;
+      }
+      html[data-mydownload-simplify-x-player="1"]
+      [data-mydownload-x-bottom-fade~="after"]::after {
+        background-image:none !important;
+      }
+      html[data-mydownload-hide-x-native-title="1"]
+      [data-mydownload-x-native-title="1"] {
+        opacity:0 !important;
+        visibility:hidden !important;
+        pointer-events:none !important;
       }
     `;
     (document.head || document.documentElement).appendChild(style);
@@ -111,54 +122,151 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
   };
 
   const fadeAttr='data-mydownload-x-bottom-fade';
+  const nativeTitleAttr='data-mydownload-x-native-title';
   state.bottomFadeNodes=state.bottomFadeNodes||new Set();
+  state.nativeTitleNodes=state.nativeTitleNodes||new Set();
+
+  // X moves its controls/title around on rotation and between carousel
+  // clips. Match the active visible video, never a generic feed post.
+  const activeViewer=video=>{
+    if(!video)return null;
+    const direct=video.closest(
+      '[data-testid="vss-scroll-view"],[data-testid="immersive-viewer"],' +
+      '#layers [role="dialog"]');
+    if(direct)return direct;
+    const immersive=document.querySelector(
+      '[data-testid="vss-scroll-view"],[data-testid="immersive-viewer"]');
+    if(immersive?.contains(video))return immersive;
+    const layers=document.getElementById('layers');
+    if(layers?.contains(video))return layers;
+    if(window.__mydownloadVideoFullscreen?.enabled ||
+        /\/status\/\d+\/(?:video|photo)\/\d+\/?$/.test(location.pathname)){
+      let container=video.parentElement;
+      for(let i=0;i<5&&container?.parentElement &&
+          container.parentElement!==document.body;i++)
+        container=container.parentElement;
+      return container;
+    }
+    return null;
+  };
+
   state.clearBottomFade=()=>{
-    document.documentElement.removeAttribute(
-      'data-mydownload-custom-progress-visible');
+    document.documentElement.removeAttribute('data-mydownload-simplify-x-player');
     for(const node of state.bottomFadeNodes){
       if(node.isConnected)node.removeAttribute(fadeAttr);
     }
     state.bottomFadeNodes.clear();
   };
+
+  // The old implementation restored X's gradient when the custom seekbar
+  // auto-hid, leaving the whole lower half dark. Keep fade cleanup
+  // independent of the progress bar's visibility and countdown.
   state.refreshBottomFade=()=>{
     const video=state.video;
-    if(!video||!state.barShown||!state.settings?.showCustom)return;
-    // The bright video itself and its ancestors are NEVER modified.
-    const viewer=video.closest(
-      '[data-testid="vss-scroll-view"],[data-testid="immersive-viewer"],' +
-      '#layers [role="dialog"]');
+    if(!video||!state.settings?.showCustom){
+      state.clearBottomFade?.();return;
+    }
+    const viewer=activeViewer(video);
     if(!viewer)return;
     const vr=video.getBoundingClientRect();
     if(vr.width<120||vr.height<90)return;
-    document.documentElement.setAttribute(
-      'data-mydownload-custom-progress-visible','1');
+    document.documentElement.setAttribute('data-mydownload-simplify-x-player','1');
+    const darkGradient=css=>{
+      const image=css?.backgroundImage||'';
+      if(!/gradient\(/i.test(image)||/url\(/i.test(image))return false;
+      return /rgba?\(\s*0\s*[, ]\s*0\s*[, ]\s*0\b|#000\b|#000000\b|#111\b|#111111\b/i.test(image) ||
+        /rgb\(\s*0\s+0\s+0\s*\//i.test(image);
+    };
     let examined=0;
     for(const node of viewer.querySelectorAll('div,section,aside')){
-      if(++examined>1200)break;
-      if(node===video||node.contains(video) ||
-         node.contains(state.root) ||
+      if(++examined>1800)break;
+      if(node===video||node===state.root ||
          node.closest('#mydownload-optional-x-progress'))continue;
-      if(node.querySelector('video,canvas'))continue;
+      // A gradient can cover most of the video in landscape, not just the
+      // last 44%. Only remove the paint, never hide/reposition the element.
       const r=node.getBoundingClientRect();
-      if(r.width<innerWidth*.62||r.height<30||
-         r.height>innerHeight*.44 ||
-         r.top<innerHeight*.48||r.bottom<innerHeight*.73||
-         r.left>innerWidth*.26||r.right<innerWidth*.74)continue;
-      const darkGradient=css=>{
-        const bg=css?.backgroundImage||'';
-        return /gradient\(/i.test(bg) &&
-          /rgba?\(\s*0\s*,\s*0\s*,\s*0|#0{3,8}\b|#111\b/i.test(bg);
-      };
-      let isFade=darkGradient(getComputedStyle(node));
-      if(!isFade){
-        try{
-          isFade=darkGradient(getComputedStyle(node,'::before')) ||
-            darkGradient(getComputedStyle(node,'::after'));
-        }catch(_){}
+      if(r.width<innerWidth*.54||r.height<32 ||
+         r.height>innerHeight*1.1 ||
+         r.top>innerHeight*.78||r.bottom<innerHeight*.72||
+         r.left>innerWidth*.40||r.right<innerWidth*.60)continue;
+      if(node.hasAttribute(fadeAttr)){
+        state.bottomFadeNodes.add(node);continue;
       }
-      if(!isFade)continue;
-      node.setAttribute(fadeAttr,'1');
+      const hasMedia=node.contains(video)||!!node.querySelector('video,canvas');
+      let modes=[];
+      if(!hasMedia&&darkGradient(getComputedStyle(node)))modes.push('bg');
+      try{
+        if(darkGradient(getComputedStyle(node,'::before')))modes.push('before');
+        if(darkGradient(getComputedStyle(node,'::after')))modes.push('after');
+      }catch(_){}
+      if(!modes.length)continue;
+      node.setAttribute(fadeAttr,modes.join(' '));
       state.bottomFadeNodes.add(node);
+    }
+    for(const node of state.bottomFadeNodes){
+      if(!node.isConnected){
+        state.bottomFadeNodes.delete(node);
+      }
+    }
+  };
+
+  state.clearNativeTitle=()=>{
+    document.documentElement.removeAttribute(
+      'data-mydownload-hide-x-native-title');
+    for(const node of state.nativeTitleNodes){
+      if(node.isConnected)node.removeAttribute(nativeTitleAttr);
+    }
+    state.nativeTitleNodes.clear();
+  };
+
+  state.refreshNativeTitle=()=>{
+    const video=state.video;
+    if(!video||!state.settings?.hideNativeTitle){
+      state.clearNativeTitle?.();return;
+    }
+    const viewer=activeViewer(video);
+    if(!viewer)return;
+    document.documentElement.setAttribute(
+      'data-mydownload-hide-x-native-title','1');
+    const vr=video.getBoundingClientRect();
+    // "來自 〈creator〉" is X's transient native video attribution.
+    // Match the small left-side badge, NOT generic tweet text/author cards.
+    let visited=0;
+    for(const leaf of viewer.querySelectorAll('span,div,p,small')){
+      if(++visited>3200)break;
+      if(leaf.childElementCount>0 ||
+          leaf.closest('#mydownload-optional-x-progress'))continue;
+      const value=(leaf.textContent||'').trim().replace(/\s+/g,' ');
+      if(!/^(來自|来自|From:?|來自 .{1,75}|来自 .{1,75}|From:?\s+.{1,75})$/i.test(value))
+        continue;
+      const r=leaf.getBoundingClientRect();
+      if(r.width<5||r.height<8||r.height>85||
+         r.left<0||r.left>innerWidth*.44 ||
+         r.top<Math.max(vr.top,innerHeight*.16)||
+         r.bottom>Math.min(innerHeight-8,vr.bottom+35))continue;
+      let candidate=leaf;
+      // Climb only through the compact attribution row, so the black
+      // profile badge disappears with the "來自" label.
+      for(let depth=0;depth<4;depth++){
+        const parent=candidate.parentElement;
+        if(!parent||parent===viewer||parent.contains(video)||
+           parent.contains(state.root)||
+           parent.querySelector('video,canvas,button,[role="button"]'))
+          break;
+        const p=parent.getBoundingClientRect();
+        const txt=(parent.textContent||'').trim();
+        if(p.width>innerWidth*.64||p.height>90 ||
+           p.left<0||p.left>innerWidth*.44||
+           p.top<vr.top-10||p.bottom>innerHeight+5||txt.length>110)
+          break;
+        candidate=parent;
+      }
+      if(candidate.hasAttribute(nativeTitleAttr))continue;
+      candidate.setAttribute(nativeTitleAttr,'1');
+      state.nativeTitleNodes.add(candidate);
+    }
+    for(const node of state.nativeTitleNodes){
+      if(!node.isConnected)state.nativeTitleNodes.delete(node);
     }
   };
 
@@ -174,7 +282,6 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
     cancelHideTimer();
     state.barShown=true;
     state.root.style.display='flex';
-    state.refreshBottomFade?.();
     const seconds=Math.max(0,Math.min(30,
       Math.round(Number(state.settings.autoHideSeconds)||0)));
     // A seek drag can last longer than the timer. Only start counting when
@@ -186,7 +293,6 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
             state.root?.isConnected){
           state.root.style.display='none';
           state.barShown=false;
-          state.clearBottomFade?.();
         }
       },seconds*1000);
     }
@@ -723,7 +829,8 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
   } else {
     clearAuthor();
   }
-  if(!settings.hideNative&&!settings.hideAuthor&&!settings.showCustom){
+  if(!settings.hideNative&&!settings.hideAuthor&&!settings.showCustom &&
+      !settings.hideNativeTitle){
     state.observer?.disconnect();
     state.observer=null;
   }
@@ -737,6 +844,19 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
         video.duration>0 && video.readyState>=1;
       if (settings.hideNative && video) hideNativeTracks(video);
       if (settings.hideAuthor && video) markAuthor(video);
+      const videoChanged=state.overlayVideo!==video;
+      if(videoChanged){
+        state.clearBottomFade?.();
+        state.clearNativeTitle?.();
+        state.overlayVideo=video;
+      }
+      // Native title and X's gradient are independent of our bar timer.
+      // The page must look clean even when the new progress auto-hides.
+      state.video=video;
+      if(settings.hideNativeTitle && video)state.refreshNativeTitle?.();
+      else state.clearNativeTitle?.();
+      if(settings.showCustom && video)state.refreshBottomFade?.();
+      else state.clearBottomFade?.();
       if (!settings.showCustom || !playable) {
         cancelHideTimer();
         state.barShown=false;
@@ -749,7 +869,7 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
         return 'native-only';
       }
       const created=!state.root?.isConnected;
-      const videoChanged=state.video!==video;
+      const progressVideoChanged=state.boundVideo!==video;
       const delay=Math.max(0,Math.min(30,
         Math.round(Number(settings.autoHideSeconds)||0)));
       const delayChanged=state.autoHideDelay!==delay;
@@ -760,13 +880,7 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
       state.root.style.bottom=(innerWidth>innerHeight?'24px':'68px');
       // Do NOT force display:flex during routine React/950ms refresh.
       // Otherwise the bar would reappear immediately after auto hiding.
-      if(created||videoChanged||delayChanged){
-        state.clearBottomFade?.();
-        state.revealBar?.();
-      } else if(state.barShown && state.bottomFadeNodes.size===0){
-        // X can mount its decorative fade after the video has started.
-        state.refreshBottomFade?.();
-      }
+      if(created||progressVideoChanged||delayChanged)state.revealBar?.();
       locateNativeToggle(video);
       if (!state.seeking) state.updateProgress(video.currentTime/video.duration);
       state.updateClock();
@@ -780,10 +894,11 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
   // A MutationObserver runs at the DOM microtask checkpoint, before paint,
   // unlike the browser's existing 950ms refresh. Observe only structural
   // changes, and never touch the video or controls container.
-  if ((settings.hideNative || settings.hideAuthor || settings.showCustom) && !state.observer) {
+  if ((settings.hideNative || settings.hideAuthor || settings.showCustom ||
+       settings.hideNativeTitle) && !state.observer) {
     state.observer=new MutationObserver(mutations=>{
       if (!(state.settings?.hideNative || state.settings?.hideAuthor ||
-            state.settings?.showCustom) ||
+            state.settings?.showCustom || state.settings?.hideNativeTitle) ||
           !mutations.some(m=>m.addedNodes.length||m.removedNodes.length))return;
       state.refresh?.();
     });
