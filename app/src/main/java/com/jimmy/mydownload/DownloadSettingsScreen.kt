@@ -381,6 +381,39 @@ fun DownloadSettingsScreen(
                         onXDisplayChange(xDisplayOptions.copy(showCustomXVideoProgress = it))
                     }
                 )
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("新版進度條自動隱藏時間", fontWeight = FontWeight.Medium)
+                        Text(
+                            if (xDisplayOptions.customXProgressAutoHideSeconds == 0)
+                                "不自動隱藏"
+                            else "${xDisplayOptions.customXProgressAutoHideSeconds} 秒",
+                            color = Color(0xFF27DBB3), fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                    Slider(
+                        value = xDisplayOptions.customXProgressAutoHideSeconds.toFloat(),
+                        onValueChange = { seconds ->
+                            onXDisplayChange(xDisplayOptions.copy(
+                                customXProgressAutoHideSeconds = seconds.roundToInt()
+                                    .coerceIn(0, 30)
+                            ))
+                        },
+                        valueRange = 0f..30f,
+                        steps = 29,
+                        enabled = xDisplayOptions.showCustomXVideoProgress,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Text(
+                        "0 秒＝持續顯示；可選 1～30 秒。隱藏後單點影片畫面會再次顯示，拖曳時不會消失。",
+                        color = Color(0xFF9CAFC0),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                )
                 XVisibilitySetting(
                     title = "隱藏進度條旁的作者頁按鈕",
                     description = "隱藏 X 影片播放畫面左下方可誤觸的作者個人頁快捷鈕，保留影片及其他操作。",
