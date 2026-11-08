@@ -18,6 +18,10 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
   if (!/^(?:www\.)?(?:x\.com|twitter\.com)$/.test(location.hostname)) return 'not-x';
 
   const settings = __SETTINGS__;
+  // Fully opt-in: with both switches off, leave X's DOM and playback
+  // rendering unchanged. Previously saved overlay settings are not reused.
+  if (!settings.hideNative && !settings.showCustom &&
+      !window.__mydownloadOptionalXSeek) return 'untouched-native';
   const state = window.__mydownloadOptionalXSeek ||
     (window.__mydownloadOptionalXSeek = {
       root:null,zone:null,line:null,fill:null,video:null,seekVideo:null,
