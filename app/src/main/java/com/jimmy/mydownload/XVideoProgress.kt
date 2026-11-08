@@ -10,7 +10,8 @@ package com.jimmy.mydownload
 internal fun xVideoProgressScript(options: XDisplayOptions): String {
     val settings = "{hideNative:" + options.hideNativeXVideoProgress +
         ",showCustom:" + options.showCustomXVideoProgress +
-        ",hideAuthor:" + options.hideViewerAuthorShortcut + "}"
+        ",hideAuthor:" + options.hideViewerAuthorShortcut +
+        ",autoHideSeconds:" + options.customXProgressAutoHideSeconds.coerceIn(0, 30) + "}"
     return X_OPTIONAL_VIDEO_PROGRESS_SCRIPT.replace("__SETTINGS__", settings)
 }
 
@@ -30,7 +31,9 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
       seeking:false,pointerId:null,oldTracks:new Set(),authorLinks:new Set(),
       lastFraction:-1,observer:null,refresh:null,busy:false,
       boundVideo:null,boundListener:null,settings:null,
-      nativeToggle:null,nativeToggleMarks:new Set()
+      nativeToggle:null,nativeToggleMarks:new Set(),
+      barShown:false,autoHideTimer:null,autoHideDelay:null,
+      tapListenerInstalled:false,tapStart:null
     });
 
   state.settings=settings;
@@ -90,6 +93,92 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
     state.oldTracks.clear();
     document.documentElement.removeAttribute('data-mydownload-hide-x-timeline');
   };
+
+  const cancelHideTimer=()=>{
+    if(state.autoHideTimer!==null){
+      clearTimeout(state.autoHideTimer);
+      state.autoHideTimer=null;
+    }
+  };
+  state.revealBar=()=>{
+    if(!state.root?.isConnected || !state.video ||
+        !state.settings?.showCustom)return;
+    cancelHideTimer();
+    state.barShown=true;
+    state.root.style.display='flex';
+    const seconds=Math.max(0,Math.min(30,
+      Math.round(Number(state.settings.autoHideSeconds)||0)));
+    // A seek drag can last longer than the timer. Only start counting when
+    // the finger is released, not during pointer capture.
+    if(seconds>0&&!state.seeking){
+      state.autoHideTimer=setTimeout(()=>{
+        state.autoHideTimer=null;
+        if(!state.seeking&&state.barShown&&state.settings?.showCustom &&
+            state.root?.isConnected){
+          state.root.style.display='none';
+          state.barShown=false;
+        }
+      },seconds*1000);
+    }
+  };
+
+  // Once per document: a short SINGLE tap in the currently visible video
+  // reveals our controls. Never cancel X's touch event or its swipe gestures,
+  // and never confuse a swipe, pinch or download button press with a tap.
+  if(!state.tapListenerInstalled){
+    state.tapListenerInstalled=true;
+    document.addEventListener('touchstart',event=>{
+      state.tapStart=null;
+      if(!state.settings?.showCustom||!state.video ||
+         event.touches.length!==1)return;
+      const t=event.touches[0];
+      state.tapStart={x:t.clientX,y:t.clientY,time:performance.now(),
+        video:state.video};
+    },{capture:true,passive:true});
+    document.addEventListener('touchmove',event=>{
+      const start=state.tapStart;
+      if(!start)return;
+      if(event.touches.length!==1){
+        state.tapStart=null;return;
+      }
+      const t=event.touches[0];
+      if(Math.hypot(start.x-t.clientX,start.y-t.clientY)>18)
+        state.tapStart=null;
+    },{capture:true,passive:true});
+    document.addEventListener('touchend',event=>{
+      const start=state.tapStart;
+      state.tapStart=null;
+      if(!start || !state.settings?.showCustom ||
+         event.touches.length!==0 || event.changedTouches.length!==1 ||
+         start.video!==state.video)return;
+      const t=event.changedTouches[0];
+      if(performance.now()-start.time>340 ||
+         Math.hypot(start.x-t.clientX,start.y-t.clientY)>18)return;
+      const target=event.target;
+      if(target instanceof Element&&target.closest(
+        '#mydownload-optional-x-progress,a[href],input,'+
+        'button,[data-testid="share"],[data-testid="like"]'))return;
+      const r=state.video.getBoundingClientRect();
+      if(t.clientX<r.left||t.clientX>r.right||
+         t.clientY<r.top||t.clientY>r.bottom)return;
+      state.revealBar?.();
+    },{capture:true,passive:true});
+    document.addEventListener('touchcancel',()=>{
+      state.tapStart=null;
+    },{capture:true,passive:true});
+    // Pointer/mouse support when running in WebView with a pointing device.
+    document.addEventListener('click',event=>{
+      if(!state.settings?.showCustom || !state.video ||
+         event.detail===0)return;
+      const target=event.target;
+      if(target instanceof Element&&target.closest(
+        '#mydownload-optional-x-progress,a[href],input,button'))return;
+      const r=state.video.getBoundingClientRect();
+      if(event.clientX>=r.left&&event.clientX<=r.right&&
+         event.clientY>=r.top&&event.clientY<=r.bottom)
+        state.revealBar?.();
+    },{capture:true,passive:true});
+  }
 
   const create=()=>{
     if (state.root?.isConnected) return;
@@ -181,6 +270,7 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
     state.playButton=toggle;state.pauseButton=null;
     state.elapsedNode=elapsedNode;state.durationNode=durationNode;
     state.lastFraction=-1;
+    state.barShown=false;
 
     // X sometimes keeps its own React-controlled play state. Dispatch the
     // equivalent action through X's original toggle (hidden visually but
@@ -209,6 +299,7 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
       // Derive intent at tap time from the active video, never from a cached
       // icon, so external X playback/pauses remain in sync.
       setPlayback(video.paused);
+      state.revealBar?.();
     });
 
     const setTime=event=>{
@@ -232,6 +323,7 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
       if (!v || !Number.isFinite(v.duration) || v.duration<=0) return;
       event.preventDefault();event.stopPropagation();
       state.seeking=true;state.seekVideo=v;state.pointerId=event.pointerId;
+      state.revealBar?.();
       try { zone.setPointerCapture(event.pointerId); } catch (_) {}
       setTime(event);
     });
@@ -246,6 +338,7 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
       try { zone.releasePointerCapture(event.pointerId); } catch (_) {}
       state.seeking=false;state.seekVideo=null;state.pointerId=null;
       state.updateClock?.();
+      state.revealBar?.();
     };
     zone.addEventListener('pointerup',finish);
     zone.addEventListener('pointercancel',finish);
@@ -257,6 +350,7 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
       event.preventDefault();event.stopPropagation();
       try { v.currentTime=Math.max(0,Math.min(v.duration,v.currentTime+step)); }
       catch (_) {}
+      state.revealBar?.();
     });
   };
 
@@ -574,21 +668,32 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
       if (settings.hideNative && video) hideNativeTracks(video);
       if (settings.hideAuthor && video) markAuthor(video);
       if (!settings.showCustom || !playable) {
+        cancelHideTimer();
+        state.barShown=false;
+        state.autoHideDelay=null;
         clearNativeToggle();
         if (state.root) state.root.style.display='none';
         state.video=null;bindVideo(null);
         state.seeking=false;state.seekVideo=null;
         return 'native-only';
       }
+      const created=!state.root?.isConnected;
+      const videoChanged=state.video!==video;
+      const delay=Math.max(0,Math.min(30,
+        Math.round(Number(settings.autoHideSeconds)||0)));
+      const delayChanged=state.autoHideDelay!==delay;
       create();
       state.video=video;
+      state.autoHideDelay=delay;
       bindVideo(video);
       state.root.style.bottom=(innerWidth>innerHeight?'24px':'68px');
-      state.root.style.display='flex';
+      // Do NOT force display:flex during routine React/950ms refresh.
+      // Otherwise the bar would reappear immediately after auto hiding.
+      if(created||videoChanged||delayChanged)state.revealBar?.();
       locateNativeToggle(video);
       if (!state.seeking) state.updateProgress(video.currentTime/video.duration);
       state.updateClock();
-      return 'custom-visible';
+      return state.barShown?'custom-visible':'custom-auto-hidden';
     } finally {
       state.busy=false;
     }
