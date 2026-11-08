@@ -8,6 +8,7 @@ import android.os.Message
 import android.view.View
 import android.view.ScaleGestureDetector
 import android.view.ViewGroup
+import android.view.ViewTreeObserver
 import android.webkit.CookieManager
 import android.webkit.DownloadListener
 import android.webkit.WebChromeClient
@@ -62,6 +63,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -71,6 +73,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogWindowProvider
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -1742,19 +1745,39 @@ fun MultiTabBrowser(
         }
     }
 
-    // Hide system bars only while playing in fullscreen, restore them on exit.
-    DisposableEffect(context, browserVideoFullscreen, fullscreenView) {
+    // Enter immersive mode on the ACTIVITY window (our in-place X fullscreen
+    // keeps the same WebView). Re-apply when window focus returns, because
+    // Android/OEM navigation controls may reappear after a transient window.
+    // Do not manipulate the video element or its layout.
+    val immersiveMode = visible && (browserVideoFullscreen || fullscreenView != null)
+    DisposableEffect(context, immersiveMode) {
         val window = (context as? Activity)?.window
-        val controller = window?.let { WindowCompat.getInsetsController(it, it.decorView) }
-        if (browserVideoFullscreen || fullscreenView != null) {
-            controller?.hide(WindowInsetsCompat.Type.systemBars())
-            controller?.systemBarsBehavior =
-                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        } else controller?.show(WindowInsetsCompat.Type.systemBars())
-        onDispose {
-            if (browserVideoFullscreen || fullscreenView != null) {
-                controller?.show(WindowInsetsCompat.Type.systemBars())
+        if (immersiveMode && window != null) {
+            val decor = window.decorView
+            val controller = WindowCompat.getInsetsController(window, decor)
+            fun hideBars() {
+                controller.systemBarsBehavior =
+                    WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                controller.hide(WindowInsetsCompat.Type.systemBars())
             }
+            hideBars()
+            val focusListener = ViewTreeObserver.OnWindowFocusChangeListener { hasFocus ->
+                if (hasFocus) hideBars()
+            }
+            val observer = decor.viewTreeObserver
+            observer.addOnWindowFocusChangeListener(focusListener)
+            // A WebView fullscreen transition can run before Android finishes
+            // attaching/insetting the window. Apply once more on the next frame.
+            decor.post { if (decor.hasWindowFocus() && decor.isAttachedToWindow) hideBars() }
+            onDispose {
+                if (observer.isAlive) observer.removeOnWindowFocusChangeListener(focusListener)
+                WindowCompat.getInsetsController(window, decor)
+                    .show(WindowInsetsCompat.Type.systemBars())
+            }
+        } else {
+            // No show() here: an old effect is responsible for restoring bars,
+            // and normal browsing must not force any other system UI changes.
+            onDispose { }
         }
     }
 
@@ -2322,8 +2345,44 @@ fun MultiTabBrowser(
     if (fullscreenView != null) {
         Dialog(
             onDismissRequest = { currentWebView()?.webChromeClient?.onHideCustomView() },
-            properties = DialogProperties(usePlatformDefaultWidth = false)
+            properties = DialogProperties(
+                usePlatformDefaultWidth = false,
+                decorFitsSystemWindows = false
+            )
         ) {
+            // HTML5 fullscreen opens a separate Android Dialog window. Hiding
+            // the Activity bars alone never hides that window's navigation bar.
+            var ancestor = LocalView.current.parent
+            while (ancestor != null && ancestor !is DialogWindowProvider) {
+                ancestor = ancestor.parent
+            }
+            val dialogWindow = (ancestor as? DialogWindowProvider)?.window
+            DisposableEffect(dialogWindow) {
+                if (dialogWindow != null) {
+                    val decor = dialogWindow.decorView
+                    val controller = WindowCompat.getInsetsController(dialogWindow, decor)
+                    fun hideDialogBars() {
+                        controller.systemBarsBehavior =
+                            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                        controller.hide(WindowInsetsCompat.Type.systemBars())
+                    }
+                    hideDialogBars()
+                    val observer = decor.viewTreeObserver
+                    val focusListener = ViewTreeObserver.OnWindowFocusChangeListener { hasFocus ->
+                        if (hasFocus) hideDialogBars()
+                    }
+                    observer.addOnWindowFocusChangeListener(focusListener)
+                    decor.post {
+                        if (decor.hasWindowFocus() && decor.isAttachedToWindow) hideDialogBars()
+                    }
+                    onDispose {
+                        if (observer.isAlive) {
+                            observer.removeOnWindowFocusChangeListener(focusListener)
+                        }
+                        controller.show(WindowInsetsCompat.Type.systemBars())
+                    }
+                } else onDispose { }
+            }
             val shown = fullscreenView
             if (shown != null) {
                 var fullscreenWidth by remember { mutableIntStateOf(0) }
