@@ -381,6 +381,18 @@ fun DownloadSettingsScreen(
                         onXDisplayChange(xDisplayOptions.copy(showCustomXVideoProgress = it))
                     }
                 )
+                XVisibilitySetting(
+                    title = "隱藏進度條旁的作者頁按鈕",
+                    description = "隱藏 X 影片播放畫面左下方可誤觸的作者個人頁快捷鈕，保留影片及其他操作。",
+                    hidden = xDisplayOptions.hideViewerAuthorShortcut,
+                    onHiddenChange = {
+                        onXDisplayChange(xDisplayOptions.copy(hideViewerAuthorShortcut = it))
+                    }
+                )
+                Text(
+                    "新版進度條會在左側顯示播放、右側顯示暫停，並顯示已播放時間與總長度。",
+                    color = Color(0xFF9CAFC0), style = MaterialTheme.typography.bodySmall
+                )
                 if (xDisplayOptions.hideNativeXVideoProgress &&
                     !xDisplayOptions.showCustomXVideoProgress) {
                     Text(
