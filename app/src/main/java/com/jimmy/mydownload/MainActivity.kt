@@ -8,8 +8,10 @@ import android.os.Build
 import android.provider.DocumentsContract
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -421,71 +423,109 @@ fun RootScreen(shared: String) {
                         }
                     )
                 }
-            }
-        }
 
-        if (selectedLink != null) {
-            ModalBottomSheet(
-                onDismissRequest = { selectedLink = null },
-                containerColor = Panel
-            ) {
-                Column(
-                    Modifier.fillMaxWidth().heightIn(max = 640.dp)
-                        .verticalScroll(androidx.compose.foundation.rememberScrollState())
-                        .padding(start = 20.dp, end = 20.dp, bottom = 30.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    // Show only actionable, validated download options.
-                    // Technical source URLs, media IDs and failed probe logs stay
-                    // out of the picker; they are not useful when choosing quality.
-                    if (resolving) {
-                        LinearProgressIndicator(Modifier.fillMaxWidth())
-                    } else if (choices.isEmpty()) {
-                        Text(
-                            if (resolveError.isNotBlank()) "目前沒有可下載項目"
-                            else "沒有找到可下載項目",
-                            color = Soft, style = MaterialTheme.typography.bodyMedium
-                        )
-                        OutlinedButton(onClick = {
-                            if (candidateSources.isNotEmpty())
-                                showDetectedChoices(candidateSources)
-                            else selectedLink?.let { showDownload(it) }
-                        }) { Text("重新偵測") }
-                    }
-                    choices.forEach { stream ->
-                        Card(
-                            onClick = {
-                                runCatching {
-                                    startDownload(context, stream)
-                                    selectedLink = null
-                                }.onSuccess {
-                                    scope.launch { snackbar.showSnackbar("已加入下載：" + stream.label) }
-                                }.onFailure {
-                                    scope.launch {
-                                        snackbar.showSnackbar(it.message ?: "無法開始下載")
-                                    }
-                                }
-                            },
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFF23384B))
+                // Keep the picker in the SAME Compose window and OVER the
+                // existing browser box. ModalBottomSheet creates a separate
+                // window and can change focus/insets while X's vertically
+                // snapped video carousel is playing, briefly showing another
+                // clip until the sheet closes. No WebView is resized or reloaded.
+                if (selectedLink != null) {
+                    BackHandler { selectedLink = null }
+
+                    // A sibling overlay preserves the browser's exact
+                    // constraints and blocks touches from reaching X.
+                    Box(
+                        Modifier.fillMaxSize()
+                            .background(Color(0xA6000000))
+                            .clickable { selectedLink = null }
+                    )
+
+                    Surface(
+                        modifier = Modifier.align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null
+                            ) { /* Consume taps on empty sheet space. */ },
+                        color = Panel,
+                        shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp),
+                        shadowElevation = 18.dp
+                    ) {
+                        Column(
+                            Modifier.fillMaxWidth().heightIn(max = 640.dp)
+                                .verticalScroll(androidx.compose.foundation.rememberScrollState())
+                                .padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 30.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
                             Row(
-                                Modifier.fillMaxWidth().padding(16.dp),
+                                Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    stream.label,
-                                    color = Green,
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f)
+                                    "選擇下載畫質",
+                                    modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
                                 )
-                                Spacer(Modifier.width(12.dp))
-                                Icon(Icons.Default.Download, "下載此畫質", tint = Green)
+                                TextButton(onClick = { selectedLink = null }) {
+                                    Text("關閉")
+                                }
+                            }
+
+                            // Keep the original download-resolution logic and
+                            // validation; change only how its picker is shown.
+                            if (resolving) {
+                                LinearProgressIndicator(Modifier.fillMaxWidth())
+                            } else if (choices.isEmpty()) {
+                                Text(
+                                    if (resolveError.isNotBlank()) "目前沒有可下載項目"
+                                    else "沒有找到可下載項目",
+                                    color = Soft, style = MaterialTheme.typography.bodyMedium
+                                )
+                                OutlinedButton(onClick = {
+                                    if (candidateSources.isNotEmpty())
+                                        showDetectedChoices(candidateSources)
+                                    else selectedLink?.let { showDownload(it) }
+                                }) { Text("重新偵測") }
+                            }
+
+                            choices.forEach { stream ->
+                                Card(
+                                    onClick = {
+                                        runCatching {
+                                            startDownload(context, stream)
+                                            selectedLink = null
+                                        }.onSuccess {
+                                            scope.launch {
+                                                snackbar.showSnackbar("已加入下載：" + stream.label)
+                                            }
+                                        }.onFailure {
+                                            scope.launch {
+                                                snackbar.showSnackbar(it.message ?: "無法開始下載")
+                                            }
+                                        }
+                                    },
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = Color(0xFF23384B)
+                                    )
+                                ) {
+                                    Row(
+                                        Modifier.fillMaxWidth().padding(16.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            stream.label, color = Green,
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        Spacer(Modifier.width(12.dp))
+                                        Icon(Icons.Default.Download, "下載此畫質", tint = Green)
+                                    }
+                                }
                             }
                         }
                     }
-
                 }
             }
         }
