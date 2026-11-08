@@ -413,7 +413,7 @@ fun DownloadSettingsScreen(
                         color = Color(0xFF9CAFC0),
                         style = MaterialTheme.typography.bodySmall
                     )
-                )
+                }
                 XVisibilitySetting(
                     title = "隱藏進度條旁的作者頁按鈕",
                     description = "隱藏 X 影片播放畫面左下方可誤觸的作者個人頁快捷鈕，保留影片及其他操作。",
