@@ -29,7 +29,8 @@ data class XDisplayOptions(
     val hideViewerShare: Boolean = false,
     val hideNativeXVideoProgress: Boolean = false,
     val showCustomXVideoProgress: Boolean = false,
-    val hideViewerAuthorShortcut: Boolean = false
+    val hideViewerAuthorShortcut: Boolean = false,
+    val customXProgressAutoHideSeconds: Int = 0
 )
 
 /**
@@ -76,6 +77,7 @@ object DownloadSettings {
     private const val X_HIDE_NATIVE_VIDEO_PROGRESS = "x_hide_native_video_progress_v2"
     private const val X_SHOW_CUSTOM_VIDEO_PROGRESS = "x_show_custom_video_progress_v2"
     private const val X_HIDE_VIEWER_AUTHOR_SHORTCUT = "x_hide_viewer_author_shortcut"
+    private const val X_CUSTOM_PROGRESS_AUTO_HIDE_SECONDS = "x_custom_progress_auto_hide_seconds"
     private const val FLOAT_BUTTON_X = "floating_download_x"
     private const val FLOAT_BUTTON_Y = "floating_download_y"
     private const val FLOAT_BUTTON_OPACITY = "floating_download_opacity"
@@ -179,7 +181,8 @@ object DownloadSettings {
             hideViewerShare = prefs.getBoolean(X_HIDE_VIEWER_SHARE, false),
             hideNativeXVideoProgress = prefs.getBoolean(X_HIDE_NATIVE_VIDEO_PROGRESS, false),
             showCustomXVideoProgress = prefs.getBoolean(X_SHOW_CUSTOM_VIDEO_PROGRESS, false),
-            hideViewerAuthorShortcut = prefs.getBoolean(X_HIDE_VIEWER_AUTHOR_SHORTCUT, false)
+            hideViewerAuthorShortcut = prefs.getBoolean(X_HIDE_VIEWER_AUTHOR_SHORTCUT, false),
+            customXProgressAutoHideSeconds = prefs.getInt(X_CUSTOM_PROGRESS_AUTO_HIDE_SECONDS, 0).coerceIn(0, 30)
         )
     }
 
@@ -207,6 +210,7 @@ object DownloadSettings {
             .putBoolean(X_HIDE_NATIVE_VIDEO_PROGRESS, options.hideNativeXVideoProgress)
             .putBoolean(X_SHOW_CUSTOM_VIDEO_PROGRESS, options.showCustomXVideoProgress)
             .putBoolean(X_HIDE_VIEWER_AUTHOR_SHORTCUT, options.hideViewerAuthorShortcut)
+            .putInt(X_CUSTOM_PROGRESS_AUTO_HIDE_SECONDS, options.customXProgressAutoHideSeconds.coerceIn(0, 30))
             .apply()
     }
 
