@@ -795,33 +795,38 @@ private val X_LANDSCAPE_CAROUSEL_SCRIPT = """
   if (!/^(?:www\.)?(?:x\.com|twitter\.com)$/.test(location.hostname))
     return 'not-x';
 
-  // X owns the carousel, the scroll animation and the cards' actual height.
-  // Our old min-height + mandatory scroll-snap overrides were recalculated
-  // during portrait -> landscape and could snap past multiple videos.
   const state=window.__mydownloadLandscapeCarousel ||
     (window.__mydownloadLandscapeCarousel={});
-  // Legacy mandatory snap/min-height CSS must be removed only once.
-  // Clearing current layout rules every 950ms caused repeated reflow.
-  if (!state.legacyAttributesCleaned) {
-    const oldTrack='data-mydownload-landscape-track';
-    const oldScroll='data-mydownload-landscape-scroll';
-    state.track?.removeAttribute(oldTrack);
-    state.scroll?.removeAttribute(oldScroll);
-    document.getElementById('mydownload-landscape-track-css')?.remove();
-    document.querySelectorAll('['+oldTrack+'],['+oldScroll+']').forEach(el=>{
-      el.removeAttribute(oldTrack);
-      el.removeAttribute(oldScroll);
-    });
+  const trackAttr='data-mydownload-landscape-track';
+  const scrollAttr='data-mydownload-landscape-scroll';
+  const styleId='mydownload-landscape-track-css';
+
+  // The rotation-only implementation removed the original full-height
+  // carousel snap. Its replacement required 2 visible media cards, while X
+  // often virtualizes to just one. That is why the next post can remain
+  // partially above the current video after a landscape swipe.
+  if(state.repairVersion!==2){
+    for(const id of ['mydownload-landscape-fit-css',
+      'mydownload-landscape-track-css'])document.getElementById(id)?.remove();
+    state.fitTrack?.removeAttribute('data-mydownload-landscape-fit');
+    document.querySelectorAll('[data-mydownload-landscape-fit],'+
+      '[data-mydownload-landscape-track],'+
+      '[data-mydownload-landscape-scroll]').forEach(el=>{
+        el.removeAttribute('data-mydownload-landscape-fit');
+        el.removeAttribute('data-mydownload-landscape-track');
+        el.removeAttribute('data-mydownload-landscape-scroll');
+      });
+    for(const timer of state.restoreTimers||[])clearTimeout(timer);
+    clearTimeout(state.rotationTimer);
     state.track=null;
     state.scroll=null;
     state.height=0;
-    state.legacyAttributesCleaned=true;
+    state.repairVersion=2;
   }
-
-  // Clean leftovers from older, more invasive carousel fixes once per page.
-  if (!window.__mydownloadNativeCarouselCleaned) {
+  // Remove pre-native-carousel experimental styles and scroll handlers.
+  if(!window.__mydownloadNativeCarouselCleaned){
     const old=window.__mydownloadImmersiveFit;
-    if (old) {
+    if(old){
       old.active=false;
       old.gesture=null;
       old.restoreToken=(old.restoreToken||0)+1;
@@ -829,9 +834,9 @@ private val X_LANDSCAPE_CAROUSEL_SCRIPT = """
       clearTimeout(old.playbackTimer);
       clearTimeout(old.healthTimer);
       old.scrollObserver?.disconnect?.();
-      if (old.prepareRaf) cancelAnimationFrame(old.prepareRaf);
-      if (old.settleRaf) cancelAnimationFrame(old.settleRaf);
-      if (old.boundScroller) {
+      if(old.prepareRaf)cancelAnimationFrame(old.prepareRaf);
+      if(old.settleRaf)cancelAnimationFrame(old.settleRaf);
+      if(old.boundScroller){
         old.boundScroller.removeEventListener('scroll',old.scrollHandler);
         old.boundScroller.removeEventListener('scrollend',old.scrollEndHandler);
         old.boundScroller=null;
@@ -858,189 +863,183 @@ private val X_LANDSCAPE_CAROUSEL_SCRIPT = """
     window.__mydownloadNativeCarouselCleaned=true;
   }
 
-  state.enabled=__ENABLED__;
-  const isLandscape=()=>innerWidth>innerHeight;
-  const viewer=()=>{
-    const root=document.querySelector('[data-testid="vss-scroll-view"]');
-    if (!root || root.closest('[aria-hidden="true"],[inert]'))return null;
-    const r=root.getBoundingClientRect();
-    if(r.width<120||r.height<120||r.right<=0||r.bottom<=0||
-       r.left>=innerWidth||r.top>=innerHeight)return null;
-    const css=getComputedStyle(root);
-    return css.display==='none'||css.visibility==='hidden'?null:root;
+  const landscape=()=>innerWidth>innerHeight*1.12;
+  const clear=()=>{
+    state.track?.removeAttribute(trackAttr);
+    state.scroll?.removeAttribute(scrollAttr);
+    document.getElementById(styleId)?.remove();
+    state.track=null;
+    state.scroll=null;
+    state.height=0;
   };
-  const activeVideo=()=>{
-    const root=viewer();
-    if(!root)return null;
-    const rr=root.getBoundingClientRect();
-    const centerY=Math.max(rr.top,0)+Math.min(rr.height,innerHeight)/2;
-    let found=null,best=-Infinity;
-    for(const video of root.querySelectorAll('video')){
-      const r=video.getBoundingClientRect();
-      const width=Math.max(0,Math.min(r.right,rr.right,innerWidth)-
-        Math.max(r.left,rr.left,0));
-      const height=Math.max(0,Math.min(r.bottom,rr.bottom,innerHeight)-
-        Math.max(r.top,rr.top,0));
-      if(width<110||height<60)continue;
-      const middle=Math.abs((r.top+r.bottom)/2-centerY);
-      const score=width*height + (video.paused?0:100000) - middle*500;
-      if(score>best){best=score;found=video;}
-    }
-    if(!found)return null;
-    // Find the video card, not its inner controls nor the entire slide track.
-    let card=found;
-    while(card.parentElement && card.parentElement!==root){
-      const parent=card.parentElement;
-      const siblings=Array.from(parent.children).filter(el=>el!==card &&
-        el.querySelector?.('video,[data-testid^="immersive-tweet-ui-content-container"]'));
-      if(siblings.length)break;
-      card=parent;
-    }
-    if(card===root)return null;
-    const rect=card.getBoundingClientRect();
-    const href=card.querySelector?.('a[href*="/status/"]')?.getAttribute('href')||'';
-    return {root,video:found,card,href,offset:rect.top-rr.top,
-      source:found.currentSrc||found.src||''};
-  };
-
-  // X sometimes keeps the portrait-height cards after a landscape reflow.
-  // Fix only an undersized multi-card immersive track. Do not alter video,
-  // playback, touch handlers or X's native scroll-snap behavior.
-  const fitAttr='data-mydownload-landscape-fit';
-  const fitStyleId='mydownload-landscape-fit-css';
-  const clearFit=()=>{
-    state.fitTrack?.removeAttribute(fitAttr);
-    document.getElementById(fitStyleId)?.remove();
-    state.fitTrack=null;
-    state.fitHeight=0;
-  };
-  const fitLandscapeCards=()=>{
-    if(!state.enabled||!isLandscape()){
-      if(state.fitTrack)clearFit();
-      return false;
-    }
-    const root=viewer();
-    if(!root)return false;
-    const height=Math.round(root.getBoundingClientRect().height);
-    if(height<160)return false;
-    let track=root.firstElementChild;
-    let cards=null;
+  const layout=()=>{
+    const scroll=document.querySelector('[data-testid="vss-scroll-view"]');
+    if(!scroll||scroll.closest('[aria-hidden="true"],[inert]'))return null;
+    const rect=scroll.getBoundingClientRect();
+    if(rect.width<120||rect.height<150||rect.right<=0||rect.bottom<=0||
+       rect.left>=innerWidth||rect.top>=innerHeight)return null;
+    const css=getComputedStyle(scroll);
+    if(css.display==='none'||css.visibility==='hidden')return null;
+    // Find the parent of FULL carousel slides. This supports X's one-card
+    // virtualization as well as multiple visible tweet/video cards.
+    let track=scroll.firstElementChild;
+    let cards=0;
     for(let depth=0;track&&depth<7;depth++){
       const children=Array.from(track.children).filter(el=>el instanceof HTMLElement);
+      if(!children.length)return null;
       const media=children.filter(el=>el.querySelector(
         'video,[data-testid^="immersive-tweet-ui-content-container"]'));
-      if(media.length>=2){cards=media;break;}
-      if(children.length===1&&media.length===1)track=media[0];
-      else break;
+      if(media.length>1 || (media.length===1&&children.length>1)){
+        cards=media.length;break;
+      }
+      if(media.length===1&&children.length===1&&
+         media[0].querySelectorAll('video').length<=1){
+        // X only mounted the active card. Style its outer container rather
+        // than refusing to repair the carousel, as recent versions did.
+        cards=1;break;
+      }
+      if(children.length!==1)return null;
+      track=children[0];
     }
-    if(!cards||!track)return false;
-    const tooShort=cards.some(card=>
-      card.getBoundingClientRect().height<height*.90);
-    if(!tooShort && state.fitTrack!==track)return false;
-    const css='['+fitAttr+'="1"] > :has(video,'+
-      '[data-testid^="immersive-tweet-ui-content-container"]) {'+
-      'min-height:'+height+'px !important;box-sizing:border-box !important;}';
-    const unchanged=state.fitTrack===track&&state.fitHeight===height&&
-      document.getElementById(fitStyleId)?.textContent===css;
-    if(unchanged)return false;
-    if(state.fitTrack!==track)clearFit();
-    state.fitTrack=track;
-    state.fitHeight=height;
-    track.setAttribute(fitAttr,'1');
-    let style=document.getElementById(fitStyleId);
-    if(!style){
-      style=document.createElement('style');
-      style.id=fitStyleId;
-      (document.head||document.documentElement).appendChild(style);
+    if(!track||!cards)return null;
+    const height=Math.round(Math.min(rect.height||scroll.clientHeight,innerHeight));
+    return height>=150?{scroll,track,height}:null;
+  };
+  const activeCard=geometry=>{
+    if(!geometry)return null;
+    const {scroll,track}=geometry,rr=scroll.getBoundingClientRect();
+    let best=null,score=-Infinity;
+    for(const video of track.querySelectorAll('video')){
+      const r=video.getBoundingClientRect();
+      const w=Math.max(0,Math.min(r.right,rr.right,innerWidth)-
+        Math.max(r.left,rr.left,0));
+      const h=Math.max(0,Math.min(r.bottom,rr.bottom,innerHeight)-
+        Math.max(r.top,rr.top,0));
+      if(w<100||h<50)continue;
+      const rank=w*h-Math.abs((r.top+r.bottom-rr.top-rr.bottom)/2)*500+
+        (video.paused?0:20000);
+      if(rank>score){
+        let card=video;
+        while(card&&card.parentElement!==track)card=card.parentElement;
+        if(card&&card!==track){
+          score=rank;
+          best={card,video,source:video.currentSrc||video.src||''};
+        }
+      }
     }
-    style.textContent=css;
+    return best;
+  };
+  const apply=geometry=>{
+    if(!geometry){clear();return false;}
+    const {scroll,track,height}=geometry;
+    if(state.track!==track||state.scroll!==scroll){
+      clear();
+      state.track=track;
+      state.scroll=scroll;
+      track.setAttribute(trackAttr,'1');
+      scroll.setAttribute(scrollAttr,'1');
+    }
+    if(state.height===height&&document.getElementById(styleId))return false;
+    // Restore the known-working 2026-11-07 outer-card sizing and snap:
+    // no video reparenting, direct playback control or swipe interception.
+    // One stylesheet per track/size change, never per 950ms DOM scan.
+    const css='['+trackAttr+'="1"] > * {'+
+      'min-height:'+height+'px !important;'+
+      'scroll-snap-align:start !important;box-sizing:border-box !important;'+
+      '} ['+scrollAttr+'="1"] {'+
+      'scroll-snap-type:y mandatory !important;'+
+      'scroll-padding-top:0 !important;}';
+    let sheet=document.getElementById(styleId);
+    if(!sheet){
+      sheet=document.createElement('style');
+      sheet.id=styleId;
+      (document.head||document.documentElement).appendChild(sheet);
+    }
+    sheet.textContent=css;
+    state.height=height;
     return true;
   };
-
-  const cancelRestore=()=>{
-    state.pending=null;
-    for(const timer of state.restoreTimers||[])clearTimeout(timer);
-    state.restoreTimers=[];
-  };
-  const repair=()=>{
-    const pending=state.pending;
-    if(!pending||!state.enabled)return;
-    const root=viewer(),card=pending.card,video=pending.video;
-    // If X recycled the card or source, do not seek to an unknown video.
-    if(!root||!card?.isConnected||!video?.isConnected||
-       !root.contains(card)||
-       (pending.source && (video.currentSrc||video.src||'') &&
-        pending.source!==(video.currentSrc||video.src||'')))return;
-    if(pending.adjustments>=2)return;
-    const r=card.getBoundingClientRect(),v=root.getBoundingClientRect();
-    if(!Number.isFinite(root.scrollTop)||root.scrollHeight<=root.clientHeight+2)
-      return;
-    // Being on the same video does NOT mean that its card is aligned.
-    // The old early return left a slice of one post above the next post.
-    const move=r.top-v.top-Math.max(-v.height*.10,
-      Math.min(v.height*.10,pending.offset));
-    if(Math.abs(move)<Math.min(24,v.height*.05)||
-       Math.abs(move)>v.height*1.30)return;
-    // A single immediate adjustment, only when a genuine orientation
-    // change moved the old card away. No playback/URL changes, no animation.
-    const oldSnap=root.style.scrollSnapType;
-    const oldBehavior=root.style.scrollBehavior;
-    root.style.scrollSnapType='none';
-    root.style.scrollBehavior='auto';
-    root.scrollTop+=move;
-    pending.adjustments++;
+  const restoreRotatedCard=anchor=>{
+    if(!anchor?.card?.isConnected||!anchor.video?.isConnected)return;
+    const geometry=layout();
+    if(!geometry||!geometry.track.contains(anchor.card))return;
+    if(anchor.source&&(anchor.video.currentSrc||anchor.video.src||'')&&
+      anchor.source!==(anchor.video.currentSrc||anchor.video.src||''))return;
+    const {scroll}=geometry;
+    if(scroll.scrollHeight<=scroll.clientHeight+2)return;
+    const rr=scroll.getBoundingClientRect(),cr=anchor.card.getBoundingClientRect();
+    const delta=cr.top-rr.top;
+    if(Math.abs(delta)<18||Math.abs(delta)>rr.height*1.6)return;
+    // Rotation only. Never snap manually after a native user swipe.
+    const oldSnap=scroll.style.scrollSnapType,oldBehavior=scroll.style.scrollBehavior;
+    scroll.style.scrollSnapType='none';
+    scroll.style.scrollBehavior='auto';
+    scroll.scrollTop+=delta;
     requestAnimationFrame(()=>{
-      root.style.scrollSnapType=oldSnap;
-      root.style.scrollBehavior=oldBehavior;
+      scroll.style.scrollSnapType=oldSnap;
+      scroll.style.scrollBehavior=oldBehavior;
     });
   };
-  const beginRestore=()=>{
+  const scheduleRotation=()=>{
     const anchor=state.anchor;
-    cancelRestore();
-    if(!state.enabled||!anchor?.video?.isConnected)return;
-    state.pending={...anchor,adjustments:0};
-    // React can reflow after the native resize event. Restrict corrections
-    // to the short rotation transition, never normal vertical swipes.
-    state.restoreTimers=[60,170,360,620].map(delay=>setTimeout(repair,delay));
-    state.restoreTimers.push(setTimeout(()=>{
-      cancelRestore();
-      if(state.enabled)state.anchor=activeVideo()||null;
-    },760));
+    clearTimeout(state.rotationTimer);
+    state.rotating=true;
+    const token=++state.rotationToken;
+    // Wait for X/Android to settle the WebView resize before changing card
+    // heights; doing so mid-rotation caused the older "skip two clips" bug.
+    state.rotationTimer=setTimeout(()=>{
+      if(token!==state.rotationToken)return;
+      state.rotating=false;
+      if(!state.enabled||!landscape())return;
+      const geometry=layout();
+      apply(geometry);
+      if(!state.touching&&anchor){
+        requestAnimationFrame(()=>restoreRotatedCard(anchor));
+      }
+      state.anchor=activeCard(geometry);
+    },240);
   };
   const refresh=()=>{
-    const orientation=isLandscape();
-    const changed=state.orientation!==undefined&&
-      state.orientation!==orientation;
-    state.orientation=orientation;
-    // Repair actual undersized slide geometry, without the former
-    // mandatory scroll-snap rule that could skip two videos at a time.
-    const resized=fitLandscapeCards();
-    if(changed||resized)beginRestore();
-    if(!state.enabled){
-      cancelRestore();
-      state.anchor=null;
-      return;
+    const nowLandscape=landscape();
+    const didRotate=state.orientation!==undefined&&
+      state.orientation!==nowLandscape;
+    state.orientation=nowLandscape;
+    if(didRotate)scheduleRotation();
+    if(!state.enabled||!nowLandscape){
+      if(state.track)clear();
+      if(!nowLandscape)state.anchor=activeCard(layout());
+      return 'native';
     }
-    // Polling may happen during orientation. Do not replace the remembered
-    // pre-rotation video before the guarded restore has completed.
-    if(!state.pending)state.anchor=activeVideo()||state.anchor;
+    if(state.rotating)return 'rotation-pending';
+    const geometry=layout();
+    if(!geometry)return 'no-cards';
+    if(!state.touching)apply(geometry);
+    if(!state.touching)state.anchor=activeCard(geometry);
+    return 'landscape-snapped';
   };
 
-  if(!state.listenerInstalled){
-    state.listenerInstalled=true;
-    state.restoreTimers=[];
+  state.enabled=__ENABLED__;
+  if(!state.listenerInstalledV2){
+    state.listenerInstalledV2=true;
+    state.rotationToken=0;
+    state.touching=false;
     window.addEventListener('resize',()=>refresh(),{passive:true});
     window.addEventListener('orientationchange',()=>refresh(),{passive:true});
-    // Deliberate user gestures always win over the rotation guard.
-    document.addEventListener('touchstart',cancelRestore,
-      {capture:true,passive:true});
-    document.addEventListener('pointerdown',cancelRestore,
-      {capture:true,passive:true});
-    document.addEventListener('wheel',cancelRestore,
-      {capture:true,passive:true});
+    document.addEventListener('touchstart',()=>{
+      state.touching=true;
+      clearTimeout(state.touchEndTimer);
+    },{passive:true,capture:true});
+    const finishTouch=()=>{
+      clearTimeout(state.touchEndTimer);
+      state.touchEndTimer=setTimeout(()=>{
+        state.touching=false;
+        if(state.enabled&&!state.rotating&&landscape())refresh();
+      },180);
+    };
+    document.addEventListener('touchend',finishTouch,{passive:true,capture:true});
+    document.addEventListener('touchcancel',finishTouch,{passive:true,capture:true});
   }
-  refresh();
-  return 'native-carousel-rotation-guard';
+  return refresh();
 })()
 """.trimIndent()
 
