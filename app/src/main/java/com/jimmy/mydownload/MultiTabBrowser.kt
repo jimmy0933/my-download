@@ -264,11 +264,14 @@ private val X_DISPLAY_SCRIPT = """
     '[data-testid="tweet"] [data-testid="analyticsButton"]',
     '[data-testid="tweet"] [data-testid="analytics"]',
     '[data-testid="tweet"] [data-testid="viewCount"]',
-    '[data-testid="tweet"] [role="group"] > div:has(> a[href$="/analytics"])',
-    '[aria-modal="true"] [role="group"] > div:has(> a[href$="/analytics"])',
+    // Never hide an analytics parent. On X mobile that parent may also
+    // contain Like and Bookmark in the same compact action group.
     '[data-testid="tweet"] a[href$="/analytics"]'
   );
-  if (flags[3]) selectors.push('[data-testid="share"]');
+  if (flags[3]) selectors.push(
+    '[data-testid="share"]:not(:has([data-testid="like"],' +
+    '[data-testid="unlike"],[data-testid*="bookmark" i]))'
+  );
   if (flags[4]) selectors.push(
     '#layers nav:has(a[href="/home"]):has(a[href^="/notifications"])',
     '[data-testid="BottomBar"]',
@@ -317,7 +320,9 @@ private val X_DISPLAY_SCRIPT = """
   ]);
   // Photo/video viewer share controls can appear outside AppTabBar.
   if (flags[12]) selectors.push(
-    '#layers [role="dialog"]:has([data-testid="tweetPhoto"],video) [data-testid="share"]'
+    '#layers [role="dialog"]:has([data-testid="tweetPhoto"],video) ' +
+    '[data-testid="share"]:not(:has([data-testid="like"],' +
+    '[data-testid="unlike"],[data-testid*="bookmark" i]))'
   );
   // X's portrait / immersive video viewer often has neither a dialog nor
   // a native role=slider seekbar. Scope CSS to the active media viewer, rather
@@ -410,9 +415,18 @@ private val X_DISPLAY_SCRIPT = """
     // fullscreen viewer must still be open and the control near the bottom.
     return !!(immersiveRoot && el.closest('#layers'));
   };
+  // Like, Unlike and Bookmark must NEVER be hidden as a side effect of
+  // hiding view counts or Share, even when X nests several actions together.
+  const preservedActions =
+    '[data-testid="like"],[data-testid="unlike"],' +
+    '[data-testid*="bookmark" i],[aria-label*="bookmark" i],' +
+    '[aria-label*="like" i],[aria-label*="unlike" i],' +
+    '[aria-label*="收藏"],[aria-label*="書籤"],' +
+    '[aria-label*="喜歡"],[aria-label*="讚"]';
   const markViewerAction = (candidate, attribute, next) => {
     const el = candidate.closest('button,[role="button"],a[href]') || candidate;
     if (el.closest('nav,[role="navigation"]') ||
+        el.matches(preservedActions) || el.querySelector(preservedActions) ||
         el.querySelector('video') ||
         el.querySelector('[data-testid="videoPlayer"]')) return;
     const r = el.getBoundingClientRect();
@@ -474,8 +488,12 @@ private val X_DISPLAY_SCRIPT = """
   if (flags[14] || flags[15]) authorSelectors.forEach(sel =>
     selectors.push(playbackScope+' '+sel));
   if (flags[13] || flags[15]) selectors.push(
-    playbackScope+' [data-testid^="immersive-tweet-ui-content-container"] [lang]',
-    playbackScope+' [data-testid^="immersive-tweet-ui-content-container"] [dir="auto"]'
+    // X reuses [lang] and [dir=auto] in action groups too. Target only
+    // non-interactive text leaves, never parent rows containing actions.
+    playbackScope+' [data-testid^="immersive-tweet-ui-content-container"] ' +
+      'span[lang]:not(:has(button,a,[role="button"],[role="group"]))',
+    playbackScope+' [data-testid^="immersive-tweet-ui-content-container"] ' +
+      'span[dir="auto"]:not(:has(button,a,[role="button"],[role="group"]))'
   );
   const id = 'mydownload-x-display';
   let style = document.getElementById(id);
