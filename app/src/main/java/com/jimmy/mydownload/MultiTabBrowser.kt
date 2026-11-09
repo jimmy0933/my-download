@@ -1258,6 +1258,9 @@ private val X_VIDEO_DOUBLE_TAP_SEEK_SCRIPT = """
     // Stop X's touchend AND its synthesized click for each video-side tap.
     // No arbitrary 680ms lock: four taps = two deliberate 10s seeks.
     recentSideTap=tap;
+    // A single tap must still reveal the optional progress controls even
+    // though we swallow X's native touchend to prevent duplicate seeking.
+    window.__mydownloadOptionalXSeek?.revealBar?.();
     block(e);
     if(lastTap&&sameRegion(tap,lastTap)&&
        now-lastTap.time<=PAIR_MS){
