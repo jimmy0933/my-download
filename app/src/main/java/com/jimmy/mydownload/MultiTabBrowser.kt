@@ -1118,164 +1118,193 @@ internal val X_DEDICATED_X_VIDEO_VIEWER_SCRIPT = """
 private val X_VIDEO_DOUBLE_TAP_SEEK_SCRIPT = """
 (() => {
   if (!/^(?:www\.)?(?:x\.com|twitter\.com)$/.test(location.hostname)) return;
-  // Existing X pages are periodically refreshed by Android. Install one set
-  // of listeners per document, NEVER once per media scan.
+  // Exactly one gesture listener set per live X document.
   if (window.__mydownloadVideoSeek) return;
   window.__mydownloadVideoSeek = true;
 
-  const PAIR_MS=350;
-  const LOCK_MS=680;
-  const MAX_TAP_MS=280;
-  const MAX_MOVE=25;
-  const MAX_PAIR_DISTANCE=75;
-  let tapStart=null, lastTap=null, lock=null, suppressClickUntil=0;
+  const PAIR_MS=390, MAX_TAP_MS=300, MAX_MOVE=24, MAX_PAIR_DISTANCE=78;
+  let tapStart=null, lastTap=null, recentSideTap=null;
+  let pointerStart=null, lastSeek=null;
   const distance=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
-  const viewer=()=>/\/status\/\d+/.test(location.pathname) ||
-    !!window.__mydownloadVideoFullscreen?.enabled ||
-    !!document.querySelector(
-      '#layers [role="dialog"]:has(video,[data-testid="videoPlayer"])'
-    );
+  const viewer=()=>__DEDICATED_VIEWER__;
   const validTarget=e=>!(e.target instanceof Element &&
     e.target.closest(
-      'button,a,input,[role="button"],[role="slider"],' +
-      '[data-testid="playButton"],#mydownload-optional-x-progress'
+      '#mydownload-optional-x-progress,button,a,input,'+
+      '[role="button"],[role="slider"],[data-testid="playButton"]'
     ));
   const sideAt=x=>x<innerWidth*.40?'left':x>innerWidth*.60?'right':'';
-  const activeVideo=(x,y)=>{
-    const all=Array.from(document.querySelectorAll('video')).map(video=>({
-      video,r:video.getBoundingClientRect()
-    })).filter(({r})=>r.width>=120&&r.height>=75&&r.bottom>0&&
-      r.top<innerHeight&&r.right>0&&r.left<innerWidth);
-    const underTap=all.filter(({r})=>x>=r.left&&x<=r.right&&
-      y>=r.top&&y<=r.bottom);
-    const videos=underTap.length?underTap:all;
-    videos.sort((a,b)=>
-      Number(!b.video.paused)-Number(!a.video.paused) ||
-      b.r.width*b.r.height-a.r.width*a.r.height);
-    return videos[0]?.video||null;
+  const visibleVideo=video=>{
+    const r=video.getBoundingClientRect();
+    return r.width>=120&&r.height>=75&&r.right>0&&r.left<innerWidth&&
+      r.bottom>0&&r.top<innerHeight&&
+      !video.closest('[aria-hidden="true"],[inert]');
   };
-  const feedback=(side)=>{
-    const id='mydownload-seek-feedback';
-    let element=document.getElementById(id);
-    if(!element){
-      element=document.createElement('div');element.id=id;
-      Object.assign(element.style,{
-        position:'fixed',top:'36%',zIndex:'2147483647',
-        padding:'12px 16px',borderRadius:'28px',pointerEvents:'none',
-        color:'white',background:'rgba(0,0,0,0.65)',
-        font:'600 19px sans-serif',transition:'opacity 150ms'
-      });
-      (document.body||document.documentElement).appendChild(element);
-    }
-    element.style.left=side==='left'?'11%':'auto';
-    element.style.right=side==='right'?'11%':'auto';
-    element.textContent=side==='left'?'↶ 10 秒':'10 秒 ↷';
-    element.style.opacity='1';
-    clearTimeout(element.__hideTimer);
-    element.__hideTimer=setTimeout(()=>{element.style.opacity='0';},650);
+  const activeVideo=()=>{
+    const root=Array.from(document.querySelectorAll(
+      '[data-testid="vss-scroll-view"],[data-testid="immersive-viewer"],'+
+      '#layers [role="dialog"]:has(video,[data-testid="videoPlayer"])'
+    )).find(el=>{
+      const r=el.getBoundingClientRect();
+      return r.width>=innerWidth*.40&&r.height>=innerHeight*.40&&
+        r.right>0&&r.left<innerWidth&&r.bottom>0&&r.top<innerHeight;
+    });
+    const candidates=Array.from((root||document).querySelectorAll('video'))
+      .filter(video=>visibleVideo(video)&&Number.isFinite(video.duration)&&
+        video.duration>0);
+    if(!candidates.length)return null;
+    // One foreground clip wins, not a previous/next carousel card.
+    candidates.sort((a,b)=>{
+      const score=video=>{
+        const r=video.getBoundingClientRect();
+        const w=Math.max(0,Math.min(r.right,innerWidth)-Math.max(0,r.left));
+        const h=Math.max(0,Math.min(r.bottom,innerHeight)-Math.max(0,r.top));
+        const y=Math.abs((r.top+r.bottom)/2-innerHeight/2);
+        return (video.paused?0:100000000)+w*h-y*500;
+      };
+      return score(b)-score(a);
+    });
+    return candidates[0];
   };
-  const preventSiteGesture=e=>{
+  const sameRegion=(a,b)=>!!(a&&b&&a.side===b.side&&
+    a.video===b.video&&distance(a,b)<=MAX_PAIR_DISTANCE);
+  const block=e=>{
     if(e.cancelable)e.preventDefault();
     e.stopImmediatePropagation();
   };
-  const sameRegion=(a,b)=>!!(a&&b&&a.side===b.side&&
-    a.video===b.video&&distance(a,b)<MAX_PAIR_DISTANCE);
-  document.addEventListener('touchstart',e=>{
-    if(e.touches.length!==1||!viewer()||!validTarget(e)||
-        window.__mydownloadMediaZoom?.isZoomed?.()){
-      tapStart=null;
-      if(e.touches.length>1)lastTap=null;
-      return;
+  const feedback=(side)=>{
+    const id='mydownload-seek-feedback';
+    let el=document.getElementById(id);
+    if(!el){
+      el=document.createElement('div');
+      el.id=id;
+      Object.assign(el.style,{
+        position:'fixed',top:'36%',zIndex:'2147483647',
+        padding:'8px 11px',borderRadius:'22px',pointerEvents:'none',
+        color:'white',background:'rgba(0,0,0,0.45)',
+        font:'600 15px sans-serif',transition:'opacity 120ms'
+      });
+      (document.body||document.documentElement).appendChild(el);
     }
-    const t=e.touches[0],now=performance.now();
-    const side=sideAt(t.clientX);
-    const video=side?activeVideo(t.clientX,t.clientY):null;
-    if(!video||!Number.isFinite(video.duration)||video.duration<=0){
-      tapStart=null;lastTap=null;return;
-    }
-    const tap={x:t.clientX,y:t.clientY,time:now,side,video};
-    const isSecond=lastTap&&sameRegion(tap,lastTap)&&
-      now-lastTap.time<=PAIR_MS;
-    const isBurst=lock&&now<lock.until&&sameRegion(tap,lock);
-    tapStart={...tap,blocked:!!(isSecond||isBurst)};
-    // X also implements double-tap seeking. Intercept the SECOND touch at
-    // capture phase, before X receives it. This prevents +10 being applied
-    // by both X and the app for the same physical double tap.
-    if(tapStart.blocked)preventSiteGesture(e);
-  },{capture:true,passive:false});
+    el.style.left=side==='left'?'11%':'auto';
+    el.style.right=side==='right'?'11%':'auto';
+    el.textContent=side==='left'?'↶ 10':'10 ↷';
+    el.style.opacity='1';
+    clearTimeout(el.__hideTimer);
+    el.__hideTimer=setTimeout(()=>{el.style.opacity='0';},360);
+  };
+  const seekOnce=(video,side,now)=>{
+    const duration=video.duration;
+    if(!Number.isFinite(duration)||duration<=0)return;
+    const prior=lastSeek;
+    // Android WebView/X may report a stale currentTime while a previous
+    // asynchronous seek is still settling. Accumulate on the last target.
+    const base=prior?.video===video &&
+      (video.seeking||now-prior.at<2500)
+        ? prior.target : video.currentTime;
+    if(!Number.isFinite(base))return;
+    const next=Math.max(0,Math.min(
+      base+(side==='left'?-10:10),Math.max(0,duration-.1)));
+    lastSeek={video,target:next,at:now};
+    if(Math.abs(next-base)<.01)return; // Already at start/end.
+    try {
+      video.currentTime=next; // Exactly one seek for each complete tap pair.
+      window.__mydownloadOptionalXSeek?.updateClock?.();
+      feedback(side);
+    }catch(_) { lastSeek=null; }
+  };
+  const candidate=(x,y,now)=>{
+    if(!viewer())return null;
+    const side=sideAt(x),video=side?activeVideo():null;
+    return video?{x,y,time:now,side,video}:null;
+  };
 
-  document.addEventListener('touchmove',e=>{
-    if(!tapStart)return;
-    if(e.touches.length!==1){
-      tapStart=null;lastTap=null;return;
+  // Let X see touch movement (native vertical swipes), but capture the
+  // completed short tap so X never applies its own second seek.
+  window.addEventListener('touchstart',e=>{
+    tapStart=null;
+    if(e.touches.length!==1||!validTarget(e)||
+        window.__mydownloadMediaZoom?.isZoomed?.()){
+      lastTap=null;return;
     }
     const t=e.touches[0];
-    if(distance(tapStart,{x:t.clientX,y:t.clientY})>22){
-      tapStart=null;lastTap=null;
+    const tap=candidate(t.clientX,t.clientY,performance.now());
+    if(!tap){lastTap=null;return;}
+    tapStart=tap;
+    // The site must not interpret the second down as another double-tap.
+    if(lastTap&&sameRegion(tap,lastTap)&&
+       tap.time-lastTap.time<=PAIR_MS)block(e);
+  },{capture:true,passive:false});
+  window.addEventListener('touchmove',e=>{
+    if(!tapStart)return;
+    if(e.touches.length!==1||
+        distance(tapStart,{x:e.touches[0].clientX,
+          y:e.touches[0].clientY})>MAX_MOVE){
+      tapStart=null;
+      lastTap=null;
+      lastSeek=null; // A real swipe is navigation, not another seek pair.
     }
   },{capture:true,passive:true});
-
-  document.addEventListener('touchend',e=>{
+  window.addEventListener('touchend',e=>{
     const start=tapStart;
     tapStart=null;
     if(!start||e.touches.length!==0||e.changedTouches.length!==1)return;
     const t=e.changedTouches[0],now=performance.now();
-    const tap={x:t.clientX,y:t.clientY,time:now,side:start.side,
-      video:start.video};
-    // A suppressed second touch or a rapid third/fourth tap should never
-    // fall through to X's own seek/click handlers, even when no new seek.
-    if(start.blocked){
-      suppressClickUntil=Math.max(suppressClickUntil,now+LOCK_MS);
-      preventSiteGesture(e);
-    }
+    const tap={...start,x:t.clientX,y:t.clientY,time:now};
     if(now-start.time>MAX_TAP_MS||
-        distance(tap,start)>MAX_MOVE||!viewer()){
+       distance(tap,start)>MAX_MOVE||!viewer()||
+       !start.video.isConnected){
       lastTap=null;return;
     }
-    // Only the side and video captured on touchstart can be used; don't
-    // switch to the adjacent video midway through a React carousel mount.
-    if(!tap.side||!tap.video.isConnected||
-        !Number.isFinite(tap.video.duration)||tap.video.duration<=0){
-      lastTap=null;return;
-    }
-    if(lock&&now<lock.until&&sameRegion(tap,lock)){
-      lastTap=null;return;
-    }
-    if(lastTap&&sameRegion(tap,lastTap)&&now-lastTap.time<=PAIR_MS){
+    // Stop X's touchend AND its synthesized click for each video-side tap.
+    // No arbitrary 680ms lock: four taps = two deliberate 10s seeks.
+    recentSideTap=tap;
+    block(e);
+    if(lastTap&&sameRegion(tap,lastTap)&&
+       now-lastTap.time<=PAIR_MS){
       lastTap=null;
-      lock={...tap,until:now+LOCK_MS};
-      suppressClickUntil=now+LOCK_MS;
-      preventSiteGesture(e);
-      try{
-        const video=tap.video;
-        const duration=video.duration;
-        const baseline=video.currentTime;
-        if(!Number.isFinite(baseline))return;
-        const next=Math.max(0,Math.min(baseline+
-          (tap.side==='left'?-10:10),Math.max(0,duration-.1)));
-        // Exactly ONE currentTime assignment for this completed pair.
-        video.currentTime=next;
-        feedback(tap.side);
-      }catch(_){}
+      seekOnce(tap.video,tap.side,now);
     }else lastTap=tap;
   },{capture:true,passive:false});
-
-  // On Android WebView, a touch pair can also synthesize click/dblclick.
-  // Keep X from treating those as another +10s action.
-  const blockSynthetic=e=>{
-    if(performance.now()>suppressClickUntil||!lock||!viewer())return;
-    if(!validTarget(e))return;
-    const point={x:e.clientX,y:e.clientY,side:sideAt(e.clientX),
-      video:activeVideo(e.clientX,e.clientY)};
-    if(sameRegion(point,lock))preventSiteGesture(e);
-  };
-  document.addEventListener('click',blockSynthetic,{capture:true});
-  document.addEventListener('dblclick',blockSynthetic,{capture:true});
-  document.addEventListener('touchcancel',()=>{
-    tapStart=null;lastTap=null;
+  window.addEventListener('touchcancel',()=>{
+    tapStart=null;lastTap=null;pointerStart=null;
   },{capture:true,passive:true});
+
+  // X can also listen to PointerEvents rather than TouchEvents. Only block
+  // a completed stationary touch; pointermoves remain native for scrolling.
+  window.addEventListener('pointerdown',e=>{
+    pointerStart=null;
+    if(e.pointerType!=='touch'||!validTarget(e))return;
+    pointerStart=candidate(e.clientX,e.clientY,performance.now());
+  },{capture:true,passive:true});
+  window.addEventListener('pointermove',e=>{
+    if(pointerStart && (e.pointerType!=='touch'||
+       distance(pointerStart,{x:e.clientX,y:e.clientY})>MAX_MOVE))
+      pointerStart=null;
+  },{capture:true,passive:true});
+  window.addEventListener('pointerup',e=>{
+    const start=pointerStart;
+    pointerStart=null;
+    if(!start||e.pointerType!=='touch'||!validTarget(e))return;
+    if(performance.now()-start.time<=MAX_TAP_MS&&
+       distance(start,{x:e.clientX,y:e.clientY})<=MAX_MOVE)
+      block(e);
+  },{capture:true,passive:false});
+  window.addEventListener('pointercancel',()=>{pointerStart=null;},
+    {capture:true,passive:true});
+
+  const blockSynthetic=e=>{
+    if(!recentSideTap||performance.now()-recentSideTap.time>750||
+       !viewer()||!validTarget(e))return;
+    const point={x:e.clientX,y:e.clientY,
+      side:sideAt(e.clientX),video:recentSideTap.video};
+    if(sameRegion(point,recentSideTap))block(e);
+  };
+  window.addEventListener('click',blockSynthetic,{capture:true});
+  window.addEventListener('dblclick',blockSynthetic,{capture:true});
 })()
-""".trimIndent()
+""".trimIndent().replace(
+    "__DEDICATED_VIEWER__", X_DEDICATED_X_VIDEO_VIEWER_SCRIPT
+)
 
 private val AV01_TILE_SCAN = """
 (() => {
