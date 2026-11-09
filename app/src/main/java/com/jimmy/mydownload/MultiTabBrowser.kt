@@ -1021,6 +1021,14 @@ internal val X_DEDICATED_X_VIDEO_VIEWER_SCRIPT = """
     if(!visible(root,innerWidth*.54,innerHeight*.65))continue;
     const r=root.getBoundingClientRect();
     if(r.top>innerHeight*.23||r.bottom<innerHeight*.77)continue;
+    // Some X builds reuse a large DOM container for the ordinary timeline.
+    // More than one visible tweet card means this is a feed, not the
+    // dedicated one-video viewer, even if its wrapper resembles a dialog.
+    let visibleCards=0;
+    for(const article of root.querySelectorAll('article[data-testid="tweet"]')){
+      if(visible(article,120,55) && ++visibleCards>=2)break;
+    }
+    if(visibleCards>=2)continue;
     if(visibleVideo(root))return true;
   }
 
