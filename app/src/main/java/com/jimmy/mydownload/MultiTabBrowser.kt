@@ -800,18 +800,23 @@ private val X_LANDSCAPE_CAROUSEL_SCRIPT = """
   // during portrait -> landscape and could snap past multiple videos.
   const state=window.__mydownloadLandscapeCarousel ||
     (window.__mydownloadLandscapeCarousel={});
-  const oldTrack='data-mydownload-landscape-track';
-  const oldScroll='data-mydownload-landscape-scroll';
-  state.track?.removeAttribute(oldTrack);
-  state.scroll?.removeAttribute(oldScroll);
-  document.getElementById('mydownload-landscape-track-css')?.remove();
-  document.querySelectorAll('['+oldTrack+'],['+oldScroll+']').forEach(el=>{
-    el.removeAttribute(oldTrack);
-    el.removeAttribute(oldScroll);
-  });
-  state.track=null;
-  state.scroll=null;
-  state.height=0;
+  // Legacy mandatory snap/min-height CSS must be removed only once.
+  // Clearing current layout rules every 950ms caused repeated reflow.
+  if (!state.legacyAttributesCleaned) {
+    const oldTrack='data-mydownload-landscape-track';
+    const oldScroll='data-mydownload-landscape-scroll';
+    state.track?.removeAttribute(oldTrack);
+    state.scroll?.removeAttribute(oldScroll);
+    document.getElementById('mydownload-landscape-track-css')?.remove();
+    document.querySelectorAll('['+oldTrack+'],['+oldScroll+']').forEach(el=>{
+      el.removeAttribute(oldTrack);
+      el.removeAttribute(oldScroll);
+    });
+    state.track=null;
+    state.scroll=null;
+    state.height=0;
+    state.legacyAttributesCleaned=true;
+  }
 
   // Clean leftovers from older, more invasive carousel fixes once per page.
   if (!window.__mydownloadNativeCarouselCleaned) {
@@ -898,6 +903,60 @@ private val X_LANDSCAPE_CAROUSEL_SCRIPT = """
       source:found.currentSrc||found.src||''};
   };
 
+  // X sometimes keeps the portrait-height cards after a landscape reflow.
+  // Fix only an undersized multi-card immersive track. Do not alter video,
+  // playback, touch handlers or X's native scroll-snap behavior.
+  const fitAttr='data-mydownload-landscape-fit';
+  const fitStyleId='mydownload-landscape-fit-css';
+  const clearFit=()=>{
+    state.fitTrack?.removeAttribute(fitAttr);
+    document.getElementById(fitStyleId)?.remove();
+    state.fitTrack=null;
+    state.fitHeight=0;
+  };
+  const fitLandscapeCards=()=>{
+    if(!state.enabled||!isLandscape()){
+      if(state.fitTrack)clearFit();
+      return false;
+    }
+    const root=viewer();
+    if(!root)return false;
+    const height=Math.round(root.getBoundingClientRect().height);
+    if(height<160)return false;
+    let track=root.firstElementChild;
+    let cards=null;
+    for(let depth=0;track&&depth<7;depth++){
+      const children=Array.from(track.children).filter(el=>el instanceof HTMLElement);
+      const media=children.filter(el=>el.querySelector(
+        'video,[data-testid^="immersive-tweet-ui-content-container"]'));
+      if(media.length>=2){cards=media;break;}
+      if(children.length===1&&media.length===1)track=media[0];
+      else break;
+    }
+    if(!cards||!track)return false;
+    const tooShort=cards.some(card=>
+      card.getBoundingClientRect().height<height*.90);
+    if(!tooShort && state.fitTrack!==track)return false;
+    const css='['+fitAttr+'="1"] > :has(video,'+
+      '[data-testid^="immersive-tweet-ui-content-container"]) {'+
+      'min-height:'+height+'px !important;box-sizing:border-box !important;}';
+    const unchanged=state.fitTrack===track&&state.fitHeight===height&&
+      document.getElementById(fitStyleId)?.textContent===css;
+    if(unchanged)return false;
+    if(state.fitTrack!==track)clearFit();
+    state.fitTrack=track;
+    state.fitHeight=height;
+    track.setAttribute(fitAttr,'1');
+    let style=document.getElementById(fitStyleId);
+    if(!style){
+      style=document.createElement('style');
+      style.id=fitStyleId;
+      (document.head||document.documentElement).appendChild(style);
+    }
+    style.textContent=css;
+    return true;
+  };
+
   const cancelRestore=()=>{
     state.pending=null;
     for(const timer of state.restoreTimers||[])clearTimeout(timer);
@@ -912,15 +971,16 @@ private val X_LANDSCAPE_CAROUSEL_SCRIPT = """
        !root.contains(card)||
        (pending.source && (video.currentSrc||video.src||'') &&
         pending.source!==(video.currentSrc||video.src||'')))return;
-    const now=activeVideo();
-    if(now?.video===video || (pending.href&&now?.href===pending.href))return;
     if(pending.adjustments>=2)return;
     const r=card.getBoundingClientRect(),v=root.getBoundingClientRect();
     if(!Number.isFinite(root.scrollTop)||root.scrollHeight<=root.clientHeight+2)
       return;
-    const move=r.top-v.top-Math.max(-v.height*.15,
-      Math.min(v.height*.15,pending.offset));
-    if(Math.abs(move)<Math.min(40,v.height*.13))return;
+    // Being on the same video does NOT mean that its card is aligned.
+    // The old early return left a slice of one post above the next post.
+    const move=r.top-v.top-Math.max(-v.height*.10,
+      Math.min(v.height*.10,pending.offset));
+    if(Math.abs(move)<Math.min(24,v.height*.05)||
+       Math.abs(move)>v.height*1.30)return;
     // A single immediate adjustment, only when a genuine orientation
     // change moved the old card away. No playback/URL changes, no animation.
     const oldSnap=root.style.scrollSnapType;
@@ -949,12 +1009,13 @@ private val X_LANDSCAPE_CAROUSEL_SCRIPT = """
   };
   const refresh=()=>{
     const orientation=isLandscape();
-    if(state.orientation===undefined){
-      state.orientation=orientation;
-    }else if(state.orientation!==orientation){
-      state.orientation=orientation;
-      beginRestore();
-    }
+    const changed=state.orientation!==undefined&&
+      state.orientation!==orientation;
+    state.orientation=orientation;
+    // Repair actual undersized slide geometry, without the former
+    // mandatory scroll-snap rule that could skip two videos at a time.
+    const resized=fitLandscapeCards();
+    if(changed||resized)beginRestore();
     if(!state.enabled){
       cancelRestore();
       state.anchor=null;
