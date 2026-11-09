@@ -795,8 +795,25 @@ private val X_LANDSCAPE_CAROUSEL_SCRIPT = """
   if (!/^(?:www\.)?(?:x\.com|twitter\.com)$/.test(location.hostname))
     return 'not-x';
 
-  // Clean leftovers from the earlier, more invasive landscape workaround.
-  // The current WebView process may survive a UI mode change.
+  // X owns the carousel, the scroll animation and the cards' actual height.
+  // Our old min-height + mandatory scroll-snap overrides were recalculated
+  // during portrait -> landscape and could snap past multiple videos.
+  const state=window.__mydownloadLandscapeCarousel ||
+    (window.__mydownloadLandscapeCarousel={});
+  const oldTrack='data-mydownload-landscape-track';
+  const oldScroll='data-mydownload-landscape-scroll';
+  state.track?.removeAttribute(oldTrack);
+  state.scroll?.removeAttribute(oldScroll);
+  document.getElementById('mydownload-landscape-track-css')?.remove();
+  document.querySelectorAll('['+oldTrack+'],['+oldScroll+']').forEach(el=>{
+    el.removeAttribute(oldTrack);
+    el.removeAttribute(oldScroll);
+  });
+  state.track=null;
+  state.scroll=null;
+  state.height=0;
+
+  // Clean leftovers from older, more invasive carousel fixes once per page.
   if (!window.__mydownloadNativeCarouselCleaned) {
     const old=window.__mydownloadImmersiveFit;
     if (old) {
@@ -829,93 +846,140 @@ private val X_LANDSCAPE_CAROUSEL_SCRIPT = """
     document.querySelectorAll('[data-mydownload-immersive-slide],'+
       '[data-mydownload-fullscreen-card],'+
       '[data-mydownload-fullscreen-scroll]').forEach(el=>{
-        el.removeAttribute('data-mydownload-immersive-slide');
-        el.removeAttribute('data-mydownload-fullscreen-card');
-        el.removeAttribute('data-mydownload-fullscreen-scroll');
-      });
+      el.removeAttribute('data-mydownload-immersive-slide');
+      el.removeAttribute('data-mydownload-fullscreen-card');
+      el.removeAttribute('data-mydownload-fullscreen-scroll');
+    });
     window.__mydownloadNativeCarouselCleaned=true;
   }
 
-  const state=window.__mydownloadLandscapeCarousel ||
-    (window.__mydownloadLandscapeCarousel={track:null,scroll:null,height:0});
-  const trackAttr='data-mydownload-landscape-track';
-  const scrollAttr='data-mydownload-landscape-scroll';
-  const styleId='mydownload-landscape-track-css';
-
-  const clear=()=>{
-    state.track?.removeAttribute(trackAttr);
-    state.scroll?.removeAttribute(scrollAttr);
-    document.getElementById(styleId)?.remove();
-    state.track=null;
-    state.scroll=null;
-    state.height=0;
+  state.enabled=__ENABLED__;
+  const isLandscape=()=>innerWidth>innerHeight;
+  const viewer=()=>{
+    const root=document.querySelector('[data-testid="vss-scroll-view"]');
+    if (!root || root.closest('[aria-hidden="true"],[inert]'))return null;
+    const r=root.getBoundingClientRect();
+    if(r.width<120||r.height<120||r.right<=0||r.bottom<=0||
+       r.left>=innerWidth||r.top>=innerHeight)return null;
+    const css=getComputedStyle(root);
+    return css.display==='none'||css.visibility==='hidden'?null:root;
+  };
+  const activeVideo=()=>{
+    const root=viewer();
+    if(!root)return null;
+    const rr=root.getBoundingClientRect();
+    const centerY=Math.max(rr.top,0)+Math.min(rr.height,innerHeight)/2;
+    let found=null,best=-Infinity;
+    for(const video of root.querySelectorAll('video')){
+      const r=video.getBoundingClientRect();
+      const width=Math.max(0,Math.min(r.right,rr.right,innerWidth)-
+        Math.max(r.left,rr.left,0));
+      const height=Math.max(0,Math.min(r.bottom,rr.bottom,innerHeight)-
+        Math.max(r.top,rr.top,0));
+      if(width<110||height<60)continue;
+      const middle=Math.abs((r.top+r.bottom)/2-centerY);
+      const score=width*height + (video.paused?0:100000) - middle*500;
+      if(score>best){best=score;found=video;}
+    }
+    if(!found)return null;
+    // Find the video card, not its inner controls nor the entire slide track.
+    let card=found;
+    while(card.parentElement && card.parentElement!==root){
+      const parent=card.parentElement;
+      const siblings=Array.from(parent.children).filter(el=>el!==card &&
+        el.querySelector?.('video,[data-testid^="immersive-tweet-ui-content-container"]'));
+      if(siblings.length)break;
+      card=parent;
+    }
+    if(card===root)return null;
+    const rect=card.getBoundingClientRect();
+    const href=card.querySelector?.('a[href*="/status/"]')?.getAttribute('href')||'';
+    return {root,video:found,card,href,offset:rect.top-rr.top,
+      source:found.currentSrc||found.src||''};
   };
 
-  // Portrait and non-fullscreen are 100% X-native. Do not leave CSS behind
-  // when rotating back or closing the floating fullscreen mode.
-  const landscape=__ENABLED__ && innerWidth>innerHeight*1.12;
-  if (!landscape) {
-    if (state.track || state.scroll || state.height) clear();
-    return 'native';
-  }
-
-  const scroll=document.querySelector('[data-testid="vss-scroll-view"]');
-  if (!scroll) return 'no-carousel';
-
-  // Find the direct parent of X's immersive cards. Never attach card styles
-  // to the <video> element, its compositing layer or playback controls.
-  let track=scroll.firstElementChild;
-  let cardCount=0;
-  for (let depth=0;track && depth<6;depth++) {
-    const children=[...track.children].filter(el=>el instanceof HTMLElement);
-    if (!children.length) {track=null;break;}
-    const media=children.filter(el=>el.querySelector(
-      'video,[data-testid^="immersive-tweet-ui-content-container"]'));
-    if (media.length>1 || (media.length===1 && children.length>1)) {
-      cardCount=media.length;
-      break;
+  const cancelRestore=()=>{
+    state.pending=null;
+    for(const timer of state.restoreTimers||[])clearTimeout(timer);
+    state.restoreTimers=[];
+  };
+  const repair=()=>{
+    const pending=state.pending;
+    if(!pending||!state.enabled)return;
+    const root=viewer(),card=pending.card,video=pending.video;
+    // If X recycled the card or source, do not seek to an unknown video.
+    if(!root||!card?.isConnected||!video?.isConnected||
+       !root.contains(card)||
+       (pending.source && (video.currentSrc||video.src||'') &&
+        pending.source!==(video.currentSrc||video.src||'')))return;
+    const now=activeVideo();
+    if(now?.video===video || (pending.href&&now?.href===pending.href))return;
+    if(pending.adjustments>=2)return;
+    const r=card.getBoundingClientRect(),v=root.getBoundingClientRect();
+    if(!Number.isFinite(root.scrollTop)||root.scrollHeight<=root.clientHeight+2)
+      return;
+    const move=r.top-v.top-Math.max(-v.height*.15,
+      Math.min(v.height*.15,pending.offset));
+    if(Math.abs(move)<Math.min(40,v.height*.13))return;
+    // A single immediate adjustment, only when a genuine orientation
+    // change moved the old card away. No playback/URL changes, no animation.
+    const oldSnap=root.style.scrollSnapType;
+    const oldBehavior=root.style.scrollBehavior;
+    root.style.scrollSnapType='none';
+    root.style.scrollBehavior='auto';
+    root.scrollTop+=move;
+    pending.adjustments++;
+    requestAnimationFrame(()=>{
+      root.style.scrollSnapType=oldSnap;
+      root.style.scrollBehavior=oldBehavior;
+    });
+  };
+  const beginRestore=()=>{
+    const anchor=state.anchor;
+    cancelRestore();
+    if(!state.enabled||!anchor?.video?.isConnected)return;
+    state.pending={...anchor,adjustments:0};
+    // React can reflow after the native resize event. Restrict corrections
+    // to the short rotation transition, never normal vertical swipes.
+    state.restoreTimers=[60,170,360,620].map(delay=>setTimeout(repair,delay));
+    state.restoreTimers.push(setTimeout(()=>{
+      cancelRestore();
+      if(state.enabled)state.anchor=activeVideo()||null;
+    },760));
+  };
+  const refresh=()=>{
+    const orientation=isLandscape();
+    if(state.orientation===undefined){
+      state.orientation=orientation;
+    }else if(state.orientation!==orientation){
+      state.orientation=orientation;
+      beginRestore();
     }
-    if (media.length===1 && children.length===1 &&
-        media[0].querySelectorAll('video').length<=1) {
-      cardCount=1;
-      break;
+    if(!state.enabled){
+      cancelRestore();
+      state.anchor=null;
+      return;
     }
-    if (children.length!==1) {track=null;break;}
-    track=children[0];
-  }
-  if (!track || !cardCount) return 'no-cards';
-  const rect=scroll.getBoundingClientRect();
-  const height=Math.round(Math.min(rect.height||scroll.clientHeight,innerHeight));
-  if (height<150) return 'not-ready';
+    // Polling may happen during orientation. Do not replace the remembered
+    // pre-rotation video before the guarded restore has completed.
+    if(!state.pending)state.anchor=activeVideo()||state.anchor;
+  };
 
-  // Updates occur only if X replaces its entire carousel or the viewport
-  // height changes. Virtualized cards inherit the single CSS rule automatically.
-  if (state.track!==track || state.scroll!==scroll) {
-    clear();
-    state.track=track;
-    state.scroll=scroll;
-    track.setAttribute(trackAttr,'1');
-    scroll.setAttribute(scrollAttr,'1');
+  if(!state.listenerInstalled){
+    state.listenerInstalled=true;
+    state.restoreTimers=[];
+    window.addEventListener('resize',()=>refresh(),{passive:true});
+    window.addEventListener('orientationchange',()=>refresh(),{passive:true});
+    // Deliberate user gestures always win over the rotation guard.
+    document.addEventListener('touchstart',cancelRestore,
+      {capture:true,passive:true});
+    document.addEventListener('pointerdown',cancelRestore,
+      {capture:true,passive:true});
+    document.addEventListener('wheel',cancelRestore,
+      {capture:true,passive:true});
   }
-  if (state.height!==height || !document.getElementById(styleId)) {
-    const css='['+trackAttr+'="1"] > * {'+
-      'min-height:'+height+'px !important;'+
-      'scroll-snap-align:start !important;'+
-      'box-sizing:border-box !important;'+
-      '} ['+scrollAttr+'="1"] {'+
-      'scroll-snap-type:y mandatory !important;'+
-      'scroll-padding-top:0 !important;'+
-      '}';
-    let style=document.getElementById(styleId);
-    if (!style) {
-      style=document.createElement('style');
-      style.id=styleId;
-      (document.head||document.documentElement).appendChild(style);
-    }
-    if (style.textContent!==css) style.textContent=css;
-    state.height=height;
-  }
-  return 'landscape-ready';
+  refresh();
+  return 'native-carousel-rotation-guard';
 })()
 """.trimIndent()
 
