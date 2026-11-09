@@ -273,9 +273,12 @@ private val X_DISPLAY_SCRIPT = """
     '[data-testid="unlike"],[data-testid*="bookmark" i]))'
   );
   if (flags[4]) selectors.push(
+    // A generic BottomBar can also be X's immersive video action toolbar.
+    // Only hide actual HOME/notifications navigation, never Like/Bookmark.
     '#layers nav:has(a[href="/home"]):has(a[href^="/notifications"])',
-    '[data-testid="BottomBar"]',
-    'nav[aria-label="Bottom navigation"]'
+    '[data-testid="BottomBar"]:has(a[href="/home"],' +
+      'a[data-testid="AppTabBar_Home_Link"])',
+    'nav[aria-label="Bottom navigation"]:has(a[href="/home"])'
   );
   // Limit caption/title filtering to a media viewer dialog, never the feed.
   // CSS survives React's in-place gallery swipes without rebuilding the WebView.
