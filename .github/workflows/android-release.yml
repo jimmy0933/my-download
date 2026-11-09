@@ -74,17 +74,30 @@ jobs:
           gradle --no-daemon --stacktrace :app:assembleRelease "-PbuildVersionCode=$GITHUB_RUN_NUMBER"
           APK=app/build/outputs/apk/release/app-release.apk
           test -s "$APK"
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose "$APK"
+          # Check the actual installable archive, alignment and manifest.
+          unzip -t "$APK" | tail -n 2
+          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -P 16 -v 4 "$APK" | tail -n 3
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --min-sdk-version 29 "$APK"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" > "$RUNNER_TEMP/apk-badging.txt"
+          grep -E "^package:|^sdkVersion:|^targetSdkVersion:" "$RUNNER_TEMP/apk-badging.txt"
           sha="$("$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$APK" |
             sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -n 1)"
           test -n "$sha"
           echo "SIGNER_SHA256=$sha" >> "$GITHUB_ENV"
-          cp "$APK" my-download-latest.apk
+          # Unique file name avoids stale cached bytes when updating latest.
+          apk_name="my-download-v${GITHUB_RUN_NUMBER}.apk"
+          cp "$APK" "$apk_name"
+          test "$(stat -c %s "$APK")" -eq "$(stat -c %s "$apk_name")"
+          cmp -s "$APK" "$apk_name"
+          apk_sha="$(sha256sum "$apk_name" | cut -d' ' -f1)"
+          echo "APK_NAME=$apk_name" >> "$GITHUB_ENV"
+          echo "APK_SHA256=$apk_sha" >> "$GITHUB_ENV"
+          echo "APK_BYTES=$(stat -c %s "$apk_name")" >> "$GITHUB_ENV"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: my-download-signed-apk
-          path: my-download-latest.apk
+          name: ci-archive-not-for-installation
+          path: my-download-v*.apk
           if-no-files-found: error
           retention-days: 3
 
@@ -121,20 +134,33 @@ jobs:
             done
           }
 
+          # Artifacts under Actions are ZIPs; the installable package is here.
+          notes="$(printf 'Install APK: %s\nFile bytes: %s\nSHA256: %s\nCommit: %s\nSigner SHA256: %s\nversionCode: %s\n' \
+            "$APK_NAME" "$APK_BYTES" "$APK_SHA256" "$GITHUB_SHA" "$SIGNER_SHA256" "$GITHUB_RUN_NUMBER")"
           if gh release view latest >/dev/null 2>&1; then
-            retry_gh gh release upload latest my-download-latest.apk --clobber
+            retry_gh gh release upload latest "$APK_NAME" --clobber
             retry_gh gh release edit latest --target "$GITHUB_SHA" \
-              --title "My Download 最新 APK" \
-              --notes "$(printf 'Commit: %s\nSigner SHA256: %s\nversionCode: %s\n' "$GITHUB_SHA" "$SIGNER_SHA256" "$GITHUB_RUN_NUMBER")"
+              --title "My Download 最新 APK" --notes "$notes"
           else
-            retry_gh gh release create latest my-download-latest.apk \
-              --target "$GITHUB_SHA" \
-              --title "My Download 最新 APK" \
-              --notes "$(printf 'Commit: %s\nSigner SHA256: %s\nversionCode: %s\n' "$GITHUB_SHA" "$SIGNER_SHA256" "$GITHUB_RUN_NUMBER")" \
-              --latest
+            retry_gh gh release create latest "$APK_NAME" \
+              --target "$GITHUB_SHA" --title "My Download 最新 APK" \
+              --notes "$notes" --latest
           fi
 
-          gh release view latest --json assets --jq '.assets[].name' | grep -Fxq "my-download-latest.apk"
+          # Verify GitHub's stored APK bytes before removing prior release assets.
+          asset="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/latest" \
+            --jq ".assets[] | select(.name == \"$APK_NAME\") | [.id,.size,.digest] | @tsv")"
+          IFS=$'\t' read -r uploaded_id uploaded_size uploaded_digest <<< "$asset"
+          test -n "$uploaded_id"
+          test "$uploaded_size" = "$APK_BYTES"
+          test "$uploaded_digest" = "sha256:$APK_SHA256"
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/latest" \
+            --jq ".assets[] | select(.name != \"$APK_NAME\") | .id" |
+          while IFS= read -r old_id; do
+            if [[ -n "$old_id" ]]; then
+              retry_gh gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$old_id"
+            fi
+          done
 
           gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
             --jq '.[] | select(.tag_name != "latest") | .tag_name' |
