@@ -991,24 +991,58 @@ private fun xImmersiveFitScript(enabled: Boolean): String =
  * on the /home feed as a viewer. Read-only: do not navigate, alter layout or
  * touch video playback.
  */
-private val X_VIDEO_VIEWER_DOWNLOAD_VISIBILITY_SCRIPT = """
+internal val X_DEDICATED_X_VIDEO_VIEWER_SCRIPT = """
 (() => {
-  if (!/^(?:www\.)?(?:x\.com|twitter\.com)$/.test(location.hostname))
+  if(!/^(?:www\.)?(?:x\.com|twitter\.com)$/.test(location.hostname))
     return false;
-  const viewers=document.querySelectorAll(
+  const visible=(el,w,h)=>{
+    if(!el||el.closest('[aria-hidden="true"],[inert]'))return false;
+    const r=el.getBoundingClientRect();
+    if(r.width<w||r.height<h||r.right<=0||r.bottom<=0||
+       r.left>=innerWidth||r.top>=innerHeight)return false;
+    const style=getComputedStyle(el);
+    return style.display!=='none'&&style.visibility!=='hidden'&&
+      style.opacity!=='0';
+  };
+  const visibleVideo=(root)=>{
+    for(const video of root.querySelectorAll('video')){
+      if(visible(video,120,75))return true;
+    }
+    return false;
+  };
+  const immersiveRoots=document.querySelectorAll(
     '[data-testid="vss-scroll-view"],[data-testid="immersive-viewer"],' +
     '#layers [role="dialog"]:has(video,[data-testid="videoPlayer"])'
   );
-  return Array.from(viewers).some(root=>{
+  // A real immersive viewer occupies most of the screen. An inline
+  // video/card inside the X feed is NOT a dedicated viewer, even if
+  // a stale fullscreen flag or media URL remains in browser history.
+  for(const root of immersiveRoots){
+    if(!visible(root,innerWidth*.54,innerHeight*.65))continue;
     const r=root.getBoundingClientRect();
-    if(r.width<120||r.height<120||r.right<=0||r.bottom<=0||
-       r.left>=innerWidth||r.top>=innerHeight)return false;
-    return Array.from(root.querySelectorAll('video')).some(video=>{
-      const v=video.getBoundingClientRect();
-      return v.width>=120&&v.height>=75&&v.right>0&&v.bottom>0&&
-        v.left<innerWidth&&v.top<innerHeight;
-    });
-  });
+    if(r.top>innerHeight*.23||r.bottom<innerHeight*.77)continue;
+    if(visibleVideo(root))return true;
+  }
+
+  // Standalone /status/id/video/1 pages can omit all immersive testids.
+  // Check the visible page, not merely the URL: a returning user may still
+  // have a /status/... route while scrolling multiple feed/reply cards.
+  const videoRoute=/\/status\/\d{6,22}\/(?:video|photo)\/\d+\/?$/.test(
+    location.pathname);
+  if(!videoRoute)return false;
+  let visiblePosts=0;
+  for(const article of document.querySelectorAll('article[data-testid="tweet"]')){
+    if(!visible(article,120,55))continue;
+    if(++visiblePosts>=2)return false;
+  }
+  // A genuine standalone player dominates the viewport, unlike an
+  // embedded 16:9 thumbnail in a scrolling list.
+  for(const video of document.querySelectorAll('video')){
+    if(!visible(video,innerWidth*.48,innerHeight*.56))continue;
+    const r=video.getBoundingClientRect();
+    if(r.top<innerHeight*.27&&r.bottom>innerHeight*.71)return true;
+  }
+  return false;
 })()
 """.trimIndent()
 
@@ -1408,6 +1442,9 @@ fun MultiTabBrowser(
                 if (gallerySwipe) tab.restoreTarget = null
                 else if (tab.restoreTarget == url) restoreScroll(web, tab, url)
                 if (tab.id == activeId && !gallerySwipe) {
+                    // Avoid showing the previous viewer's download shortcut
+                    // during the next X list page while the DOM scan runs.
+                    xImmersiveViewerOpen = false
                     // An X gallery swipe changes the URL but not the WebView/DOM.
                     // Keep the current media rendered until the next scan completes.
                     scanResults = VideoPositions()
@@ -1890,7 +1927,7 @@ fun MultiTabBrowser(
                     // A React video card on /home must not show download.
                     // Only a visible, open immersive viewer should do so.
                     val checkedUrl = selected.url
-                    browser.evaluateJavascript(X_VIDEO_VIEWER_DOWNLOAD_VISIBILITY_SCRIPT) { result ->
+                    browser.evaluateJavascript(X_DEDICATED_X_VIDEO_VIEWER_SCRIPT) { result ->
                         if (activeId == checkedId && selected.url == checkedUrl &&
                             webViews[checkedId] === browser) {
                             xImmersiveViewerOpen = result == "true"
@@ -2243,9 +2280,10 @@ fun MultiTabBrowser(
                     direct.substringBefore('?').let {
                         it.endsWith(".mp4", true) || it.endsWith(".m3u8", true)
                     })
+            // Do not infer video-viewer state from URL or fullscreen flags.
+            // Those can persist while X shows a normal multi-post list.
             val showXDownload = BrowserVideoDiscovery.isXPage(direct) &&
-                (VideoTitle.isXStatus(direct) || browserVideoFullscreen ||
-                    xImmersiveViewerOpen)
+                xImmersiveViewerOpen
             if (visible && (directDownload || showXDownload)) {
                 MovableDownloadButton(
                     containerWidth = viewportWidth,
