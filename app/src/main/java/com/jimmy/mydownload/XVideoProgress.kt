@@ -746,22 +746,28 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
       ].join(' ').toLowerCase();
       const explicit=/^(play|pause|播放|暫停)$/.test(descriptor.trim()) ||
         /(?:play|pause)button|video.?play|video.?pause/.test(descriptor);
-      const excluded=/volume|mute|share|like|follow|back|close|sound|more|下載|音量|分享/.test(descriptor);
-      if(excluded)continue;
+      const excluded=/volume|mute|share|like|unlike|bookmark|save|favorite|favourite|follow|back|close|sound|more|下載|音量|分享|愛心|喜歡|讚|收藏|書籤/.test(descriptor);
+      const protectedActions='[data-testid="like"],[data-testid="unlike"],'+
+        '[data-testid*="bookmark" i],[aria-label*="like" i],'+
+        '[aria-label*="bookmark" i],[aria-label*="收藏"],'+
+        '[aria-label*="喜歡"],[aria-label*="書籤"]';
+      if(excluded||el.matches(protectedActions)||
+         el.querySelector(protectedActions))continue;
       const viewer=video.closest(
         '[data-testid="vss-scroll-view"],[data-testid="immersive-viewer"],' +
         '#layers [role="dialog"],[data-testid="videoPlayer"]');
       if(viewer && !viewer.contains(el) && !el.closest('#layers'))continue;
-      // Prefer positively identified playback controls; permit an
-      // unlabelled small SVG control only immediately above our seekbar.
-      if(!explicit){
-        if(!el.querySelector('svg') || r.width>58||r.height>58||
-           r.top<barTop-145||r.top>barTop+8)continue;
-      }
-      const score=(explicit?10000:0)-Math.abs(r.top-(barTop-95))*8-r.left;
+      // Never guess that an unlabeled SVG is play/pause. In some X
+      // immersive layouts it is actually Like or Bookmark.
+      if(!explicit)continue;
+      const score=10000-Math.abs(r.top-(barTop-95))*8-r.left;
       if(score>best){best=score;winner=el;}
     }
-    if(!winner)return;
+    if(!winner){
+      // Remove any stale legacy marks that might hide Like/Bookmark.
+      clearNativeToggle();
+      return;
+    }
     for(const el of state.nativeToggleMarks){
       if(el!==winner && el.isConnected){
         el.removeAttribute('data-mydownload-x-native-toggle');
