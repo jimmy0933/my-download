@@ -15,7 +15,9 @@ internal fun xVideoProgressScript(options: XDisplayOptions): String {
             options.hideVideoBelowProgressDetails ||
             options.showCustomXVideoProgress) +
         ",autoHideSeconds:" + options.customXProgressAutoHideSeconds.coerceIn(0, 30) + "}"
-    return X_OPTIONAL_VIDEO_PROGRESS_SCRIPT.replace("__SETTINGS__", settings)
+    return X_OPTIONAL_VIDEO_PROGRESS_SCRIPT
+        .replace("__SETTINGS__", settings)
+        .replace("__DEDICATED_VIEWER__", X_DEDICATED_X_VIDEO_VIEWER_SCRIPT)
 }
 
 private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
@@ -595,46 +597,42 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
   };
 
   const currentVideo=()=>{
-    const fullscreen=!!window.__mydownloadVideoFullscreen?.enabled;
-    const videoRoute=/\/status\/\d+\/(?:video|photo)\/\d+\/?$/.test(location.pathname) ||
-      /^\/i\/status\/\d+\/?$/.test(location.pathname);
-
-    // The X home/search/profile feeds have autoplay video thumbnails.
-    // An offscreen or hidden React viewer must not make those thumbnails
-    // eligible for the global custom timeline/playback controls.
-    const viewers=Array.from(document.querySelectorAll(
+    // Use the EXACT same viewer predicate as the native Android download
+    // shortcut. Neither stale fullscreen state nor a post/status URL may
+    // turn an autoplay feed-card video into a global fullscreen timeline.
+    if(!__DEDICATED_VIEWER__)return null;
+    const visibleRoots=Array.from(document.querySelectorAll(
       '[data-testid="vss-scroll-view"],[data-testid="immersive-viewer"],' +
       '#layers [role="dialog"]:has(video,[data-testid="videoPlayer"])'
     )).filter(root=>{
       if(root.closest('[aria-hidden="true"],[inert]'))return false;
       const r=root.getBoundingClientRect();
-      if(r.width<120||r.height<120||r.right<=0||r.bottom<=0||
-         r.left>=innerWidth||r.top>=innerHeight)return false;
+      if(r.width<innerWidth*.54||r.height<innerHeight*.65 ||
+         r.top>innerHeight*.23||r.bottom<innerHeight*.77 ||
+         r.right<=0||r.left>=innerWidth)return false;
       const css=getComputedStyle(root);
-      return css.display!=='none'&&css.visibility!=='hidden';
+      return css.display!=='none'&&css.visibility!=='hidden'&&
+        css.opacity!=='0';
     });
-    if(!viewers.length && !fullscreen && !videoRoute)return null;
-
     const cx=innerWidth/2,cy=innerHeight/2;
     let winner=null,rank=-Infinity;
-    for(const v of document.querySelectorAll('video')){
-      // On a feed URL, accept videos ONLY inside the currently visible
-      // immersive/dialog viewer. Do not select a feed autoplay thumbnail
-      // even if React has mounted an unrelated viewer elsewhere.
-      if(!fullscreen&&!videoRoute && !viewers.some(root=>root.contains(v)))
-        continue;
-      const r=v.getBoundingClientRect();
+    for(const video of document.querySelectorAll('video')){
+      // A standalone media URL may have no X viewer root. Otherwise the
+      // selected video must belong to the visible dedicated viewer, never
+      // to a post in the underlying feed.
+      if(visibleRoots.length &&
+         !visibleRoots.some(root=>root.contains(video)))continue;
+      const r=video.getBoundingClientRect();
       const visW=Math.max(0,Math.min(r.right,innerWidth)-Math.max(r.left,0));
       const visH=Math.max(0,Math.min(r.bottom,innerHeight)-Math.max(r.top,0));
       if(visW<110||visH<65)continue;
       const centered=cx>=r.left&&cx<=r.right&&cy>=r.top&&cy<=r.bottom;
       const score=(centered?1e6:0)+visW*visH-
         Math.abs((r.top+r.bottom)/2-cy)*200;
-      if(score>rank){winner=v;rank=score;}
+      if(score>rank){winner=video;rank=score;}
     }
     return winner;
   };
-
   const hideNativeTracks=video=>{
     // Never clear existing marks on a normal X refresh: that briefly paints
     // the original progress before it is found again.
