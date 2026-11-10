@@ -94,21 +94,33 @@ object DownloadStore {
         put("userAgent", item.userAgent)
     }
 
+    // Progress updates hit read()+write() many times a second; parsing up to 200
+    // records each time was a major source of lag. Cache by the raw JSON text.
+    private var cachedRaw: String? = null
+    private var cachedList: List<DownloadRecord> = emptyList()
+
     fun read(context: Context): List<DownloadRecord> = synchronized(lock) {
-        val json = runCatching {
-            JSONArray(context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
-                .getString(KEY, "[]") ?: "[]")
-        }.getOrDefault(JSONArray())
-        (0 until json.length()).mapNotNull { index ->
+        val raw = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+            .getString(KEY, "[]") ?: "[]"
+        if (raw == cachedRaw) return@synchronized cachedList
+        val json = runCatching { JSONArray(raw) }.getOrDefault(JSONArray())
+        val list = (0 until json.length()).mapNotNull { index ->
             runCatching { fromJson(json.getJSONObject(index)) }.getOrNull()
         }
+        cachedRaw = raw
+        cachedList = list
+        list
     }
 
     private fun write(context: Context, items: List<DownloadRecord>) {
         val array = JSONArray()
         items.take(200).forEach { array.put(toJson(it)) }
+        val raw = array.toString()
+        cachedRaw = raw
+        cachedList = items.take(200)
+        // apply(): in-memory state updates at once; disk write is asynchronous.
         context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
-            .edit().putString(KEY, array.toString()).commit()
+            .edit().putString(KEY, raw).apply()
     }
 
     fun save(context: Context, item: DownloadRecord) = synchronized(lock) {

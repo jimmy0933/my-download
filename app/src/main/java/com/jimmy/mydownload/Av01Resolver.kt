@@ -13,6 +13,10 @@ object Av01Resolver {
     private const val BASE = "https://www.av01.media"
     private const val CDN = "https://customers.iw01.xyz"
 
+    /** access_token is only ever sent to the CDN that issued it. */
+    fun isCdnUrl(url: String): Boolean =
+        runCatching { url.toHttpUrl().host == CDN.toHttpUrl().host }.getOrDefault(false)
+
     fun supports(url: String): Boolean {
         val parsed = runCatching { url.toHttpUrl() }.getOrNull() ?: return false
         return parsed.host in setOf("av01.media", "www.av01.media", "av01.tv", "www.av01.tv") &&

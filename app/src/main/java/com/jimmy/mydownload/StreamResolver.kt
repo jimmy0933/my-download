@@ -26,6 +26,18 @@ object StreamResolver {
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(45, TimeUnit.SECONDS)
         .followRedirects(true)
+        .addNetworkInterceptor { chain ->
+            // BrowserMediaRequest attaches WebView cookies for the original host
+            // by hand; OkHttp keeps such headers across redirects, so drop them
+            // whenever a hop leaves that host.
+            val request = chain.request()
+            val origin = request.header(BrowserMediaRequest.COOKIE_HOST)
+            val builder = request.newBuilder().removeHeader(BrowserMediaRequest.COOKIE_HOST)
+            if (origin != null && !origin.equals(request.url.host, true)) {
+                builder.removeHeader("Cookie")
+            }
+            chain.proceed(builder.build())
+        }
         .build()
 
     suspend fun inspect(input: String): List<StreamChoice> = withContext(Dispatchers.IO) {
