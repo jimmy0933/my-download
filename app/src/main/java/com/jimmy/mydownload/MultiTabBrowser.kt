@@ -2727,7 +2727,20 @@ fun MultiTabBrowser(
                             Text("Google")
                         }
                     }
-                    Text("我的書籤", style = MaterialTheme.typography.titleMedium)
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("我的書籤", style = MaterialTheme.typography.titleMedium)
+                        // Opens X's own bookmarks timeline (needs the user to be
+                        // logged in to X in this browser).
+                        OutlinedButton(onClick = { navigate("https://x.com/i/bookmarks") }) {
+                            Icon(Icons.Default.Bookmark, null, Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("X 收藏")
+                        }
+                    }
                     bookmarks.take(12).forEach { bookmark ->
                         Card(
                             onClick = { navigate(bookmark.url) },
