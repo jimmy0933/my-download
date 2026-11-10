@@ -531,32 +531,103 @@ private fun xDisplayScript(options: XDisplayOptions): String {
     // Neither switch is enabled by default. No video DOM reparenting.
     return X_DISPLAY_SCRIPT.replace("__FLAGS__", flags) +
         ";\n" + xVideoProgressScript(options) +
-        ";\n" + xVideoActionButtonsScript(options)
+        ";\n" + xVideoNativeActionsScript(options)
 }
 
 /**
- * Stable independent Like/Bookmark controls for X's dedicated video viewer.
- * Native controls frequently fade with the website's footer; keeping our
- * lightweight buttons outside that footer makes the choices independent of
- * all caption, share, timeline and auto-hide preferences.
- * The buttons invoke X's own handlers, never bypass account permissions.
+ * Only show/hide the REAL X Like and Bookmark controls. Never create another
+ * button or proxy a click: X must own all actions, colors and saved states.
+ * Reapplies safe visibility to the active native controls after React swaps
+ * video cards without changing X's carousel, footer or video DOM.
  */
-private val X_VIDEO_ACTION_BUTTONS_SCRIPT = """
+private val X_VIDEO_NATIVE_ACTION_VISIBILITY_SCRIPT = """
 (() => {
-  if(!/^(?:www\.)?(?:x\.com|twitter\.com)$/.test(location.hostname))return;
-  const state=window.__mydownloadXActionButtons ||
-    (window.__mydownloadXActionButtons={
-      root:null,like:null,bookmark:null,style:null,marks:new Set(),
-      showLike:true,showBookmark:true,refresh:null
-    });
-  state.showLike=__SHOW_LIKE__;
-  state.showBookmark=__SHOW_BOOKMARK__;
+  if (!/^(?:www\.)?(?:x\.com|twitter\.com)$/.test(location.hostname))
+    return 'not-x';
+  const showLike=__SHOW_LIKE__, showBookmark=__SHOW_BOOKMARK__;
+  const likeAttr='data-mydownload-native-like';
+  const bookmarkAttr='data-mydownload-native-bookmark';
+  const styleId='mydownload-x-native-actions-css';
+  const siteViewer=()=>__DEDICATED_VIEWER__;
 
-  const rootId='mydownload-x-video-actions';
-  const cssId='mydownload-x-video-actions-css';
-  const nativeAttr='data-mydownload-x-action-native';
-  const isViewer=()=>__DEDICATED_VIEWER__;
-  const likeQuery=[
+  // v244 incorrectly hid X controls and drew two non-native replicas.
+  // Explicitly undo that version's DOM changes, including its CSS.
+  const replica=window.__mydownloadXActionButtons;
+  if(replica){
+    replica.refresh=()=>{};
+    replica.root?.remove();
+    replica.root=null;
+    for(const control of replica.marks||[]){
+      if(control?.isConnected)
+        control.removeAttribute('data-mydownload-x-action-native');
+    }
+    replica.marks?.clear?.();
+  }
+  document.getElementById('mydownload-x-video-actions')?.remove();
+  document.getElementById('mydownload-x-video-actions-css')?.remove();
+  document.getElementById('mydownload-x-action-hint')?.remove();
+  for(const control of document.querySelectorAll(
+    '[data-mydownload-x-action-native]')){
+    control.removeAttribute('data-mydownload-x-action-native');
+  }
+
+  const style=document.getElementById(styleId) || (()=>{
+    const element=document.createElement('style');
+    element.id=styleId;
+    (document.head||document.documentElement).appendChild(element);
+    return element;
+  })();
+  const css=
+    '['+likeAttr+'="hide"],['+bookmarkAttr+'="hide"] {'+
+      'display:none !important;pointer-events:none !important;}' +
+    '['+likeAttr+'="show"],['+bookmarkAttr+'="show"] {'+
+      'visibility:visible !important;opacity:1 !important;'+
+      'pointer-events:auto !important;}';
+  if(style.textContent!==css)style.textContent=css;
+
+  // A false positive on X's feed would hide or force-show buttons from
+  // unrelated posts. Mark native controls only in an open media viewer.
+  const previouslyMarked=Array.from(document.querySelectorAll(
+    '['+likeAttr+'],['+bookmarkAttr+']'));
+  const clear=()=>{
+    for(const el of previouslyMarked){
+      el.removeAttribute(likeAttr);
+      el.removeAttribute(bookmarkAttr);
+    }
+  };
+  if(!siteViewer()){
+    clear();
+    return 'not-viewer';
+  }
+
+  const root=Array.from(document.querySelectorAll(
+    '[data-testid="vss-scroll-view"],[data-testid="immersive-viewer"],'+
+    '#layers [role="dialog"]:has(video,[data-testid="videoPlayer"])'
+  )).find(el=>{
+    const r=el.getBoundingClientRect();
+    return r.width>=innerWidth*.48&&r.height>=innerHeight*.55&&
+      r.right>0&&r.left<innerWidth&&r.bottom>0&&r.top<innerHeight;
+  })||null;
+  const visible=(v)=>{
+    const r=v.getBoundingClientRect();
+    return r.width>=120&&r.height>=75&&
+      r.right>0&&r.left<innerWidth&&r.bottom>0&&r.top<innerHeight &&
+      !v.closest('[aria-hidden="true"],[inert]');
+  };
+  const videos=Array.from((root||document).querySelectorAll('video'))
+    .filter(visible);
+  videos.sort((a,b)=>{
+    const score=v=>{
+      const r=v.getBoundingClientRect();
+      const w=Math.max(0,Math.min(r.right,innerWidth)-Math.max(0,r.left));
+      const h=Math.max(0,Math.min(r.bottom,innerHeight)-Math.max(0,r.top));
+      return w*h - Math.abs((r.top+r.bottom)/2-innerHeight/2)*400+
+        (v.paused?0:100000);
+    };
+    return score(b)-score(a);
+  });
+  const currentArticle=videos[0]?.closest('article[data-testid="tweet"]');
+  const likeSelector=[
     '[data-testid="like"]','[data-testid="unlike"]',
     'button[aria-label="Like" i]','button[aria-label="Unlike" i]',
     '[role="button"][aria-label="Like" i]',
@@ -564,10 +635,9 @@ private val X_VIDEO_ACTION_BUTTONS_SCRIPT = """
     '[aria-label="喜歡"]','[aria-label="取消喜歡"]',
     '[aria-label="讚"]','[aria-label="收回讚"]'
   ].join(',');
-  const bookmarkQuery=[
+  const bookmarkSelector=[
     '[data-testid="bookmark"]','[data-testid="removeBookmark"]',
-    '[data-testid="unbookmark"]',
-    '[data-testid="bookmarkButton"]',
+    '[data-testid="unbookmark"]','[data-testid="bookmarkButton"]',
     'button[aria-label="Bookmark" i]',
     'button[aria-label="Remove Bookmark" i]',
     '[role="button"][aria-label="Bookmark" i]',
@@ -575,243 +645,57 @@ private val X_VIDEO_ACTION_BUTTONS_SCRIPT = """
     '[aria-label="加入書籤"]','[aria-label="移除書籤"]',
     '[aria-label="收藏"]','[aria-label="取消收藏"]'
   ].join(',');
-  const shareQuery=[
-    '[data-testid="share"]','button[aria-label="Share" i]',
-    'button[aria-label="分享"]'
-  ].join(',');
-  const rectVisible=r=>r.width>65&&r.height>45&&r.right>0&&
-    r.left<innerWidth&&r.bottom>0&&r.top<innerHeight;
-  const viewRoot=()=>Array.from(document.querySelectorAll(
-    '[data-testid="vss-scroll-view"],[data-testid="immersive-viewer"],' +
-    '#layers [role="dialog"]:has(video,[data-testid="videoPlayer"])'
-  )).find(el=>{
-    const r=el.getBoundingClientRect();
-    return r.width>=innerWidth*.50&&r.height>=innerHeight*.55&&rectVisible(r);
-  })||null;
-  const active=()=>{
-    const viewer=viewRoot();
-    const videos=Array.from((viewer||document).querySelectorAll('video'))
-      .filter(video=>rectVisible(video.getBoundingClientRect()) &&
-        !video.closest('[aria-hidden="true"],[inert]'));
-    if(!videos.length)return null;
-    videos.sort((a,b)=>{
-      const score=v=>{
-        const r=v.getBoundingClientRect();
-        const w=Math.max(0,Math.min(r.right,innerWidth)-Math.max(r.left,0));
-        const h=Math.max(0,Math.min(r.bottom,innerHeight)-Math.max(r.top,0));
-        const y=Math.abs((r.top+r.bottom)/2-innerHeight/2);
-        return w*h-y*350+(v.paused?0:250000);
-      };
-      return score(b)-score(a);
-    });
-    const video=videos[0];
-    return {video,viewer,article:video.closest('article[data-testid="tweet"]')};
-  };
-  const choose=(query,ctx)=>{
-    if(!ctx)return null;
-    const {viewer,article}=ctx;
-    const seen=new Set();
-    const candidates=Array.from(document.querySelectorAll(query)).map(node=>{
-      const control=node.closest('button,[role="button"],a[href]')||node;
-      return {node,control};
-    }).filter(({control})=>{
-      if(!control.isConnected||seen.has(control)||
-         control.closest('#'+rootId))return false;
-      seen.add(control);
-      if(control.querySelector('video'))return false;
-      // Never proxy an entire action row containing multiple distinct
-      // controls. Such a wrapper could hide Like and Bookmark together.
-      if(control.querySelector('[data-testid="like"],[data-testid="unlike"]')&&
-         control.querySelector('[data-testid*="bookmark" i]'))return false;
-      const owner=control.closest('article[data-testid="tweet"]');
-      if(article && owner && owner!==article)return false;
-      // Without a current article, never pick a Like/Bookmark belonging
-      // to a different post in the surrounding X feed.
-      if(!viewer && (!article || owner!==article))return false;
-      if(viewer && !viewer.contains(control) &&
-         !(control.closest('#layers') && !owner))return false;
-      // Closed portal menu items are not clickable. In this case the
-      // bookmark fallback opens X's own Share menu on explicit user tap.
-      if(control.closest('[role="menu"],[role="menuitem"]') &&
-         !control.getClientRects().length)return false;
-      return true;
-    });
-    const score=entry=>{
-      const {control}=entry;
-      let rank=0;
-      if(article?.contains(control))rank+=10000;
-      if(viewer?.contains(control))rank+=5000;
-      if(control.closest('#layers'))rank+=700;
-      const r=control.getBoundingClientRect();
-      if(r.width>0&&r.height>0){
-        rank+=600-Math.abs((r.top+r.bottom)/2-innerHeight*.72);
+  const findButtons=selector=>{
+    const found=new Set();
+    for(const child of document.querySelectorAll(selector)){
+      const el=child.closest('button,[role="button"],a[href]')||
+        (child.matches('button,[role="button"]')?child:null);
+      if(!el||!el.isConnected||found.has(el)||
+         el.closest('nav,[role="navigation"]')||
+         el.closest('#mydownload-optional-x-progress')||
+         el.querySelector('video,[data-testid="videoPlayer"]'))continue;
+      // Only native clickable elements. Never mark whole action strips,
+      // especially a shared container that includes both Like and Bookmark.
+      const clickableChildren=el.querySelectorAll(
+        'button,[role="button"],a[href]');
+      if(clickableChildren.length>1)continue;
+      const owner=el.closest('article[data-testid="tweet"]');
+      if(currentArticle && owner && owner!==currentArticle)continue;
+      if(!root && (!currentArticle||owner!==currentArticle))continue;
+      if(root && !root.contains(el)){
+        // Some immersive actions live in a sibling portal under #layers,
+        // but never apply to another post's article outside the viewer.
+        if(owner||!el.closest('#layers'))continue;
+        const r=el.getBoundingClientRect();
+        if(r.bottom<innerHeight*.45||r.top>innerHeight)continue;
       }
-      return rank;
-    };
-    candidates.sort((a,b)=>score(b)-score(a));
-    return candidates[0]?.control||null;
+      // A bookmark option in a closed Share popup is not an on-screen
+      // toolbar button; do not show/hide unrelated menu items.
+      if(el.closest('[role="menu"],[role="menuitem"]'))continue;
+      found.add(el);
+    }
+    return found;
   };
-  const toast=message=>{
-    let tip=document.getElementById('mydownload-x-action-hint');
-    if(!tip){
-      tip=document.createElement('div');
-      tip.id='mydownload-x-action-hint';
-      Object.assign(tip.style,{
-        position:'fixed',bottom:'190px',left:'50%',
-        transform:'translateX(-50%)',zIndex:'2147483646',
-        background:'rgba(14,29,43,.93)',color:'#fff',
-        borderRadius:'18px',padding:'9px 14px',
-        font:'13px sans-serif',pointerEvents:'none',
-        maxWidth:'80vw',textAlign:'center'
-      });
-      (document.body||document.documentElement).appendChild(tip);
-    }
-    tip.textContent=message;
-    tip.style.display='block';
-    clearTimeout(state.hintTimer);
-    state.hintTimer=setTimeout(()=>{tip.style.display='none';},1800);
-  };
-  const activate=(which)=>{
-    if(!isViewer())return;
-    const context=active();
-    const query=which==='like'?likeQuery:bookmarkQuery;
-    const target=choose(query,context);
-    if(target){
-      try { target.click(); } catch(_) { toast('無法操作這則影片，請稍後重試'); }
-      state.refresh?.();
-      return;
-    }
-    if(which==='bookmark'){
-      // In some X layouts Bookmark is inside the Share menu rather than
-      // present in the action bar. Only open the native menu on user click.
-      const share=choose(shareQuery,context);
-      if(share){
-        try{
-          share.click();
-          setTimeout(()=>{
-            if(!isViewer())return;
-            const menu=Array.from(document.querySelectorAll(
-              '[role="menuitem"],[data-testid*="bookmark" i]'
-            )).find(el=>{
-              const label=[el.getAttribute('aria-label')||'',
-                el.getAttribute('data-testid')||'',
-                el.textContent||''].join(' ');
-              return /bookmark|書籤|收藏|儲存/i.test(label)&&
-                !!el.getClientRects().length;
-            });
-            if(menu)menu.click();
-            else toast('請在 X 的分享選單選擇收藏');
-          },190);
-          return;
-        }catch(_){}
-      }
-    }
-    toast(which==='like'?'X 尚未載入此影片的愛心功能':
-      'X 尚未載入此影片的收藏功能');
-  };
-  const addButton=(which,label,icon)=>{
-    const button=document.createElement('button');
-    button.type='button';
-    button.setAttribute('aria-label',label);
-    button.title=label;
-    button.textContent=icon;
-    Object.assign(button.style,{
-      width:'44px',height:'44px',borderRadius:'22px',border:'1px solid #71869a',
-      background:'rgba(9,24,39,.88)',color:'#fff',
-      boxShadow:'0 3px 12px rgba(0,0,0,.35)',
-      font:'26px system-ui,sans-serif',cursor:'pointer',
-      display:'flex',alignItems:'center',justifyContent:'center',
-      pointerEvents:'auto',padding:'0',touchAction:'manipulation'
-    });
-    for(const kind of ['touchstart','touchend','pointerdown','pointerup']){
-      button.addEventListener(kind,e=>e.stopPropagation());
-    }
-    button.addEventListener('click',e=>{
-      e.preventDefault();
-      e.stopImmediatePropagation();
-      activate(which);
-    });
-    return button;
-  };
-  const ensureRoot=()=>{
-    if(state.root?.isConnected)return;
-    const wrapper=document.createElement('div');
-    wrapper.id=rootId;
-    Object.assign(wrapper.style,{
-      position:'fixed',right:'12px',bottom:'128px',display:'flex',
-      flexDirection:'row',gap:'10px',zIndex:'2147483646',
-      pointerEvents:'none',alignItems:'center'
-    });
-    state.like=addButton('like','按讚／取消讚','♥');
-    state.bookmark=addButton('bookmark','收藏／移除收藏','🔖');
-    wrapper.appendChild(state.like);
-    wrapper.appendChild(state.bookmark);
-    (document.body||document.documentElement).appendChild(wrapper);
-    state.root=wrapper;
-  };
-  const ensureCSS=()=>{
-    let style=document.getElementById(cssId);
-    if(!style){
-      style=document.createElement('style');
-      style.id=cssId;
-      (document.head||document.documentElement).appendChild(style);
-    }
-    const css='['+nativeAttr+'] {'+
-      'opacity:0 !important;pointer-events:none !important;'+
-      '}' ;
-    if(style.textContent!==css)style.textContent=css;
-  };
-  const syncMarks=targets=>{
-    for(const el of state.marks){
-      if(!targets.has(el)&&el.isConnected)el.removeAttribute(nativeAttr);
-    }
-    state.marks=targets;
-    for(const el of targets)el.setAttribute(nativeAttr,'1');
-  };
-  state.refresh=()=>{
-    const opened=isViewer();
-    if(!opened){
-      state.root?.remove();
-      state.root=null;
-      syncMarks(new Set());
-      document.getElementById('mydownload-x-action-hint')?.remove();
-      return;
-    }
-    ensureCSS();
-    ensureRoot();
-    const context=active();
-    const like=choose(likeQuery,context);
-    const bookmark=choose(bookmarkQuery,context);
-    // Native buttons stay in the DOM and retain X's click/React handlers.
-    // Hide only those exact buttons, not their shared action-bar parents.
-    syncMarks(new Set([like,bookmark].filter(Boolean)));
-    state.like.style.display=state.showLike?'flex':'none';
-    state.bookmark.style.display=state.showBookmark?'flex':'none';
-    state.root.style.display=state.showLike||state.showBookmark?'flex':'none';
-    state.root.style.bottom=innerWidth>innerHeight?'103px':'134px';
-    if(like){
-      const liked=!!like.matches('[data-testid="unlike"]')||
-        !!like.querySelector('[data-testid="unlike"]')||
-        like.getAttribute('aria-pressed')==='true';
-      state.like.style.color=liked?'#ff597d':'#ffffff';
-      state.like.setAttribute('aria-label',liked?'取消讚':'按讚');
-    }
-    if(bookmark){
-      const saved=!!bookmark.matches('[data-testid="removeBookmark"],' +
-        '[data-testid="unbookmark"]') ||
-        bookmark.getAttribute('aria-pressed')==='true';
-      state.bookmark.style.background=saved?
-        'rgba(8,101,111,.94)':'rgba(9,24,39,.88)';
-      state.bookmark.setAttribute('aria-label',
-        saved?'移除收藏':'加入收藏');
-    }
-  };
-  state.refresh();
+  const likes=findButtons(likeSelector);
+  const bookmarks=findButtons(bookmarkSelector);
+  // If X uses one big clickable wrapper for both actions, ignore it.
+  for(const button of likes)if(bookmarks.has(button)){
+    likes.delete(button);
+    bookmarks.delete(button);
+  }
+  for(const el of previouslyMarked){
+    if(!likes.has(el))el.removeAttribute(likeAttr);
+    if(!bookmarks.has(el))el.removeAttribute(bookmarkAttr);
+  }
+  for(const el of likes)el.setAttribute(likeAttr,showLike?'show':'hide');
+  for(const el of bookmarks)
+    el.setAttribute(bookmarkAttr,showBookmark?'show':'hide');
+  return 'native-actions:'+likes.size+'/'+bookmarks.size;
 })()
 """.trimIndent()
 
-private fun xVideoActionButtonsScript(options: XDisplayOptions): String =
-    X_VIDEO_ACTION_BUTTONS_SCRIPT
+private fun xVideoNativeActionsScript(options: XDisplayOptions): String =
+    X_VIDEO_NATIVE_ACTION_VISIBILITY_SCRIPT
         .replace("__SHOW_LIKE__", options.showViewerLike.toString())
         .replace("__SHOW_BOOKMARK__", options.showViewerBookmark.toString())
         .replace("__DEDICATED_VIEWER__", X_DEDICATED_X_VIDEO_VIEWER_SCRIPT)
