@@ -283,7 +283,7 @@ fun DownloadSettingsScreen(
                 Text("X 網頁顯示設定", style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold, color = Color(0xFF27DBB3))
                 Text(
-                    "只影響 App 內開啟的 X／Twitter 網頁。開啟開關代表隱藏，關閉即可還原。設定會自動儲存。",
+                    "只影響 App 內開啟的 X／Twitter 網頁。隱藏類開關開啟代表隱藏；愛心／收藏則開啟代表顯示。設定會自動儲存。",
                     color = Color(0xFFB4C8D5), style = MaterialTheme.typography.bodySmall
                 )
                 HorizontalDivider(color = Color(0xFF304458))
@@ -437,6 +437,35 @@ fun DownloadSettingsScreen(
                 HorizontalDivider(color = Color(0xFF304458))
                 Text("X 影片底部操作列", style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold)
+                Text(
+                    "愛心與收藏使用獨立的固定按鈕，避免 X 原生控制列自動隱藏時一起消失；可分別關閉。若 X 尚未載入該貼文的操作功能，點擊時會提示。",
+                    color = Color(0xFFB4C8D5), style = MaterialTheme.typography.bodySmall
+                )
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text("顯示愛心 ❤️", fontWeight = FontWeight.Medium)
+                        Text("影片播放畫面保留按讚／取消讚的快捷按鈕。",
+                            color = Color(0xFF9CAFC0), style = MaterialTheme.typography.bodySmall)
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Switch(
+                        checked = xDisplayOptions.showViewerLike,
+                        onCheckedChange = { onXDisplayChange(xDisplayOptions.copy(showViewerLike = it)) }
+                    )
+                }
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text("顯示收藏 🔖", fontWeight = FontWeight.Medium)
+                        Text("影片播放畫面保留加入／移除書籤的快捷按鈕。",
+                            color = Color(0xFF9CAFC0), style = MaterialTheme.typography.bodySmall)
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Switch(
+                        checked = xDisplayOptions.showViewerBookmark,
+                        onCheckedChange = { onXDisplayChange(xDisplayOptions.copy(showViewerBookmark = it)) }
+                    )
+                }
+                HorizontalDivider(color = Color(0xFF304458))
                 XVisibilitySetting(
                     title = "影片底部隱藏觀看次數",
                     description = "只隱藏影片播放畫面底下的觀看數及圖表按鈕，不影響播放進度條。",
