@@ -699,7 +699,7 @@ private val X_VIDEO_NATIVE_ACTION_VISIBILITY_SCRIPT = """
         // Allow native X portal actions, but not an adjacent feed post.
         if(owner||!el.closest('#layers'))continue;
         const r=el.getBoundingClientRect();
-        if(r.bottom<innerHeight*.45||r.top>innerHeight)continue;
+        if(r.bottom<innerHeight*.30||r.top>innerHeight)continue;
       }
       found.add(el);
     }
@@ -711,7 +711,9 @@ private val X_VIDEO_NATIVE_ACTION_VISIBILITY_SCRIPT = """
       state.orientation!==physicalOrientation;
     state.orientation=physicalOrientation;
     if(rotated){
-      clearAll();
+      // Do NOT clear the markers: the CSS keeps the real Like/Bookmark visible
+      // through X's rebuild. Wiping them left the buttons hidden until the new
+      // layout was rediscovered. Only forget stale per-layout display values.
       state.savedDisplays=new WeakMap();
       state.rotatedAt=Date.now();
     }
@@ -824,7 +826,7 @@ private val X_VIDEO_NATIVE_ACTION_VISIBILITY_SCRIPT = """
   const postRotation=()=>{
     for(const id of state.timerIds)clearTimeout(id);
     state.timerIds=[];
-    for(const ms of [80,220,480,900,1600]){
+    for(const ms of [80,220,480,900,1600,2800,4500]){
       state.timerIds.push(setTimeout(()=>state.schedule?.(),ms));
     }
   };
@@ -2373,6 +2375,12 @@ fun MultiTabBrowser(
                 // Dynamic X pages reuse the document while navigating posts.
                 // Reinstate CSS if React recreates its head or mobile navigation.
                 if (BrowserVideoDiscovery.isXPage(selected.url)) {
+                    if (!heavyTick) {
+                        // Cheap safety net (after rotation/fade): re-run only the
+                        // already-installed Like/Bookmark visibility scan.
+                        browser.evaluateJavascript(
+                            "window.__mydownloadXNativeVisibility?.schedule?.()", null)
+                    }
                     if (heavyTick) {
                         browser.evaluateJavascript(xDisplayScript(currentXOptions), null)
                         browser.evaluateJavascript(X_MEDIA_PINCH_ZOOM_SCRIPT, null)
