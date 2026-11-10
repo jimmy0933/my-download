@@ -817,10 +817,16 @@ private val X_VIDEO_NATIVE_ACTION_VISIBILITY_SCRIPT = """
   const schedule=()=>{
     if(state.scheduled)return;
     state.scheduled=true;
-    requestAnimationFrame(()=>{
+    // The carousel rewrites style/class on every animation frame while the
+    // user swipes between posts. Scanning each frame (querySelectorAll +
+    // getComputedStyle) made swiping stutter, so run at most every ~140ms.
+    const wait=Math.max(0,140-(performance.now()-(state.lastScanAt||0)));
+    const run=()=>requestAnimationFrame(()=>{
       state.scheduled=false;
+      state.lastScanAt=performance.now();
       state.refresh?.();
     });
+    if(wait>0)setTimeout(run,wait);else run();
   };
   state.schedule=schedule;
   const postRotation=()=>{

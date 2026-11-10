@@ -966,7 +966,18 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
       if (!(state.settings?.hideNative || state.settings?.hideAuthor ||
             state.settings?.showCustom || state.settings?.hideNativeTitle) ||
           !mutations.some(m=>m.addedNodes.length||m.removedNodes.length))return;
-      state.refresh?.();
+      // Leading + trailing throttle: the first change is handled at once (so a
+      // new card is cleaned before paint), but the burst of DOM changes during a
+      // swipe is collapsed into one refresh per ~120ms instead of one each.
+      const now=performance.now();
+      const wait=120-(now-(state.lastObserved||0));
+      if(wait<=0){state.lastObserved=now;state.refresh?.();return;}
+      if(state.observeTimer)return;
+      state.observeTimer=setTimeout(()=>{
+        state.observeTimer=null;
+        state.lastObserved=performance.now();
+        state.refresh?.();
+      },wait);
     });
     state.observer.observe(document.documentElement,{
       childList:true,subtree:true
