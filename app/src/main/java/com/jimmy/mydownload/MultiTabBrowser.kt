@@ -40,6 +40,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
+import androidx.compose.material.icons.filled.CollectionsBookmark
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -2584,6 +2585,18 @@ fun MultiTabBrowser(
                     if (saved) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
                     contentDescription = if (saved) "取消書籤" else "加入書籤",
                     tint = if (saved) BrowserGreen else Color.White,
+                    modifier = Modifier.size(21.dp)
+                )
+            }
+            // One tap to X's own bookmarks timeline (login to X required).
+            IconButton(
+                onClick = { navigate("https://x.com/i/bookmarks") },
+                modifier = Modifier.size(37.dp)
+            ) {
+                Icon(
+                    Icons.Default.CollectionsBookmark,
+                    contentDescription = "X 收藏",
+                    tint = BrowserGreen,
                     modifier = Modifier.size(21.dp)
                 )
             }
