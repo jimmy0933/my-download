@@ -548,6 +548,12 @@ private val X_VIDEO_NATIVE_ACTION_VISIBILITY_SCRIPT = """
   const likeAttr='data-mydownload-native-like';
   const bookmarkAttr='data-mydownload-native-bookmark';
   const styleId='mydownload-x-native-actions-css';
+  const keepAttr='data-mydownload-native-actions-keep-visible';
+  const state=window.__mydownloadXNativeVisibility ||
+    (window.__mydownloadXNativeVisibility={
+      savedDisplays:new WeakMap(),orientation:''
+    });
+  const orientation=innerWidth+'x'+innerHeight;
   const siteViewer=()=>__DEDICATED_VIEWER__;
 
   // v244 incorrectly hid X controls and drew two non-native replicas.
@@ -581,6 +587,13 @@ private val X_VIDEO_NATIVE_ACTION_VISIBILITY_SCRIPT = """
     '['+likeAttr+'="hide"],['+bookmarkAttr+'="hide"] {'+
       'display:none !important;pointer-events:none !important;}' +
     '['+likeAttr+'="show"],['+bookmarkAttr+'="show"] {'+
+      'display:var(--mydownload-x-original-display,inline-flex) !important;'+
+      'visibility:visible !important;opacity:1 !important;'+
+      'pointer-events:auto !important;}' +
+    // X also fades the parent action strip. Opacity 0 on an ancestor hides
+    // the button even if the button itself is opacity 1.
+    '['+keepAttr+'="1"] {'+
+      'display:var(--mydownload-x-original-display,flex) !important;'+
       'visibility:visible !important;opacity:1 !important;'+
       'pointer-events:auto !important;}';
   if(style.textContent!==css)style.textContent=css;
@@ -589,12 +602,26 @@ private val X_VIDEO_NATIVE_ACTION_VISIBILITY_SCRIPT = """
   // unrelated posts. Mark native controls only in an open media viewer.
   const previouslyMarked=Array.from(document.querySelectorAll(
     '['+likeAttr+'],['+bookmarkAttr+']'));
+  const previouslyKept=Array.from(document.querySelectorAll(
+    '['+keepAttr+']'));
   const clear=()=>{
     for(const el of previouslyMarked){
       el.removeAttribute(likeAttr);
       el.removeAttribute(bookmarkAttr);
+      el.style.removeProperty('--mydownload-x-original-display');
+    }
+    for(const el of previouslyKept){
+      el.removeAttribute(keepAttr);
+      el.style.removeProperty('--mydownload-x-original-display');
     }
   };
+  // Reset original layout on rotation, before preserving the new screen's
+  // action row. Never leave the portrait toolbar layout stuck in landscape.
+  if(state.orientation!==orientation){
+    clear();
+    state.savedDisplays=new WeakMap();
+    state.orientation=orientation;
+  }
   if(!siteViewer()){
     clear();
     return 'not-viewer';
@@ -690,10 +717,50 @@ private val X_VIDEO_NATIVE_ACTION_VISIBILITY_SCRIPT = """
     if(!likes.has(el))el.removeAttribute(likeAttr);
     if(!bookmarks.has(el))el.removeAttribute(bookmarkAttr);
   }
-  for(const el of likes)el.setAttribute(likeAttr,showLike?'show':'hide');
-  for(const el of bookmarks)
-    el.setAttribute(bookmarkAttr,showBookmark?'show':'hide');
-  return 'native-actions:'+likes.size+'/'+bookmarks.size;
+  const markNative=(el,attr,show)=>{
+    if(show){
+      const display=getComputedStyle(el).display;
+      if(display!=='none')state.savedDisplays.set(el,display);
+      const original=state.savedDisplays.get(el)||'inline-flex';
+      if(el.style.getPropertyValue('--mydownload-x-original-display')!==original)
+        el.style.setProperty('--mydownload-x-original-display',original);
+    }else{
+      el.style.removeProperty('--mydownload-x-original-display');
+    }
+    el.setAttribute(attr,show?'show':'hide');
+  };
+  for(const el of likes)markNative(el,likeAttr,showLike);
+  for(const el of bookmarks)markNative(el,bookmarkAttr,showBookmark);
+
+  // Preserve the NATIVE toolbar wrappers while X fades playback controls.
+  // Do not change the video, carousel, article root or DOM ownership, so
+  // the existing React Like/Bookmark click handlers continue to work.
+  const keep=new Set();
+  const keepParents=control=>{
+    for(let parent=control.parentElement,depth=0;
+        parent&&depth<10;parent=parent.parentElement,depth++){
+      if(parent===document.body||parent===document.documentElement||
+         parent===root||parent===currentArticle ||
+         parent.querySelector('video,canvas'))break;
+      const rect=parent.getBoundingClientRect();
+      if(rect.height>innerHeight*.65&&rect.width>innerWidth*.65)break;
+      keep.add(parent);
+      const display=getComputedStyle(parent).display;
+      if(display!=='none')state.savedDisplays.set(parent,display);
+      const original=state.savedDisplays.get(parent)||
+        (parent.tagName==='SPAN'?'inline-flex':'flex');
+      if(parent.style.getPropertyValue('--mydownload-x-original-display')!==original)
+        parent.style.setProperty('--mydownload-x-original-display',original);
+    }
+  };
+  if(showLike)for(const el of likes)keepParents(el);
+  if(showBookmark)for(const el of bookmarks)keepParents(el);
+  for(const parent of previouslyKept)if(!keep.has(parent)){
+    parent.removeAttribute(keepAttr);
+    parent.style.removeProperty('--mydownload-x-original-display');
+  }
+  for(const parent of keep)parent.setAttribute(keepAttr,'1');
+  return 'native-actions-persistent:'+likes.size+'/'+bookmarks.size;
 })()
 """.trimIndent()
 
