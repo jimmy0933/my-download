@@ -1551,18 +1551,37 @@ private val X_VIDEO_DOUBLE_TAP_SEEK_SCRIPT = """
     const prior=lastSeek;
     // Android WebView/X may report a stale currentTime while a previous
     // asynchronous seek is still settling. Accumulate on the last target.
-    const base=prior?.video===video &&
-      (video.seeking||now-prior.at<2500)
-        ? prior.target : video.currentTime;
+    // Guard: a stale target (slow buffering, or X moved the playhead itself)
+    // must never be extended. If it is far from the real position, start over
+    // from the real position so one tap pair can never jump a long way.
+    const current=video.currentTime;
+    const useTarget=prior?.video===video &&
+      (video.seeking||now-prior.at<2500) &&
+      Number.isFinite(current) && Math.abs(prior.target-current)<=25;
+    const base=useTarget ? prior.target : current;
     if(!Number.isFinite(base))return;
     const next=Math.max(0,Math.min(
       base+(side==='left'?-10:10),Math.max(0,duration-.1)));
-    lastSeek={video,target:next,at:now};
+    const record={video,target:next,at:now};
+    lastSeek=record;
     if(Math.abs(next-base)<.01)return; // Already at start/end.
     try {
       video.currentTime=next; // Exactly one seek for each complete tap pair.
       window.__mydownloadOptionalXSeek?.updateClock?.();
       feedback(side);
+      // If X's own double-tap handler ALSO moved the playhead, undo only the
+      // overshoot in the seek direction (never touch a stall or a newer tap).
+      const dir=side==='left'?-1:1;
+      for(const delay of [300,750]){
+        setTimeout(()=>{
+          if(lastSeek!==record||video.seeking||!video.isConnected)return;
+          const expected=next+(video.paused?0:(performance.now()-record.at)/1000);
+          if((video.currentTime-expected)*dir>2.5){
+            try{video.currentTime=Math.max(0,Math.min(expected,
+              Math.max(0,video.duration-.1)));}catch(_){}
+          }
+        },delay);
+      }
     }catch(_) { lastSeek=null; }
   };
   const candidate=(x,y,now)=>{
