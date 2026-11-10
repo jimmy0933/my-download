@@ -1607,6 +1607,26 @@ private val X_VIDEO_DOUBLE_TAP_SEEK_SCRIPT = """
       }
     }catch(_) { lastSeek=null; }
   };
+  // X's own double-tap tracker can also pair a video tap with a PREVIOUS tap
+  // (e.g. on Like/Bookmark) and seek by itself, which looked like random long
+  // jumps. After any side tap that we did not turn into a seek, undo a big
+  // unexpected playhead move.
+  const guardNativeSeek=(video,from,at)=>{
+    if(!Number.isFinite(from))return;
+    const paused=video.paused;
+    for(const delay of [300,800]){
+      setTimeout(()=>{
+        if(!video.isConnected||video.seeking||activeVideo()!==video)return;
+        // We seeked on purpose after this tap: the overshoot guard owns it.
+        if(lastSeek&&lastSeek.video===video&&lastSeek.at>=at-5)return;
+        const expected=from+(paused||video.paused?0:(performance.now()-at)/1000);
+        if(Math.abs(video.currentTime-expected)>3){
+          try{video.currentTime=Math.max(0,Math.min(expected,
+            Math.max(0,video.duration-.1)));}catch(_){}
+        }
+      },delay);
+    }
+  };
   const candidate=(x,y,now)=>{
     if(!viewer())return null;
     const side=sideAt(x),video=side?activeVideo():null;
@@ -1619,7 +1639,9 @@ private val X_VIDEO_DOUBLE_TAP_SEEK_SCRIPT = """
     tapStart=null;
     if(e.touches.length!==1||!validTarget(e)||
         window.__mydownloadMediaZoom?.isZoomed?.()){
-      lastTap=null;return;
+      // A Like/Bookmark/button tap must not chain into the next seek: X's own
+      // tap tracker can pair it with the following video tap.
+      lastTap=null;lastSeek=null;return;
     }
     const t=e.touches[0];
     const tap=candidate(t.clientX,t.clientY,performance.now());
@@ -1653,6 +1675,7 @@ private val X_VIDEO_DOUBLE_TAP_SEEK_SCRIPT = """
     // Stop X's touchend AND its synthesized click for each video-side tap.
     // No arbitrary 680ms lock: four taps = two deliberate 10s seeks.
     recentSideTap=tap;
+    guardNativeSeek(tap.video,start.video.currentTime,now);
     // A single tap must still reveal the optional progress controls even
     // though we swallow X's native touchend to prevent duplicate seeking.
     window.__mydownloadOptionalXSeek?.revealBar?.();
