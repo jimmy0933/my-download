@@ -616,8 +616,7 @@ private val X_VIDEO_ACTION_BUTTONS_SCRIPT = """
       return {node,control};
     }).filter(({control})=>{
       if(!control.isConnected||seen.has(control)||
-         control.closest('#'+rootId)||
-         control.closest('nav,[role="navigation"]'))return false;
+         control.closest('#'+rootId))return false;
       seen.add(control);
       if(control.querySelector('video'))return false;
       // Never proxy an entire action row containing multiple distinct
@@ -626,9 +625,15 @@ private val X_VIDEO_ACTION_BUTTONS_SCRIPT = """
          control.querySelector('[data-testid*="bookmark" i]'))return false;
       const owner=control.closest('article[data-testid="tweet"]');
       if(article && owner && owner!==article)return false;
-      if(!owner&&!viewer)return false;
-      if(!owner&&viewer&&!viewer.contains(control)&&
-         !control.closest('#layers'))return false;
+      // Without a current article, never pick a Like/Bookmark belonging
+      // to a different post in the surrounding X feed.
+      if(!viewer && (!article || owner!==article))return false;
+      if(viewer && !viewer.contains(control) &&
+         !(control.closest('#layers') && !owner))return false;
+      // Closed portal menu items are not clickable. In this case the
+      // bookmark fallback opens X's own Share menu on explicit user tap.
+      if(control.closest('[role="menu"],[role="menuitem"]') &&
+         !control.getClientRects().length)return false;
       return true;
     });
     const score=entry=>{
