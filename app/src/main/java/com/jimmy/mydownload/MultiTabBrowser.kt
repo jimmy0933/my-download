@@ -651,7 +651,10 @@ private val X_VIDEO_NATIVE_ACTION_VISIBILITY_SCRIPT = """
       const el=child.closest('button,[role="button"],a[href]')||
         (child.matches('button,[role="button"]')?child:null);
       if(!el||!el.isConnected||found.has(el)||
-         el.closest('nav,[role="navigation"]')||
+         // Skip the actual Home/Notifications navigation, not an X
+         // immersive action strip that happens to use a <nav> tag.
+         el.closest('nav:has(a[href="/home"]),' +
+           '[role="navigation"]:has(a[href="/home"])')||
          el.closest('#mydownload-optional-x-progress')||
          el.querySelector('video,[data-testid="videoPlayer"]'))continue;
       // Only native clickable elements. Never mark whole action strips,
