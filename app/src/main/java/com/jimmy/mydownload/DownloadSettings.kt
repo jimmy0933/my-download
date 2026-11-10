@@ -27,6 +27,8 @@ data class XDisplayOptions(
     val hideVideoBelowProgressDetails: Boolean = false,
     val hideViewerViews: Boolean = false,
     val hideViewerShare: Boolean = false,
+    val showViewerLike: Boolean = true,
+    val showViewerBookmark: Boolean = true,
     val hideNativeXVideoProgress: Boolean = false,
     val showCustomXVideoProgress: Boolean = false,
     val hideViewerAuthorShortcut: Boolean = false,
@@ -73,6 +75,8 @@ object DownloadSettings {
     private const val X_HIDE_VIDEO_BELOW_PROGRESS_DETAILS = "x_hide_video_below_progress_details"
     private const val X_HIDE_VIEWER_VIEWS = "x_hide_viewer_views"
     private const val X_HIDE_VIEWER_SHARE = "x_hide_viewer_share"
+    private const val X_SHOW_VIEWER_LIKE = "x_show_viewer_like"
+    private const val X_SHOW_VIEWER_BOOKMARK = "x_show_viewer_bookmark"
     // New keys intentionally do not reuse the deleted overlay defaults.
     private const val X_HIDE_NATIVE_VIDEO_PROGRESS = "x_hide_native_video_progress_v2"
     private const val X_SHOW_CUSTOM_VIDEO_PROGRESS = "x_show_custom_video_progress_v2"
@@ -179,6 +183,8 @@ object DownloadSettings {
             hideVideoBelowProgressDetails = prefs.getBoolean(X_HIDE_VIDEO_BELOW_PROGRESS_DETAILS, false),
             hideViewerViews = prefs.getBoolean(X_HIDE_VIEWER_VIEWS, false),
             hideViewerShare = prefs.getBoolean(X_HIDE_VIEWER_SHARE, false),
+            showViewerLike = prefs.getBoolean(X_SHOW_VIEWER_LIKE, true),
+            showViewerBookmark = prefs.getBoolean(X_SHOW_VIEWER_BOOKMARK, true),
             hideNativeXVideoProgress = prefs.getBoolean(X_HIDE_NATIVE_VIDEO_PROGRESS, false),
             showCustomXVideoProgress = prefs.getBoolean(X_SHOW_CUSTOM_VIDEO_PROGRESS, false),
             hideViewerAuthorShortcut = prefs.getBoolean(X_HIDE_VIEWER_AUTHOR_SHORTCUT, false),
@@ -207,6 +213,8 @@ object DownloadSettings {
             .putBoolean(X_HIDE_VIDEO_BELOW_PROGRESS_DETAILS, options.hideVideoBelowProgressDetails)
             .putBoolean(X_HIDE_VIEWER_VIEWS, options.hideViewerViews)
             .putBoolean(X_HIDE_VIEWER_SHARE, options.hideViewerShare)
+            .putBoolean(X_SHOW_VIEWER_LIKE, options.showViewerLike)
+            .putBoolean(X_SHOW_VIEWER_BOOKMARK, options.showViewerBookmark)
             .putBoolean(X_HIDE_NATIVE_VIDEO_PROGRESS, options.hideNativeXVideoProgress)
             .putBoolean(X_SHOW_CUSTOM_VIDEO_PROGRESS, options.showCustomXVideoProgress)
             .putBoolean(X_HIDE_VIEWER_AUTHOR_SHORTCUT, options.hideViewerAuthorShortcut)
