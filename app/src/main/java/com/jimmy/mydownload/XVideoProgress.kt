@@ -152,6 +152,40 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
     return null;
   };
 
+  // X reuses the same atomic CSS classes for the gradient on every card. Learn
+  // the class signature once and add a persistent rule, so the NEXT card's
+  // gradient is already removed on its first paint (no dark flash while the
+  // per-node scan catches up).
+  state.fadeSignatures=state.fadeSignatures||new Set();
+  state.rememberFadeSignature=(node,modes)=>{
+    try{
+      const names=typeof node.className==='string'?
+        node.className.split(/\s+/).filter(Boolean):[];
+      if(!names.length||names.length>14)return;
+      const sel=names.map(n=>'.'+CSS.escape(n)).join('');
+      const base='html[data-mydownload-simplify-x-player="1"] '+sel;
+      const rules=[];
+      if(modes.includes('bg'))rules.push(base+'{background-image:none!important}');
+      if(modes.includes('before'))
+        rules.push(base+'::before{background-image:none!important}');
+      if(modes.includes('after'))
+        rules.push(base+'::after{background-image:none!important}');
+      let changed=false;
+      for(const r of rules)if(!state.fadeSignatures.has(r)){
+        if(state.fadeSignatures.size>=40)return;
+        state.fadeSignatures.add(r);changed=true;
+      }
+      if(!changed)return;
+      let sheet=document.getElementById('mydownload-x-fade-signature-css');
+      if(!sheet){
+        sheet=document.createElement('style');
+        sheet.id='mydownload-x-fade-signature-css';
+        (document.head||document.documentElement).appendChild(sheet);
+      }
+      sheet.textContent=Array.from(state.fadeSignatures).join('\n');
+    }catch(_){}
+  };
+
   state.clearBottomFade=()=>{
     document.documentElement.removeAttribute('data-mydownload-simplify-x-player');
     for(const node of state.bottomFadeNodes){
@@ -204,6 +238,7 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
       if(!modes.length)continue;
       node.setAttribute(fadeAttr,modes.join(' '));
       state.bottomFadeNodes.add(node);
+      state.rememberFadeSignature?.(node,modes);
     }
     for(const node of state.bottomFadeNodes){
       if(!node.isConnected){
@@ -873,7 +908,8 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
       if (settings.hideAuthor && video) markAuthor(video);
       const videoChanged=state.overlayVideo!==video;
       if(videoChanged){
-        state.clearBottomFade?.();
+        // Keep the gradient fix across clip changes: clearing it here made the
+        // lower half flash dark until the new card was scanned.
         state.clearNativeTitle?.();
         state.overlayVideo=video;
       }
@@ -883,13 +919,16 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
       if(settings.hideNativeTitle && video)state.refreshNativeTitle?.();
       else state.clearNativeTitle?.();
       if(settings.showCustom && video)state.refreshBottomFade?.();
-      else state.clearBottomFade?.();
+      else if(!settings.showCustom || !document.querySelector(
+          '[data-testid="vss-scroll-view"],[data-testid="immersive-viewer"],'+
+          '#layers [role="dialog"]'))state.clearBottomFade?.();
       if (!settings.showCustom || !playable) {
         cancelHideTimer();
         state.barShown=false;
         state.autoHideDelay=null;
         clearNativeToggle();
-        state.clearBottomFade?.();
+        // A not-yet-playable NEW clip must not bring the dark gradient back.
+        if(!settings.showCustom)state.clearBottomFade?.();
         if (state.root) state.root.style.display='none';
         state.video=null;bindVideo(null);
         state.seeking=false;state.seekVideo=null;
