@@ -438,13 +438,13 @@ fun DownloadSettingsScreen(
                 Text("X 影片底部操作列", style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold)
                 Text(
-                    "愛心與收藏使用獨立的固定按鈕，避免 X 原生控制列自動隱藏時一起消失；可分別關閉。若 X 尚未載入該貼文的操作功能，點擊時會提示。",
+                    "只控制 X 原生愛心與收藏按鈕，不會建立額外按鈕；保留 X 原本的點擊、按讚與收藏狀態。若 X 尚未載入按鈕，App 不會自行生成。",
                     color = Color(0xFFB4C8D5), style = MaterialTheme.typography.bodySmall
                 )
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                         Text("顯示愛心 ❤️", fontWeight = FontWeight.Medium)
-                        Text("影片播放畫面保留按讚／取消讚的快捷按鈕。",
+                        Text("顯示 X 原本的按讚／取消讚按鈕，不新增圖示。",
                             color = Color(0xFF9CAFC0), style = MaterialTheme.typography.bodySmall)
                     }
                     Spacer(Modifier.width(10.dp))
@@ -456,7 +456,7 @@ fun DownloadSettingsScreen(
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                         Text("顯示收藏 🔖", fontWeight = FontWeight.Medium)
-                        Text("影片播放畫面保留加入／移除書籤的快捷按鈕。",
+                        Text("顯示 X 原本的收藏／移除收藏按鈕，不新增圖示。",
                             color = Color(0xFF9CAFC0), style = MaterialTheme.typography.bodySmall)
                     }
                     Spacer(Modifier.width(10.dp))
