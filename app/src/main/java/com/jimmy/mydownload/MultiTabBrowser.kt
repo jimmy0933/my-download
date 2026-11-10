@@ -717,12 +717,20 @@ private val X_VIDEO_NATIVE_ACTION_VISIBILITY_SCRIPT = """
     }
 
     const nativeVerified=__DEDICATED_VIEWER__;
-    if(nativeVerified)state.lastVerified=Date.now();
+    if(nativeVerified){
+      state.lastVerified=Date.now();
+      state.verifiedHref=location.href;
+    }
     const candidate=candidateViewer();
-    // React briefly fades/remounts its immersive root on rotation; do not
-    // mistake that transition for closing the video and erase all markers.
-    const rotationGrace=Date.now()-Math.max(
-      state.rotatedAt,state.lastVerified)<2200;
+    // React briefly fades/remounts its immersive root on rotation, and X also
+    // fades its whole control layer (opacity:0) when idle, together with the
+    // seek bar. The strict viewer check rejects opacity:0, so without a
+    // tolerance every marker (and Like/Bookmark) was cleared on each fade.
+    // While the geometry-only candidate still exists, stay in the same viewer
+    // (same URL) or within a generous grace window.
+    const sinceVerified=Date.now()-Math.max(state.rotatedAt,state.lastVerified);
+    const rotationGrace=sinceVerified<8000 ||
+      (state.verifiedHref===location.href && sinceVerified<10*60*1000);
     if(!nativeVerified && !(candidate&&rotationGrace)){
       clearAll();
       return 'not-viewer';
