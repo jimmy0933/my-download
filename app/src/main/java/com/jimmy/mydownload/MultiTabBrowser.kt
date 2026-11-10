@@ -1323,7 +1323,9 @@ private val X_LANDSCAPE_CAROUSEL_SCRIPT = """
     if(scroll.scrollHeight<=scroll.clientHeight+2)return;
     const rr=scroll.getBoundingClientRect(),cr=anchor.card.getBoundingClientRect();
     const delta=cr.top-rr.top;
-    if(Math.abs(delta)<18||Math.abs(delta)>rr.height*1.6)return;
+    // Rotation can leave the list several cards away (e.g. two clips ahead),
+    // so allow a large correction; only ignore sub-pixel noise.
+    if(Math.abs(delta)<18||Math.abs(delta)>Math.max(rr.height,innerHeight)*12)return;
     // Rotation only. Never snap manually after a native user swipe.
     const oldSnap=scroll.style.scrollSnapType,oldBehavior=scroll.style.scrollBehavior;
     scroll.style.scrollSnapType='none';
@@ -1337,6 +1339,8 @@ private val X_LANDSCAPE_CAROUSEL_SCRIPT = """
   const scheduleRotation=()=>{
     const anchor=state.anchor;
     clearTimeout(state.rotationTimer);
+    for(const t of state.restoreTimers||[])clearTimeout(t);
+    state.restoreTimers=[];
     state.rotating=true;
     const token=++state.rotationToken;
     // Wait for X/Android to settle the WebView resize before changing card
@@ -1344,13 +1348,20 @@ private val X_LANDSCAPE_CAROUSEL_SCRIPT = """
     state.rotationTimer=setTimeout(()=>{
       if(token!==state.rotationToken)return;
       state.rotating=false;
-      if(!state.enabled||!landscape())return;
       const geometry=layout();
-      apply(geometry);
-      if(!state.touching&&anchor){
-        requestAnimationFrame(()=>restoreRotatedCard(anchor));
+      if(state.enabled&&landscape())apply(geometry);
+      // Return to the clip that was playing, in BOTH directions and whether
+      // or not in-app fullscreen is on. X keeps the old pixel scrollTop after
+      // the resize, which landed two clips ahead. Retry as X's layout settles.
+      if(anchor){
+        for(const delay of [0,420,1000]){
+          state.restoreTimers.push(setTimeout(()=>{
+            if(token!==state.rotationToken||state.touching)return;
+            requestAnimationFrame(()=>restoreRotatedCard(anchor));
+          },delay));
+        }
       }
-      state.anchor=activeCard(geometry);
+      state.anchor=anchor||activeCard(geometry);
     },240);
   };
   const refresh=()=>{
@@ -1377,6 +1388,18 @@ private val X_LANDSCAPE_CAROUSEL_SCRIPT = """
     state.listenerInstalledV2=true;
     state.rotationToken=0;
     state.touching=false;
+    // Keep the remembered clip current after momentum/snap scrolling and
+    // autoplay-advance, but never while a rotation is changing the layout.
+    document.addEventListener('scroll',()=>{
+      clearTimeout(state.anchorTimer);
+      state.anchorTimer=setTimeout(()=>{
+        if(state.rotating||state.touching||
+            state.orientation!==landscape())return;
+        const geometry=layout();
+        const current=geometry&&activeCard(geometry);
+        if(current)state.anchor=current;
+      },160);
+    },{passive:true,capture:true});
     window.addEventListener('resize',()=>refresh(),{passive:true});
     window.addEventListener('orientationchange',()=>refresh(),{passive:true});
     document.addEventListener('touchstart',()=>{
