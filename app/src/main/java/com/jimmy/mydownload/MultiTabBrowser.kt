@@ -542,118 +542,115 @@ private fun xDisplayScript(options: XDisplayOptions): String {
  */
 private val X_VIDEO_NATIVE_ACTION_VISIBILITY_SCRIPT = """
 (() => {
-  if (!/^(?:www\.)?(?:x\.com|twitter\.com)$/.test(location.hostname))
+  if(!/^(?:www\.)?(?:x\.com|twitter\.com)$/.test(location.hostname))
     return 'not-x';
-  const showLike=__SHOW_LIKE__, showBookmark=__SHOW_BOOKMARK__;
   const likeAttr='data-mydownload-native-like';
   const bookmarkAttr='data-mydownload-native-bookmark';
-  const styleId='mydownload-x-native-actions-css';
   const keepAttr='data-mydownload-native-actions-keep-visible';
+  const keepDisplayAttr='data-mydownload-native-actions-keep-display';
+  const styleId='mydownload-x-native-actions-css';
   const state=window.__mydownloadXNativeVisibility ||
     (window.__mydownloadXNativeVisibility={
-      savedDisplays:new WeakMap(),orientation:''
+      savedDisplays:new WeakMap(),orientation:null,rotatedAt:0,
+      lastVerified:0,scheduled:false,observer:null,listenerInstalled:false,
+      timerIds:[],refresh:null
     });
-  const orientation=innerWidth+'x'+innerHeight;
-  const siteViewer=()=>__DEDICATED_VIEWER__;
+  state.showLike=__SHOW_LIKE__;
+  state.showBookmark=__SHOW_BOOKMARK__;
 
-  // v244 incorrectly hid X controls and drew two non-native replicas.
-  // Explicitly undo that version's DOM changes, including its CSS.
+  // Never create replacement buttons. Remove v244's ineffective proxies.
   const replica=window.__mydownloadXActionButtons;
   if(replica){
     replica.refresh=()=>{};
     replica.root?.remove();
     replica.root=null;
-    for(const control of replica.marks||[]){
-      if(control?.isConnected)
-        control.removeAttribute('data-mydownload-x-action-native');
-    }
+    for(const el of replica.marks||[])
+      el?.removeAttribute?.('data-mydownload-x-action-native');
     replica.marks?.clear?.();
   }
   document.getElementById('mydownload-x-video-actions')?.remove();
   document.getElementById('mydownload-x-video-actions-css')?.remove();
   document.getElementById('mydownload-x-action-hint')?.remove();
-  for(const control of document.querySelectorAll(
-    '[data-mydownload-x-action-native]')){
-    control.removeAttribute('data-mydownload-x-action-native');
+  for(const el of document.querySelectorAll(
+    '[data-mydownload-x-action-native]'))
+    el.removeAttribute('data-mydownload-x-action-native');
+
+  let sheet=document.getElementById(styleId);
+  if(!sheet){
+    sheet=document.createElement('style');
+    sheet.id=styleId;
+    (document.head||document.documentElement).appendChild(sheet);
   }
+  // The earlier layout forced flex on every ancestor. After rotating X may
+  // rebuild those rows as grid/contents, so a blanket flex rule breaks them.
+  // Only a genuinely display:none parent receives the display override.
+  const css='['+likeAttr+'="hide"],['+bookmarkAttr+'="hide"]{'+
+    'display:none!important;pointer-events:none!important;}' +
+    '['+likeAttr+'="show"],['+bookmarkAttr+'="show"]{'+
+    'display:var(--mydownload-x-original-display,inline-flex)!important;'+
+    'visibility:visible!important;opacity:1!important;'+
+    'pointer-events:auto!important;}' +
+    '['+keepAttr+'="1"]{visibility:visible!important;'+
+    'opacity:1!important;pointer-events:auto!important;}' +
+    '['+keepDisplayAttr+'="1"]{'+
+    'display:var(--mydownload-x-original-display,flex)!important;}';
+  if(sheet.textContent!==css)sheet.textContent=css;
 
-  const style=document.getElementById(styleId) || (()=>{
-    const element=document.createElement('style');
-    element.id=styleId;
-    (document.head||document.documentElement).appendChild(element);
-    return element;
-  })();
-  const css=
-    '['+likeAttr+'="hide"],['+bookmarkAttr+'="hide"] {'+
-      'display:none !important;pointer-events:none !important;}' +
-    '['+likeAttr+'="show"],['+bookmarkAttr+'="show"] {'+
-      'display:var(--mydownload-x-original-display,inline-flex) !important;'+
-      'visibility:visible !important;opacity:1 !important;'+
-      'pointer-events:auto !important;}' +
-    // X also fades the parent action strip. Opacity 0 on an ancestor hides
-    // the button even if the button itself is opacity 1.
-    '['+keepAttr+'="1"] {'+
-      'display:var(--mydownload-x-original-display,flex) !important;'+
-      'visibility:visible !important;opacity:1 !important;'+
-      'pointer-events:auto !important;}';
-  if(style.textContent!==css)style.textContent=css;
-
-  // A false positive on X's feed would hide or force-show buttons from
-  // unrelated posts. Mark native controls only in an open media viewer.
-  const previouslyMarked=Array.from(document.querySelectorAll(
-    '['+likeAttr+'],['+bookmarkAttr+']'));
-  const previouslyKept=Array.from(document.querySelectorAll(
-    '['+keepAttr+']'));
-  const clear=()=>{
-    for(const el of previouslyMarked){
+  const clearAll=()=>{
+    document.querySelectorAll('['+likeAttr+'],['+bookmarkAttr+'],'+
+      '['+keepAttr+'],['+keepDisplayAttr+']').forEach(el=>{
       el.removeAttribute(likeAttr);
       el.removeAttribute(bookmarkAttr);
-      el.style.removeProperty('--mydownload-x-original-display');
-    }
-    for(const el of previouslyKept){
       el.removeAttribute(keepAttr);
+      el.removeAttribute(keepDisplayAttr);
       el.style.removeProperty('--mydownload-x-original-display');
-    }
+    });
   };
-  // Reset original layout on rotation, before preserving the new screen's
-  // action row. Never leave the portrait toolbar layout stuck in landscape.
-  if(state.orientation!==orientation){
-    clear();
-    state.savedDisplays=new WeakMap();
-    state.orientation=orientation;
-  }
-  if(!siteViewer()){
-    clear();
-    return 'not-viewer';
-  }
-
-  const root=Array.from(document.querySelectorAll(
-    '[data-testid="vss-scroll-view"],[data-testid="immersive-viewer"],'+
-    '#layers [role="dialog"]:has(video,[data-testid="videoPlayer"])'
-  )).find(el=>{
+  const orientation=()=>innerWidth>innerHeight;
+  const isVisibleGeometry=(el)=>{
+    if(!el || el.closest('[aria-hidden="true"],[inert]'))return false;
     const r=el.getBoundingClientRect();
-    return r.width>=innerWidth*.48&&r.height>=innerHeight*.55&&
-      r.right>0&&r.left<innerWidth&&r.bottom>0&&r.top<innerHeight;
-  })||null;
-  const visible=(v)=>{
-    const r=v.getBoundingClientRect();
-    return r.width>=120&&r.height>=75&&
-      r.right>0&&r.left<innerWidth&&r.bottom>0&&r.top<innerHeight &&
-      !v.closest('[aria-hidden="true"],[inert]');
+    if(r.width<120||r.height<65||r.right<=0||r.bottom<=0||
+       r.left>=innerWidth||r.top>=innerHeight)return false;
+    const css=getComputedStyle(el);
+    // Opacity is deliberately NOT checked here. During X's rotation fade,
+    // a visible open viewer may temporarily be opacity:0.
+    return css.display!=='none'&&css.visibility!=='hidden';
   };
-  const videos=Array.from((root||document).querySelectorAll('video'))
-    .filter(visible);
-  videos.sort((a,b)=>{
-    const score=v=>{
-      const r=v.getBoundingClientRect();
-      const w=Math.max(0,Math.min(r.right,innerWidth)-Math.max(0,r.left));
-      const h=Math.max(0,Math.min(r.bottom,innerHeight)-Math.max(0,r.top));
-      return w*h - Math.abs((r.top+r.bottom)/2-innerHeight/2)*400+
-        (v.paused?0:100000);
-    };
-    return score(b)-score(a);
+  const viewerRoots=()=>Array.from(document.querySelectorAll(
+    '[data-testid="vss-scroll-view"],[data-testid="immersive-viewer"],' +
+    '#layers [role="dialog"]:has(video,[data-testid="videoPlayer"])'
+  )).filter(el=>{
+    if(!isVisibleGeometry(el))return false;
+    const r=el.getBoundingClientRect();
+    return r.width>=innerWidth*.48&&r.height>=innerHeight*.60&&
+      r.top<innerHeight*.30&&r.bottom>innerHeight*.72;
   });
-  const currentArticle=videos[0]?.closest('article[data-testid="tweet"]');
+  const videoScore=video=>{
+    if(!isVisibleGeometry(video))return -Infinity;
+    const r=video.getBoundingClientRect();
+    const w=Math.max(0,Math.min(r.right,innerWidth)-Math.max(r.left,0));
+    const h=Math.max(0,Math.min(r.bottom,innerHeight)-Math.max(r.top,0));
+    return w*h-Math.abs((r.top+r.bottom)/2-innerHeight/2)*400+
+      (video.paused?0:100000);
+  };
+  const activeVideo=scope=>Array.from(scope.querySelectorAll('video'))
+    .sort((a,b)=>videoScore(b)-videoScore(a))
+    .find(v=>videoScore(v)>0)||null;
+  const candidateViewer=()=>{
+    for(const root of viewerRoots()){
+      const video=activeVideo(root);
+      if(!video)continue;
+      // X may keep an ordinary feed rooted inside the same DOM container.
+      let visiblePosts=0;
+      for(const article of root.querySelectorAll('article[data-testid="tweet"]')){
+        if(isVisibleGeometry(article) && ++visiblePosts>=2)break;
+      }
+      if(visiblePosts>=2)continue;
+      return {root,video};
+    }
+    return null;
+  };
   const likeSelector=[
     '[data-testid="like"]','[data-testid="unlike"]',
     'button[aria-label="Like" i]','button[aria-label="Unlike" i]',
@@ -672,95 +669,178 @@ private val X_VIDEO_NATIVE_ACTION_VISIBILITY_SCRIPT = """
     '[aria-label="加入書籤"]','[aria-label="移除書籤"]',
     '[aria-label="收藏"]','[aria-label="取消收藏"]'
   ].join(',');
-  const findButtons=selector=>{
+  const saveDisplay=(el,fallback)=>{
+    if(!el.style)return;
+    const display=getComputedStyle(el).display;
+    const marked=el.hasAttribute(likeAttr)||el.hasAttribute(bookmarkAttr)||
+      el.hasAttribute(keepDisplayAttr);
+    if(display!=='none' && !marked)
+      state.savedDisplays.set(el,display);
+    const original=state.savedDisplays.get(el)||fallback;
+    if(el.style.getPropertyValue('--mydownload-x-original-display')!==original)
+      el.style.setProperty('--mydownload-x-original-display',original);
+  };
+  const findButtons=(selector,root,article)=>{
     const found=new Set();
     for(const child of document.querySelectorAll(selector)){
       const el=child.closest('button,[role="button"],a[href]')||
         (child.matches('button,[role="button"]')?child:null);
       if(!el||!el.isConnected||found.has(el)||
-         // Skip the actual Home/Notifications navigation, not an X
-         // immersive action strip that happens to use a <nav> tag.
+         el.closest('#mydownload-optional-x-progress')||
          el.closest('nav:has(a[href="/home"]),' +
            '[role="navigation"]:has(a[href="/home"])')||
-         el.closest('#mydownload-optional-x-progress')||
-         el.querySelector('video,[data-testid="videoPlayer"]'))continue;
-      // Only native clickable elements. Never mark whole action strips,
-      // especially a shared container that includes both Like and Bookmark.
-      const clickableChildren=el.querySelectorAll(
-        'button,[role="button"],a[href]');
-      if(clickableChildren.length>1)continue;
+         el.querySelector('video,[data-testid="videoPlayer"]')||
+         el.querySelectorAll('button,[role="button"],a[href]').length>1||
+         el.closest('[role="menu"],[role="menuitem"]'))continue;
       const owner=el.closest('article[data-testid="tweet"]');
-      if(currentArticle && owner && owner!==currentArticle)continue;
-      if(!root && (!currentArticle||owner!==currentArticle))continue;
-      if(root && !root.contains(el)){
-        // Some immersive actions live in a sibling portal under #layers,
-        // but never apply to another post's article outside the viewer.
+      if(article&&owner&&owner!==article)continue;
+      if(!root&&(!article||owner!==article))continue;
+      if(root&&!root.contains(el)){
+        // Allow native X portal actions, but not an adjacent feed post.
         if(owner||!el.closest('#layers'))continue;
         const r=el.getBoundingClientRect();
         if(r.bottom<innerHeight*.45||r.top>innerHeight)continue;
       }
-      // A bookmark option in a closed Share popup is not an on-screen
-      // toolbar button; do not show/hide unrelated menu items.
-      if(el.closest('[role="menu"],[role="menuitem"]'))continue;
       found.add(el);
     }
     return found;
   };
-  const likes=findButtons(likeSelector);
-  const bookmarks=findButtons(bookmarkSelector);
-  // If X uses one big clickable wrapper for both actions, ignore it.
-  for(const button of likes)if(bookmarks.has(button)){
-    likes.delete(button);
-    bookmarks.delete(button);
-  }
-  for(const el of previouslyMarked){
-    if(!likes.has(el))el.removeAttribute(likeAttr);
-    if(!bookmarks.has(el))el.removeAttribute(bookmarkAttr);
-  }
-  const markNative=(el,attr,show)=>{
-    if(show){
-      const display=getComputedStyle(el).display;
-      if(display!=='none')state.savedDisplays.set(el,display);
-      const original=state.savedDisplays.get(el)||'inline-flex';
-      if(el.style.getPropertyValue('--mydownload-x-original-display')!==original)
-        el.style.setProperty('--mydownload-x-original-display',original);
-    }else{
-      el.style.removeProperty('--mydownload-x-original-display');
+  const scan=()=>{
+    const physicalOrientation=orientation();
+    const rotated=state.orientation!==null&&
+      state.orientation!==physicalOrientation;
+    state.orientation=physicalOrientation;
+    if(rotated){
+      clearAll();
+      state.savedDisplays=new WeakMap();
+      state.rotatedAt=Date.now();
     }
-    el.setAttribute(attr,show?'show':'hide');
-  };
-  for(const el of likes)markNative(el,likeAttr,showLike);
-  for(const el of bookmarks)markNative(el,bookmarkAttr,showBookmark);
 
-  // Preserve the NATIVE toolbar wrappers while X fades playback controls.
-  // Do not change the video, carousel, article root or DOM ownership, so
-  // the existing React Like/Bookmark click handlers continue to work.
-  const keep=new Set();
-  const keepParents=control=>{
-    for(let parent=control.parentElement,depth=0;
-        parent&&depth<10;parent=parent.parentElement,depth++){
-      if(parent===document.body||parent===document.documentElement||
-         parent===root||parent===currentArticle ||
-         parent.querySelector('video,canvas'))break;
-      const rect=parent.getBoundingClientRect();
-      if(rect.height>innerHeight*.65&&rect.width>innerWidth*.65)break;
-      keep.add(parent);
-      const display=getComputedStyle(parent).display;
-      if(display!=='none')state.savedDisplays.set(parent,display);
-      const original=state.savedDisplays.get(parent)||
-        (parent.tagName==='SPAN'?'inline-flex':'flex');
-      if(parent.style.getPropertyValue('--mydownload-x-original-display')!==original)
-        parent.style.setProperty('--mydownload-x-original-display',original);
+    const nativeVerified=__DEDICATED_VIEWER__;
+    if(nativeVerified)state.lastVerified=Date.now();
+    const candidate=candidateViewer();
+    // React briefly fades/remounts its immersive root on rotation; do not
+    // mistake that transition for closing the video and erase all markers.
+    const rotationGrace=Date.now()-Math.max(
+      state.rotatedAt,state.lastVerified)<2200;
+    if(!nativeVerified && !(candidate&&rotationGrace)){
+      clearAll();
+      return 'not-viewer';
+    }
+    if(!candidate){
+      // Native X has not mounted the next card yet. Keep current markers;
+      // the resize retries / DOM observer will discover the new card.
+      return 'waiting-for-native-card';
+    }
+    const root=candidate.root;
+    const video=candidate.video;
+    const article=video.closest('article[data-testid="tweet"]');
+    const likes=findButtons(likeSelector,root,article);
+    const bookmarks=findButtons(bookmarkSelector,root,article);
+    for(const el of likes)if(bookmarks.has(el)){
+      likes.delete(el);bookmarks.delete(el);
+    }
+    const previouslyMarked=Array.from(document.querySelectorAll(
+      '['+likeAttr+'],['+bookmarkAttr+']'));
+    const previouslyKept=Array.from(document.querySelectorAll(
+      '['+keepAttr+'],['+keepDisplayAttr+']'));
+    for(const el of previouslyMarked){
+      if(!likes.has(el))el.removeAttribute(likeAttr);
+      if(!bookmarks.has(el))el.removeAttribute(bookmarkAttr);
+      if(!likes.has(el)&&!bookmarks.has(el))
+        el.style.removeProperty('--mydownload-x-original-display');
+    }
+    const apply=(elements,attr,enabled)=>{
+      for(const el of elements){
+        if(enabled)saveDisplay(el,'inline-flex');
+        else el.style.removeProperty('--mydownload-x-original-display');
+        if(el.getAttribute(attr)!==(enabled?'show':'hide'))
+          el.setAttribute(attr,enabled?'show':'hide');
+      }
+    };
+    apply(likes,likeAttr,state.showLike);
+    apply(bookmarks,bookmarkAttr,state.showBookmark);
+
+    // An invisible ancestor hides the child even with opacity:1 on that
+    // child. Preserve only compact native action wrappers, never the
+    // carousel root, video surface or whole tweet.
+    const kept=new Set(), keptDisplay=new Set();
+    const keepParents=button=>{
+      for(let el=button.parentElement,depth=0;
+          el&&depth<12;el=el.parentElement,depth++){
+        if(el===document.body||el===document.documentElement||
+           el===root||el===article||el.querySelector('video,canvas'))break;
+        const r=el.getBoundingClientRect();
+        if(r.height>innerHeight*.65&&r.width>innerWidth*.65)break;
+        kept.add(el);
+        const display=getComputedStyle(el).display;
+        if(display==='none'||el.hasAttribute(keepDisplayAttr)){
+          saveDisplay(el,el.tagName==='SPAN'?'inline-flex':'flex');
+          keptDisplay.add(el);
+        }else if(!el.hasAttribute(keepAttr)){
+          state.savedDisplays.set(el,display);
+        }
+      }
+    };
+    if(state.showLike)for(const el of likes)keepParents(el);
+    if(state.showBookmark)for(const el of bookmarks)keepParents(el);
+    for(const el of previouslyKept){
+      if(!kept.has(el)){
+        el.removeAttribute(keepAttr);
+        el.removeAttribute(keepDisplayAttr);
+        el.style.removeProperty('--mydownload-x-original-display');
+      }else if(!keptDisplay.has(el)){
+        el.removeAttribute(keepDisplayAttr);
+        el.style.removeProperty('--mydownload-x-original-display');
+      }
+    }
+    for(const el of kept){
+      if(!el.hasAttribute(keepAttr))el.setAttribute(keepAttr,'1');
+      if(keptDisplay.has(el) && !el.hasAttribute(keepDisplayAttr))
+        el.setAttribute(keepDisplayAttr,'1');
+    }
+    return 'native-actions-protected:'+likes.size+'/'+bookmarks.size;
+  };
+  // Every 950ms WebView refresh replaces this function with current
+  // preferences. Observers/listeners always call the newest scan closure.
+  state.refresh=scan;
+  const schedule=()=>{
+    if(state.scheduled)return;
+    state.scheduled=true;
+    requestAnimationFrame(()=>{
+      state.scheduled=false;
+      state.refresh?.();
+    });
+  };
+  state.schedule=schedule;
+  const postRotation=()=>{
+    for(const id of state.timerIds)clearTimeout(id);
+    state.timerIds=[];
+    for(const ms of [80,220,480,900,1600]){
+      state.timerIds.push(setTimeout(()=>state.schedule?.(),ms));
     }
   };
-  if(showLike)for(const el of likes)keepParents(el);
-  if(showBookmark)for(const el of bookmarks)keepParents(el);
-  for(const parent of previouslyKept)if(!keep.has(parent)){
-    parent.removeAttribute(keepAttr);
-    parent.style.removeProperty('--mydownload-x-original-display');
+  if(!state.listenerInstalled){
+    state.listenerInstalled=true;
+    const changed=()=>{state.schedule?.();postRotation();};
+    window.addEventListener('orientationchange',changed,{passive:true});
+    window.addEventListener('resize',changed,{passive:true});
   }
-  for(const parent of keep)parent.setAttribute(keepAttr,'1');
-  return 'native-actions-persistent:'+likes.size+'/'+bookmarks.size;
+  if(!state.observer){
+    state.observer=new MutationObserver(mutations=>{
+      // Attribute changes (class/style) drive X's fade; childList changes
+      // indicate React replaced a clip or footer after orientation changes.
+      if(mutations.some(m=>
+        m.type==='childList' ? m.addedNodes.length||m.removedNodes.length :
+        ['class','style','aria-hidden','inert'].includes(m.attributeName)))
+        state.schedule?.();
+    });
+    state.observer.observe(document.body||document.documentElement,{
+      subtree:true,childList:true,attributes:true,
+      attributeFilter:['class','style','aria-hidden','inert']
+    });
+  }
+  return scan();
 })()
 """.trimIndent()
 
