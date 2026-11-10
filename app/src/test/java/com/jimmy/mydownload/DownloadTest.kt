@@ -52,3 +52,11 @@ class DownloadTest {
         assertEquals(false, AdPageFilter.blocks("https://exoclick.com.evil.example/"))
     }
 }
+
+class CdnTokenTest {
+    @Test fun accessTokenOnlyGoesToIssuingCdn() {
+        assertTrue(Av01Resolver.isCdnUrl("https://customers.iw01.xyz/seg/1.ts"))
+        assertEquals(false, Av01Resolver.isCdnUrl("https://evil.example/seg/1.ts"))
+        assertEquals(false, Av01Resolver.isCdnUrl("https://customers.iw01.xyz.evil.example/x"))
+    }
+}

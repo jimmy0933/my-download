@@ -96,10 +96,18 @@ class DownloadService : Service() {
             return START_NOT_STICKY
         }
         val repairRequest = intent?.action == ACTION_REPAIR
-        if (intent?.action != ACTION_START && !repairRequest || id < 0) return START_NOT_STICKY
+        if (intent?.action != ACTION_START && !repairRequest) {
+            if (jobs.isEmpty()) stopSelf()
+            return START_NOT_STICKY
+        }
+        // Always satisfy startForegroundService() before any early return.
         startForeground(NOTIFICATION_ID, notification(
             if (repairRequest) "準備修復 MP4" else "準備下載", 0
         ))
+        if (id < 0) {
+            if (jobs.isEmpty()) stopSelf()
+            return START_NOT_STICKY
+        }
         jobs[id]?.let { existing ->
             // A rapid Pause -> Continue can arrive before cancelled work finishes.
             // Queue the restart rather than silently dropping the user's request.
@@ -147,6 +155,41 @@ class DownloadService : Service() {
         return START_NOT_STICKY
     }
 
+    /** Android 15 caps dataSync foreground services at ~6h; stop cleanly instead of crashing. */
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        pauseAllForTimeout()
+    }
+
+    override fun onTimeout(startId: Int) {
+        pauseAllForTimeout()
+    }
+
+    private fun pauseAllForTimeout() {
+        jobs.keys.toList().forEach { id ->
+            restartAfterStop.remove(id)
+            jobs[id]?.cancel()
+            DownloadStore.patch(this, id) { record ->
+                if (record.status == "完成") record.copy(repairStatus = "已暫停修復")
+                else record.copy(status = "已暫停",
+                    error = "系統限制背景下載時間，已暫停；請按「繼續」")
+            }
+        }
+        stopSelf()
+    }
+
+    private fun notifyDone(item: DownloadRecord) {
+        val notice = Notification.Builder(this, CHANNEL)
+            .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setContentTitle("下載完成")
+            .setContentText(item.title)
+            .setAutoCancel(true)
+            .build()
+        // Own id: stopping the foreground service must not remove it, and
+        // concurrent downloads must not overwrite each other.
+        getSystemService(NotificationManager::class.java)
+            .notify(10000 + (item.id % 100000L).toInt(), notice)
+    }
+
     private fun notification(title: String, percentage: Int): Notification =
         Notification.Builder(this, CHANNEL)
             .setSmallIcon(android.R.drawable.stat_sys_download)
@@ -161,6 +204,8 @@ class DownloadService : Service() {
         item: DownloadRecord, status: String, pct: Int,
         bytes: Long? = null, checkpoint: Int? = null
     ) {
+        // A paused/cancelled job must not overwrite the "paused" state.
+        if (jobs[item.id]?.isActive != true) return
         DownloadStore.patch(this, item.id) {
             it.copy(status = status, progress = pct,
                 bytes = bytes ?: it.bytes, checkpoint = checkpoint ?: it.checkpoint, error = "")
@@ -340,6 +385,8 @@ class DownloadService : Service() {
         }
         verifyMp4(partial)
     }
+    private class HttpStatusException(val code: Int) : IOException("片段 HTTP $code")
+
     private data class Segments(val list: List<String>, val fragmented: Boolean)
 
     private fun parseSegments(
@@ -349,13 +396,16 @@ class DownloadService : Service() {
         if (text.contains("#EXT-X-KEY:", true) || text.contains("#EXT-X-SESSION-KEY:", true)) {
             throw IOException("加密 HLS 不支援")
         }
+        if (text.contains("#EXT-X-PLAYLIST-TYPE:EVENT", true)) {
+            throw IOException("直播串流不支援下載")
+        }
         if (text.contains("#EXT-X-BYTERANGE:", true) || text.contains("#EXT-X-DISCONTINUITY", true)) {
             throw IOException("此 HLS 使用尚未支援的串流格式")
         }
         if (text.contains("#EXT-X-STREAM-INF:", true)) {
             val best = StreamResolver.parseManifest(text, base, "影片", referer).first()
             val token = runCatching { base.toHttpUrl().queryParameter("access_token") }.getOrNull()
-            val next = if (token.isNullOrBlank()) best.url else
+            val next = if (token.isNullOrBlank() || !Av01Resolver.isCdnUrl(best.url)) best.url else
                 best.url.toHttpUrl().newBuilder().addQueryParameter("access_token", token)
                     .build().toString()
             return parseSegments(StreamResolver.fetchText(next, referer, userAgent),
@@ -365,7 +415,7 @@ class DownloadService : Service() {
         fun absolute(raw: String): String {
             val address = URL(URL(base), raw).toString()
             if (!address.startsWith("https://")) throw IOException("不支援非 HTTPS 片段")
-            if (token.isNullOrBlank()) return address
+            if (token.isNullOrBlank() || !Av01Resolver.isCdnUrl(address)) return address
             val url = address.toHttpUrl()
             return if (url.queryParameter("access_token") != null) address else
                 url.newBuilder().addQueryParameter("access_token", token).build().toString()
@@ -427,6 +477,7 @@ class DownloadService : Service() {
         java.io.RandomAccessFile(partial, "rw").use { file ->
             file.setLength(bytesSaved.coerceAtMost(file.length()))
         }
+        var lastHlsReport = 0L
         for (index in count until sources.list.size) {
             coroutineContext.ensureActive()
             val before = partial.length()
@@ -438,7 +489,7 @@ class DownloadService : Service() {
                     java.io.RandomAccessFile(partial, "rw").use { it.setLength(before) }
                     val request = BrowserMediaRequest.builder(sources.list[index], item.referer, item.userAgent).build()
                     StreamResolver.client.newCall(request).execute().use { response ->
-                        if (!response.isSuccessful) throw IOException("片段 HTTP " + response.code)
+                        if (!response.isSuccessful) throw HttpStatusException(response.code)
                         FileOutputStream(partial, true).use { output ->
                             response.body?.byteStream()?.use { input ->
                                 val buffer = ByteArray(65536)
@@ -456,11 +507,21 @@ class DownloadService : Service() {
                 } catch (e: Exception) {
                     coroutineContext.ensureActive()
                     error = e
+                    // Expired/forbidden links will not recover by retrying.
+                    val fatal = e is HttpStatusException && e.code in setOf(401, 403, 404, 410)
+                    if (fatal) break
+                    kotlinx.coroutines.delay(attempt * 1500L + 500L)
                 }
             }
             if (!success) throw IOException("片段 " + (index + 1) + " 失敗：" + error?.message)
-            val pct = ((index + 1) * 93 / sources.list.size).coerceAtMost(93)
-            progress(item, "下載中", pct, partial.length(), index + 1)
+            // Persisting history rewrites the whole JSON list; do it at most a few
+            // times per second. A stale checkpoint only re-fetches a few segments.
+            val now = SystemClock.elapsedRealtime()
+            if (now - lastHlsReport >= 600L || index + 1 == sources.list.size) {
+                lastHlsReport = now
+                val pct = ((index + 1) * 93 / sources.list.size).coerceAtMost(93)
+                progress(item, "下載中", pct, partial.length(), index + 1)
+            }
         }
 
         coroutineContext.ensureActive()
@@ -549,8 +610,7 @@ class DownloadService : Service() {
                 readyToFinalize = false, savedExtension = ext)
         }
         file.delete()
-        getSystemService(NotificationManager::class.java)
-            .notify(NOTIFICATION_ID, notification("下載完成", 100))
+        notifyDone(item)
     }
 
     private suspend fun saveVideo(
@@ -643,6 +703,7 @@ class DownloadService : Service() {
     }
 
     private fun repairProgress(item: DownloadRecord, stage: String, percent: Int) {
+        if (jobs[item.id]?.isActive != true) return
         DownloadStore.patch(this, item.id) {
             it.copy(repairStatus = stage, repairProgress = percent.coerceIn(0, 100))
         }

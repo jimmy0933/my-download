@@ -2305,7 +2305,7 @@ fun MultiTabBrowser(
             active.onResume()
             // Only four expensive WebView instances remain resident. Old tabs
             // persist URL/title and reload lazily when opened again.
-            while (webViews.size > 8) {
+            while (webViews.size > 4) {
                 val victimId = webViews.keys.firstOrNull { it != selected.id } ?: break
                 val victim = webViews.remove(victimId) ?: break
                 (victim.parent as? ViewGroup)?.removeView(victim)
@@ -2342,7 +2342,13 @@ fun MultiTabBrowser(
     }
 
     LaunchedEffect(visible, selected.id) {
+        // The large X style/progress/action installers are idempotent and keep
+        // themselves current through their own MutationObservers. Re-evaluating
+        // them every tick re-parses tens of KB of JS and made the page janky,
+        // so only refresh them every few ticks. Cheap scans still run each tick.
+        var tick = 0
         while (visible) {
+            val heavyTick = tick++ % 5 == 0
             val browser = currentWebView()
             if (browser != null && selected.url != BrowserAddress.BLANK_TAB &&
                 viewportWidth > 0) {
@@ -2359,9 +2365,11 @@ fun MultiTabBrowser(
                 // Dynamic X pages reuse the document while navigating posts.
                 // Reinstate CSS if React recreates its head or mobile navigation.
                 if (BrowserVideoDiscovery.isXPage(selected.url)) {
-                    browser.evaluateJavascript(xDisplayScript(currentXOptions), null)
-                    browser.evaluateJavascript(X_MEDIA_PINCH_ZOOM_SCRIPT, null)
-                    browser.evaluateJavascript(X_VIDEO_DOUBLE_TAP_SEEK_SCRIPT, null)
+                    if (heavyTick) {
+                        browser.evaluateJavascript(xDisplayScript(currentXOptions), null)
+                        browser.evaluateJavascript(X_MEDIA_PINCH_ZOOM_SCRIPT, null)
+                        browser.evaluateJavascript(X_VIDEO_DOUBLE_TAP_SEEK_SCRIPT, null)
+                    }
                     // A React video card on /home must not show download.
                     // Only a visible, open immersive viewer should do so.
                     val checkedUrl = selected.url
@@ -2373,14 +2381,16 @@ fun MultiTabBrowser(
                     }
                     // Native-carousel test: no card alignment or scroll repair.
                     // Cleanup runs only once per document, even with polling.
-                    browser.evaluateJavascript(xImmersiveFitScript(browserVideoFullscreen), null)
+                    if (heavyTick) {
+                        browser.evaluateJavascript(xImmersiveFitScript(browserVideoFullscreen), null)
+                    }
                 }
                 browser.evaluateJavascript(BrowserVideoDiscovery.SCAN_SCRIPT) { result ->
                     if (activeId == checkedId) {
                         videoElements = BrowserVideoDiscovery.decode(result)
                     }
                 }
-                captureScroll(browser, selected)
+                if (heavyTick) captureScroll(browser, selected)
             } else {
                 scanResults = VideoPositions()
                 videoElements = VisibleVideos()

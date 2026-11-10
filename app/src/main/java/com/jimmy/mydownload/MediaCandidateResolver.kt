@@ -13,6 +13,7 @@ import java.util.concurrent.TimeUnit
 
 /** Reuses only cookies matching the media URL host; never forwards x.com cookies elsewhere. */
 object BrowserMediaRequest {
+    const val COOKIE_HOST = "X-Cookie-Host"
     fun builder(url: String, referer: String, userAgent: String = ""): Request.Builder {
         val request = Request.Builder().url(url)
             .header(
@@ -22,7 +23,11 @@ object BrowserMediaRequest {
             ).header("Accept", "*/*")
         if (BrowserAddress.isWebUrl(referer)) request.header("Referer", referer)
         val cookies = runCatching { CookieManager.getInstance().getCookie(url) }.getOrNull()
-        if (!cookies.isNullOrBlank()) request.header("Cookie", cookies)
+        if (!cookies.isNullOrBlank()) {
+            request.header("Cookie", cookies)
+            runCatching { java.net.URI(url).host }.getOrNull()
+                ?.let { request.header(COOKIE_HOST, it) }
+        }
         return request
     }
 }
