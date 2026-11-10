@@ -2588,6 +2588,18 @@ fun MultiTabBrowser(
                     modifier = Modifier.size(21.dp)
                 )
             }
+            // One tap back to X's home timeline.
+            IconButton(
+                onClick = { navigate("https://x.com/home") },
+                modifier = Modifier.size(37.dp)
+            ) {
+                Icon(
+                    Icons.Default.Home,
+                    contentDescription = "回 X 首頁",
+                    tint = BrowserGreen,
+                    modifier = Modifier.size(21.dp)
+                )
+            }
             // One tap to X's own bookmarks timeline (login to X required).
             IconButton(
                 onClick = { navigate("https://x.com/i/bookmarks") },
