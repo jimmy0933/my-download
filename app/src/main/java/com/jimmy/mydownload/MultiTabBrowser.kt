@@ -1514,183 +1514,6 @@ internal val X_DEDICATED_X_VIDEO_VIEWER_SCRIPT = """
 })()
 """.trimIndent()
 
-/**
- * When a video is opened from X's Likes or Bookmarks list, swiping up/down in
- * the viewer moves to the previous/next VIDEO of that list (in list order)
- * instead of X's own suggestions. The order is recorded while the list is on
- * screen and kept in sessionStorage. Opened from anywhere else, nothing changes.
- */
-private val X_LIST_VIDEO_NAV_SCRIPT = """
-(() => {
-  if(!/^(?:www\.)?(?:x\.com|twitter\.com)$/.test(location.hostname))return;
-  if(window.__mydownloadListNav)return;
-  const state=window.__mydownloadListNav={prev:null};
-  const KEY='__mydownload_list_nav_v1';
-  const LIST=/^\/(?:i\/bookmarks(?:\/\d+)?|[^\/]+\/likes)\/?$/;
-  // X's vertical video viewer lives at /i/status/ID; a direct media page is
-  // /handle/status/ID/video/N. Both count as "the viewer".
-  const VIEWER_I=/^\/i\/status\/(\d+)\/?$/;
-  const VIEWER_U=/^\/[^\/]+\/status\/(\d+)\/(?:video|photo)\/\d+\/?$/;
-  const VIEWER={test:p=>VIEWER_I.test(p)||VIEWER_U.test(p)};
-  const load=()=>{
-    try{return JSON.parse(sessionStorage.getItem(KEY)||'null')||{};}
-    catch(_){return {};}
-  };
-  const save=d=>{try{sessionStorage.setItem(KEY,JSON.stringify(d));}catch(_){}};
-
-  const collect=()=>{
-    if(!LIST.test(location.pathname))return;
-    const d=load();
-    if(d.origin!==location.pathname){d.origin=location.pathname;d.items=[];}
-    d.items=d.items||[];
-    const seq=[];
-    for(const article of document.querySelectorAll('article[data-testid="tweet"]')){
-      if(!article.querySelector(
-        'video,[data-testid="videoPlayer"],[data-testid="videoComponent"]'))continue;
-      let href='';
-      for(const time of article.querySelectorAll('a[href*="/status/"] time')){
-        const a=time.closest('a');
-        if(a&&!a.closest('[role="link"][tabindex]:not(a)')){
-          href=a.getAttribute('href')||'';break;
-        }
-      }
-      const m=/^\/([^\/]+)\/status\/(\d+)/.exec(href);
-      if(m)seq.push({id:m[2],user:m[1]});
-    }
-    // Merge what is on screen into the stored order (X virtualizes the list).
-    let prev=-1,changed=false;
-    for(const item of seq){
-      const idx=d.items.findIndex(x=>x.id===item.id);
-      if(idx>=0)prev=idx;
-      else{d.items.splice(prev+1,0,item);prev++;changed=true;}
-    }
-    if(d.items.length>400)d.items.length=400;
-    if(changed)save(d);
-  };
-
-  const route=()=>{
-    const path=location.pathname,d=load();
-    if(LIST.test(path)){
-      if(d.origin!==path){d.origin=path;d.items=[];}
-      d.fromList=false;save(d);
-    }else if(VIEWER.test(path)){
-      if(state.prev&&LIST.test(state.prev)){d.fromList=true;save(d);}
-    }else if(d.fromList){d.fromList=false;save(d);}
-    state.prev=path;
-  };
-  for(const fn of ['pushState','replaceState']){
-    const original=history[fn];
-    history[fn]=function(){
-      const result=original.apply(this,arguments);
-      setTimeout(route,0);
-      return result;
-    };
-  }
-  window.addEventListener('popstate',()=>setTimeout(route,0));
-  route();
-  setInterval(collect,800);
-
-  const current=()=>{
-    const m=VIEWER_I.exec(location.pathname)||VIEWER_U.exec(location.pathname);
-    return m?m[1]:null;
-  };
-  const active=()=>{
-    const id=current();
-    if(!id)return false;
-    const d=load();
-    return !!d.fromList&&Array.isArray(d.items)&&d.items.some(x=>x.id===id);
-  };
-  const feedback=text=>{
-    const id='mydownload-listnav-feedback';
-    let el=document.getElementById(id);
-    if(!el){
-      el=document.createElement('div');
-      el.id=id;
-      Object.assign(el.style,{
-        position:'fixed',left:'50%',bottom:'18%',transform:'translateX(-50%)',
-        zIndex:'2147483647',padding:'8px 14px',borderRadius:'20px',
-        pointerEvents:'none',color:'white',background:'rgba(0,0,0,0.55)',
-        font:'600 14px sans-serif',transition:'opacity 150ms'
-      });
-      (document.body||document.documentElement).appendChild(el);
-    }
-    el.textContent=text;
-    el.style.opacity='1';
-    clearTimeout(el.__t);
-    el.__t=setTimeout(()=>{el.style.opacity='0';},900);
-  };
-  const goTo=dest=>{
-    const id=/\/status\/(\d+)/.exec(dest)[1];
-    const showing=()=>{
-      for(const a of document.querySelectorAll('a[href*="/status/'+id+'"]')){
-        const r=a.getBoundingClientRect();
-        const cy=(r.top+r.bottom)/2;
-        if(r.width>0&&cy>0&&cy<innerHeight)return true;
-      }
-      return false;
-    };
-    try{
-      history.replaceState({},'',dest);
-      window.dispatchEvent(new PopStateEvent('popstate',{state:history.state}));
-    }catch(_){location.replace(dest);return;}
-    // Poll for X to render the target post in the viewer; if it never does,
-    // load the target normally (the stored list survives the reload).
-    let tries=0;
-    const timer=setInterval(()=>{
-      if(showing()){clearInterval(timer);return;}
-      if(++tries>=9){clearInterval(timer);location.replace(dest);}
-    },150);
-  };
-  const step=dir=>{
-    const d=load(),id=current();
-    const i=(d.items||[]).findIndex(x=>x.id===id);
-    if(i<0)return;
-    const next=d.items[i+dir];
-    if(!next){feedback(dir>0?'已是清單最後一部':'已是清單第一部');return;}
-    goTo(VIEWER_I.test(location.pathname)
-      ? '/i/status/'+next.id
-      : '/'+next.user+'/status/'+next.id+'/video/1');
-  };
-
-  let gesture=null;
-  const blocked=e=>!(e.target instanceof Element)||!!e.target.closest(
-    '#mydownload-optional-x-progress,button,input,[role="button"],'+
-    '[role="slider"]')||!!window.__mydownloadMediaZoom?.isZoomed?.();
-  document.addEventListener('touchstart',e=>{
-    gesture=null;
-    if(e.touches.length!==1||!active()||blocked(e))return;
-    const t=e.touches[0];
-    gesture={x:t.clientX,y:t.clientY,time:performance.now(),swiping:false};
-  },{capture:true,passive:true});
-  document.addEventListener('touchmove',e=>{
-    if(!gesture)return;
-    if(e.touches.length!==1){gesture=null;return;}
-    const t=e.touches[0];
-    const dx=t.clientX-gesture.x,dy=t.clientY-gesture.y;
-    if(!gesture.swiping){
-      if(Math.abs(dy)>10&&Math.abs(dy)>Math.abs(dx)*1.4)gesture.swiping=true;
-      else if(Math.abs(dx)>16){gesture=null;return;}
-    }
-    if(gesture&&gesture.swiping){
-      // Take over the vertical swipe so X does not move to its own next video.
-      if(e.cancelable)e.preventDefault();
-      e.stopImmediatePropagation();
-    }
-  },{capture:true,passive:false});
-  document.addEventListener('touchend',e=>{
-    const g=gesture;gesture=null;
-    if(!g||!g.swiping)return;
-    if(e.cancelable)e.preventDefault();
-    e.stopImmediatePropagation();
-    const t=e.changedTouches[0];
-    const dy=t.clientY-g.y,dt=performance.now()-g.time;
-    if(Math.abs(dy)>=60||(Math.abs(dy)>=30&&dt<260))step(dy<0?1:-1);
-  },{capture:true,passive:false});
-  document.addEventListener('touchcancel',()=>{gesture=null;},
-    {capture:true,passive:true});
-})()
-""".trimIndent()
-
 private val X_VIDEO_DOUBLE_TAP_SEEK_SCRIPT = """
 (() => {
   if (!/^(?:www\.)?(?:x\.com|twitter\.com)$/.test(location.hostname)) return;
@@ -2254,7 +2077,6 @@ fun MultiTabBrowser(
                     view?.evaluateJavascript(xDisplayScript(currentXOptions), null)
                     view?.evaluateJavascript(X_MEDIA_PINCH_ZOOM_SCRIPT, null)
                     view?.evaluateJavascript(X_VIDEO_DOUBLE_TAP_SEEK_SCRIPT, null)
-                    view?.evaluateJavascript(X_LIST_VIDEO_NAV_SCRIPT, null)
                     if (browserVideoFullscreen) {
                         view?.evaluateJavascript(xVideoFullscreenScript(true), null)
                         view?.evaluateJavascript(xImmersiveFitScript(true), null)
@@ -2657,7 +2479,6 @@ fun MultiTabBrowser(
                         browser.evaluateJavascript(xDisplayScript(currentXOptions), null)
                         browser.evaluateJavascript(X_MEDIA_PINCH_ZOOM_SCRIPT, null)
                         browser.evaluateJavascript(X_VIDEO_DOUBLE_TAP_SEEK_SCRIPT, null)
-                        browser.evaluateJavascript(X_LIST_VIDEO_NAV_SCRIPT, null)
                     }
                     // A React video card on /home must not show download.
                     // Only a visible, open immersive viewer should do so.
