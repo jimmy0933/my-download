@@ -1530,15 +1530,37 @@ private val X_TAP_TO_VIEW_SCRIPT = """
       }
     }
     const m=/^(\/[^\/]+\/status\/\d+)/.exec(href);
-    return m?m[1]+'/video/1':null;
+    return m?{dest:m[1]+'/video/1',article}:null;
+  };
+  // Stay inside X's single-page app so the viewer keeps the timeline as its
+  // source for swiping to the next/previous video. A full page load has no
+  // such context and a swipe falls back to the post's own page.
+  const openViewer=({dest,article})=>{
+    const viewerOpen=()=>!!document.querySelector(
+      '[data-testid="vss-scroll-view"],[data-testid="immersive-viewer"],'+
+      '#layers [role="dialog"]:has(video)');
+    try{
+      const link=Array.from(article.querySelectorAll('a[href]')).find(a=>
+        (a.getAttribute('href')||'').split('?')[0].replace(/\/$/,'')===dest);
+      if(link)link.click();
+      else{
+        history.pushState({},'',dest);
+        window.dispatchEvent(new PopStateEvent('popstate',{state:history.state}));
+      }
+    }catch(_){location.assign(dest);return;}
+    // If X's router did not react, fall back to a normal navigation.
+    setTimeout(()=>{
+      if(location.pathname.replace(/\/$/,'')===dest&&!viewerOpen())
+        location.assign(dest);
+    },1200);
   };
   document.addEventListener('touchstart',e=>{
     start=null;
     if(e.touches.length!==1)return;
-    const dest=target(e);
-    if(!dest)return;
+    const found=target(e);
+    if(!found)return;
     const t=e.touches[0];
-    start={x:t.clientX,y:t.clientY,time:performance.now(),dest};
+    start={x:t.clientX,y:t.clientY,time:performance.now(),found};
   },{capture:true,passive:true});
   document.addEventListener('touchmove',e=>{
     if(!start)return;
@@ -1553,7 +1575,7 @@ private val X_TAP_TO_VIEW_SCRIPT = """
     if(e.cancelable)e.preventDefault();
     e.stopImmediatePropagation();
     swallowClickUntil=performance.now()+700;
-    location.assign(s.dest);
+    openViewer(s.found);
   },{capture:true,passive:false});
   document.addEventListener('click',e=>{
     if(performance.now()<swallowClickUntil&&e.target instanceof Element&&
