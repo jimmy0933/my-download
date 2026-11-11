@@ -1527,7 +1527,11 @@ private val X_LIST_VIDEO_NAV_SCRIPT = """
   const state=window.__mydownloadListNav={prev:null};
   const KEY='__mydownload_list_nav_v1';
   const LIST=/^\/(?:i\/bookmarks(?:\/\d+)?|[^\/]+\/likes)\/?$/;
-  const VIEWER=/^\/([^\/]+)\/status\/(\d+)\/(?:video|photo)\/\d+\/?$/;
+  // X's vertical video viewer lives at /i/status/ID; a direct media page is
+  // /handle/status/ID/video/N. Both count as "the viewer".
+  const VIEWER_I=/^\/i\/status\/(\d+)\/?$/;
+  const VIEWER_U=/^\/[^\/]+\/status\/(\d+)\/(?:video|photo)\/\d+\/?$/;
+  const VIEWER={test:p=>VIEWER_I.test(p)||VIEWER_U.test(p)};
   const load=()=>{
     try{return JSON.parse(sessionStorage.getItem(KEY)||'null')||{};}
     catch(_){return {};}
@@ -1587,8 +1591,8 @@ private val X_LIST_VIDEO_NAV_SCRIPT = """
   setInterval(collect,800);
 
   const current=()=>{
-    const m=VIEWER.exec(location.pathname);
-    return m?m[2]:null;
+    const m=VIEWER_I.exec(location.pathname)||VIEWER_U.exec(location.pathname);
+    return m?m[1]:null;
   };
   const active=()=>{
     const id=current();
@@ -1617,19 +1621,25 @@ private val X_LIST_VIDEO_NAV_SCRIPT = """
   };
   const goTo=dest=>{
     const id=/\/status\/(\d+)/.exec(dest)[1];
+    const showing=()=>{
+      for(const a of document.querySelectorAll('a[href*="/status/'+id+'"]')){
+        const r=a.getBoundingClientRect();
+        const cy=(r.top+r.bottom)/2;
+        if(r.width>0&&cy>0&&cy<innerHeight)return true;
+      }
+      return false;
+    };
     try{
       history.replaceState({},'',dest);
       window.dispatchEvent(new PopStateEvent('popstate',{state:history.state}));
     }catch(_){location.replace(dest);return;}
-    // If X's router did not render the target post, load it normally. The
-    // stored list survives the reload.
-    setTimeout(()=>{
-      const shown=!!document.querySelector('a[href*="/status/'+id+'"],'+
-        '[data-testid="videoPlayer"] video,video');
-      const owns=!!document.querySelector('[data-testid="vss-scroll-view"],'+
-        '[data-testid="immersive-viewer"],#layers [role="dialog"]');
-      if(!shown||!owns)location.replace(dest);
-    },1400);
+    // Poll for X to render the target post in the viewer; if it never does,
+    // load the target normally (the stored list survives the reload).
+    let tries=0;
+    const timer=setInterval(()=>{
+      if(showing()){clearInterval(timer);return;}
+      if(++tries>=9){clearInterval(timer);location.replace(dest);}
+    },150);
   };
   const step=dir=>{
     const d=load(),id=current();
@@ -1637,12 +1647,14 @@ private val X_LIST_VIDEO_NAV_SCRIPT = """
     if(i<0)return;
     const next=d.items[i+dir];
     if(!next){feedback(dir>0?'已是清單最後一部':'已是清單第一部');return;}
-    goTo('/'+next.user+'/status/'+next.id+'/video/1');
+    goTo(VIEWER_I.test(location.pathname)
+      ? '/i/status/'+next.id
+      : '/'+next.user+'/status/'+next.id+'/video/1');
   };
 
   let gesture=null;
   const blocked=e=>!(e.target instanceof Element)||!!e.target.closest(
-    '#mydownload-optional-x-progress,button,a,input,[role="button"],'+
+    '#mydownload-optional-x-progress,button,input,[role="button"],'+
     '[role="slider"]')||!!window.__mydownloadMediaZoom?.isZoomed?.();
   document.addEventListener('touchstart',e=>{
     gesture=null;
