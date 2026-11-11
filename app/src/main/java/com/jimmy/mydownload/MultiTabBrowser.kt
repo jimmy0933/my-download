@@ -1278,7 +1278,13 @@ private val X_LANDSCAPE_CAROUSEL_SCRIPT = """
         while(card&&card.parentElement!==track)card=card.parentElement;
         if(card&&card!==track){
           score=rank;
-          best={card,video,source:video.currentSrc||video.src||''};
+          // Identity (post id) and position (in viewport heights) let a
+          // rotation restore the SAME clip even if X rebuilds its card DOM.
+          const link=card.querySelector('a[href*="/status/"]');
+          const idMatch=/\/status\/(\d+)/.exec(link?.getAttribute('href')||'');
+          best={card,video,source:video.currentSrc||video.src||'',
+            id:idMatch?idMatch[1]:'',
+            ratio:scroll.scrollTop/Math.max(1,scroll.clientHeight)};
         }
       }
     }
@@ -1315,15 +1321,28 @@ private val X_LANDSCAPE_CAROUSEL_SCRIPT = """
     return true;
   };
   const restoreRotatedCard=anchor=>{
-    if(!anchor?.card?.isConnected||!anchor.video?.isConnected)return;
+    if(!anchor)return;
     const geometry=layout();
-    if(!geometry||!geometry.track.contains(anchor.card))return;
-    if(anchor.source&&(anchor.video.currentSrc||anchor.video.src||'')&&
-      anchor.source!==(anchor.video.currentSrc||anchor.video.src||''))return;
+    if(!geometry)return;
     const {scroll}=geometry;
     if(scroll.scrollHeight<=scroll.clientHeight+2)return;
-    const rr=scroll.getBoundingClientRect(),cr=anchor.card.getBoundingClientRect();
-    const delta=cr.top-rr.top;
+    const rr=scroll.getBoundingClientRect();
+    // 1) the same card element, 2) the same post id, 3) the same position
+    // measured in viewport heights. Rotation changes the viewport height, and
+    // X keeps the old pixel scrollTop, which is how playback skipped ahead
+    // to the 2nd/3rd next clip.
+    let card=anchor.card?.isConnected&&geometry.track.contains(anchor.card)
+      ? anchor.card : null;
+    if(!card&&anchor.id){
+      for(const child of geometry.track.children){
+        if(child.querySelector('a[href*="/status/'+anchor.id+'"]')){card=child;break;}
+      }
+    }
+    let delta;
+    if(card)delta=card.getBoundingClientRect().top-rr.top;
+    else if(Number.isFinite(anchor.ratio))
+      delta=Math.round(anchor.ratio)*scroll.clientHeight-scroll.scrollTop;
+    else return;
     // Rotation can leave the list several cards away (e.g. two clips ahead),
     // so allow a large correction; only ignore sub-pixel noise.
     if(Math.abs(delta)<18||Math.abs(delta)>Math.max(rr.height,innerHeight)*12)return;
@@ -1355,7 +1374,7 @@ private val X_LANDSCAPE_CAROUSEL_SCRIPT = """
       // or not in-app fullscreen is on. X keeps the old pixel scrollTop after
       // the resize, which landed two clips ahead. Retry as X's layout settles.
       if(anchor){
-        for(const delay of [0,420,1000]){
+        for(const delay of [0,420,1000,1900,3200]){
           state.restoreTimers.push(setTimeout(()=>{
             if(token!==state.rotationToken||state.touching)return;
             requestAnimationFrame(()=>restoreRotatedCard(anchor));
@@ -1405,6 +1424,9 @@ private val X_LANDSCAPE_CAROUSEL_SCRIPT = """
     window.addEventListener('orientationchange',()=>refresh(),{passive:true});
     document.addEventListener('touchstart',()=>{
       state.touching=true;
+      // A deliberate swipe wins over any pending rotation restore.
+      for(const t of state.restoreTimers||[])clearTimeout(t);
+      state.restoreTimers=[];
       clearTimeout(state.touchEndTimer);
     },{passive:true,capture:true});
     const finishTouch=()=>{
