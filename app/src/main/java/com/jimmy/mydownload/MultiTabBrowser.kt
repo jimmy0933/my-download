@@ -1492,100 +1492,6 @@ internal val X_DEDICATED_X_VIDEO_VIEWER_SCRIPT = """
 })()
 """.trimIndent()
 
-/**
- * On X's Home timeline and Bookmarks list, a single tap on a video post opens
- * that video's own playback page (/status/ID/video/1) directly, instead of
- * needing to open the post first. Taps on buttons, links, the seek bar, text
- * or anything else keep their normal behaviour; swipes/scrolls are untouched.
- */
-private val X_TAP_TO_VIEW_SCRIPT = """
-(() => {
-  if (!/^(?:www\.)?(?:x\.com|twitter\.com)$/.test(location.hostname)) return;
-  if (window.__mydownloadTapToView) return;
-  window.__mydownloadTapToView = true;
-
-  const MAX_TAP_MS=350, MAX_MOVE=14;
-  let start=null, swallowClickUntil=0;
-  const listPage=()=>/^\/(?:home|i\/bookmarks)\/?$/.test(location.pathname);
-  const interactive=el=>!!el.closest(
-    'button,a,input,textarea,select,[role="button"],[role="link"],'+
-    '[role="slider"],[role="menuitem"],[role="menu"],[role="switch"],'+
-    '#mydownload-optional-x-progress,[data-testid="User-Name"],'+
-    '[data-testid="Tweet-User-Avatar"]');
-  const target=e=>{
-    if(!listPage()||!(e.target instanceof Element)||interactive(e.target))
-      return null;
-    const article=e.target.closest('article[data-testid="tweet"]');
-    if(!article)return null;
-    const player=e.target.closest('[data-testid="videoPlayer"],'+
-      '[data-testid="videoComponent"]')||
-      (e.target.tagName==='VIDEO'?e.target:null);
-    if(!player||!article.contains(player))return null;
-    // The post's own status link (time stamp), never a quoted post's.
-    let href='';
-    for(const time of article.querySelectorAll('a[href*="/status/"] time')){
-      const a=time.closest('a');
-      if(a&&!a.closest('[role="link"][tabindex]:not(a)')){
-        href=a.getAttribute('href')||'';break;
-      }
-    }
-    const m=/^(\/[^\/]+\/status\/\d+)/.exec(href);
-    return m?{dest:m[1]+'/video/1',article}:null;
-  };
-  // Stay inside X's single-page app so the viewer keeps the timeline as its
-  // source for swiping to the next/previous video. A full page load has no
-  // such context and a swipe falls back to the post's own page.
-  const openViewer=({dest,article})=>{
-    const viewerOpen=()=>!!document.querySelector(
-      '[data-testid="vss-scroll-view"],[data-testid="immersive-viewer"],'+
-      '#layers [role="dialog"]:has(video)');
-    try{
-      const link=Array.from(article.querySelectorAll('a[href]')).find(a=>
-        (a.getAttribute('href')||'').split('?')[0].replace(/\/$/,'')===dest);
-      if(link)link.click();
-      else{
-        history.pushState({},'',dest);
-        window.dispatchEvent(new PopStateEvent('popstate',{state:history.state}));
-      }
-    }catch(_){location.assign(dest);return;}
-    // If X's router did not react, fall back to a normal navigation.
-    setTimeout(()=>{
-      if(location.pathname.replace(/\/$/,'')===dest&&!viewerOpen())
-        location.assign(dest);
-    },1200);
-  };
-  document.addEventListener('touchstart',e=>{
-    start=null;
-    if(e.touches.length!==1)return;
-    const found=target(e);
-    if(!found)return;
-    const t=e.touches[0];
-    start={x:t.clientX,y:t.clientY,time:performance.now(),found};
-  },{capture:true,passive:true});
-  document.addEventListener('touchmove',e=>{
-    if(!start)return;
-    const t=e.touches[0];
-    if(e.touches.length!==1||
-        Math.hypot(t.clientX-start.x,t.clientY-start.y)>MAX_MOVE)start=null;
-  },{capture:true,passive:true});
-  document.addEventListener('touchend',e=>{
-    const s=start;start=null;
-    if(!s||e.touches.length!==0||
-        performance.now()-s.time>MAX_TAP_MS)return;
-    if(e.cancelable)e.preventDefault();
-    e.stopImmediatePropagation();
-    swallowClickUntil=performance.now()+700;
-    openViewer(s.found);
-  },{capture:true,passive:false});
-  document.addEventListener('click',e=>{
-    if(performance.now()<swallowClickUntil&&e.target instanceof Element&&
-        !interactive(e.target)){
-      e.preventDefault();e.stopImmediatePropagation();
-    }
-  },{capture:true});
-})()
-""".trimIndent()
-
 private val X_VIDEO_DOUBLE_TAP_SEEK_SCRIPT = """
 (() => {
   if (!/^(?:www\.)?(?:x\.com|twitter\.com)$/.test(location.hostname)) return;
@@ -2149,7 +2055,6 @@ fun MultiTabBrowser(
                     view?.evaluateJavascript(xDisplayScript(currentXOptions), null)
                     view?.evaluateJavascript(X_MEDIA_PINCH_ZOOM_SCRIPT, null)
                     view?.evaluateJavascript(X_VIDEO_DOUBLE_TAP_SEEK_SCRIPT, null)
-                    view?.evaluateJavascript(X_TAP_TO_VIEW_SCRIPT, null)
                     if (browserVideoFullscreen) {
                         view?.evaluateJavascript(xVideoFullscreenScript(true), null)
                         view?.evaluateJavascript(xImmersiveFitScript(true), null)
@@ -2552,7 +2457,6 @@ fun MultiTabBrowser(
                         browser.evaluateJavascript(xDisplayScript(currentXOptions), null)
                         browser.evaluateJavascript(X_MEDIA_PINCH_ZOOM_SCRIPT, null)
                         browser.evaluateJavascript(X_VIDEO_DOUBLE_TAP_SEEK_SCRIPT, null)
-                        browser.evaluateJavascript(X_TAP_TO_VIEW_SCRIPT, null)
                     }
                     // A React video card on /home must not show download.
                     // Only a visible, open immersive viewer should do so.
