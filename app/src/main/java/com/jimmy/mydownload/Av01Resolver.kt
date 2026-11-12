@@ -58,8 +58,11 @@ object Av01Resolver {
         )
         val cdnMaster = "$CDN/api/v1/videos/$id/manifest/master.m3u8"
         return StreamResolver.parseManifest(master, cdnMaster, title, page).map {
-            it.copy(url = it.url.toHttpUrl().newBuilder()
-                .addQueryParameter("access_token", accessToken).build().toString())
+            fun withToken(u: String) = u.toHttpUrl().newBuilder()
+                .addQueryParameter("access_token", accessToken).build().toString()
+            it.copy(url = withToken(it.url),
+                audioUrl = if (it.audioUrl.isNotBlank() && isCdnUrl(it.audioUrl))
+                    withToken(it.audioUrl) else it.audioUrl)
         }
     }
 

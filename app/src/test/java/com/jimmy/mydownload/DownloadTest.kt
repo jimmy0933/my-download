@@ -60,3 +60,32 @@ class CdnTokenTest {
         assertEquals(false, Av01Resolver.isCdnUrl("https://customers.iw01.xyz.evil.example/x"))
     }
 }
+
+class SeparateAudioTest {
+    @Test fun masterWithSeparateAudioKeepsAudioPlaylist() {
+        val master = """
+            #EXTM3U
+            #EXT-X-MEDIA:NAME="Audio",TYPE=AUDIO,GROUP-ID="audio-128",URI="/amplify_video/1/mp4a/128000/a.m3u8"
+            #EXT-X-STREAM-INF:BANDWIDTH=832000,RESOLUTION=480x852,CODECS="avc1.4d001f,mp4a.40.2",AUDIO="audio-128"
+            /amplify_video/1/avc1/480x852/v.m3u8
+        """.trimIndent()
+        val variants = StreamResolver.parseManifest(
+            master, "https://video.twimg.com/amplify_video/1/pl/master.m3u8", "t", "https://x.com/"
+        )
+        assertEquals(1, variants.size)
+        assertEquals("https://video.twimg.com/amplify_video/1/mp4a/128000/a.m3u8",
+            variants.first().audioUrl)
+    }
+
+    @Test fun masterWithoutSeparateAudioHasNoAudioUrl() {
+        val master = """
+            #EXTM3U
+            #EXT-X-STREAM-INF:BANDWIDTH=832000,RESOLUTION=480x852
+            v.m3u8
+        """.trimIndent()
+        val variants = StreamResolver.parseManifest(
+            master, "https://cdn.example.org/master.m3u8", "t", "r"
+        )
+        assertEquals("", variants.first().audioUrl)
+    }
+}

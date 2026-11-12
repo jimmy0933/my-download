@@ -27,7 +27,8 @@ data class DownloadRecord(
     val savedExtension: String = "",
     // Older records originally always auto-remuxed, so legacy default is true.
     val autoRepairMp4: Boolean = true,
-    val userAgent: String = ""
+    val userAgent: String = "",
+    val audioUrl: String = ""
 )
 
 
@@ -68,7 +69,8 @@ object DownloadStore {
         originalUri = j.optString("originalUri"),
         savedExtension = j.optString("savedExtension"),
         autoRepairMp4 = j.optBoolean("autoRepairMp4", true),
-        userAgent = j.optString("userAgent")
+        userAgent = j.optString("userAgent"),
+        audioUrl = j.optString("audioUrl")
     )
 
     private fun toJson(item: DownloadRecord) = JSONObject().apply {
@@ -92,6 +94,7 @@ object DownloadStore {
         put("savedExtension", item.savedExtension)
         put("autoRepairMp4", item.autoRepairMp4)
         put("userAgent", item.userAgent)
+        put("audioUrl", item.audioUrl)
     }
 
     // Progress updates hit read()+write() many times a second; parsing up to 200
@@ -140,7 +143,8 @@ object DownloadStore {
             label = stream.label,
             destinationTree = DownloadSettings.folder(context),
             autoRepairMp4 = DownloadSettings.autoRepairMp4(context),
-            userAgent = stream.userAgent
+            userAgent = stream.userAgent,
+            audioUrl = stream.audioUrl
         )
         save(context, item)
         return item

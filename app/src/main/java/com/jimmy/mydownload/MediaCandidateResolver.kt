@@ -147,7 +147,8 @@ object MediaCandidateResolver {
                                 choices += variant.copy(
                                     label = "$quality · HLS",
                                     detail = "HLS · $quality · 大小未知 · $group" +
-                                        if (audioSeparate) " · 音訊可能獨立，建議 MP4" else "",
+                                        if (audioSeparate && variant.audioUrl.isBlank())
+                                            " · 音訊可能獨立，建議 MP4" else "",
                                     userAgent = sourceAgent
                                 )
                             }
