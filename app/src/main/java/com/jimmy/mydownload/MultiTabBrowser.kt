@@ -241,6 +241,7 @@ private class TabViewState(record: BrowserTabRecord) {
     var restoreGentle: Boolean = false
     /** Set on a tab opened from an X list: closing it returns to that live list tab. */
     var parentTabId: String? = null
+    var autoEnterStarted: Boolean = false
     val mediaSources = mutableStateListOf<String>()
     fun record() = BrowserTabRecord(id, url, title)
 }
@@ -1592,49 +1593,30 @@ private val X_VIEW_IN_TAB_SCRIPT = """
 """.trimIndent()
 
 /**
- * Viewer tabs only: the post page opened from a list shows the video inline and
- * needs one more tap to enter X's own full playback viewer. Do that tap for the
- * user (up to three attempts, stopping as soon as the viewer is open), so one
- * tap in the list plays the video, and swiping afterwards is plain X behaviour.
+ * Viewer tabs only. The post page opened from a list shows the video inline and
+ * needs one more real tap to enter X's own playback viewer. X ignores scripted
+ * clicks, so this only REPORTS where the player is; the app then sends a genuine
+ * touch there (see autoEnterViewer).
  */
-private val X_VIEWER_AUTO_ENTER_SCRIPT = """
+private val X_VIEWER_PROBE_SCRIPT = """
 (() => {
-  if(!/^(?:www\.)?(?:x\.com|twitter\.com)$/.test(location.hostname))return;
-  if(!/^\/[^\/]+\/status\/\d+\/?$/.test(location.pathname))return;
-  if(window.__mydownloadAutoEnter)return;
-  window.__mydownloadAutoEnter=true;
-  const viewerOpen=()=>!!document.querySelector(
+  const open=!!document.querySelector(
     '[data-testid="vss-scroll-view"],[data-testid="immersive-viewer"],'+
     '#layers [role="dialog"]:has(video)');
-  const fire=el=>{
-    const r=el.getBoundingClientRect();
-    const opts={bubbles:true,cancelable:true,composed:true,view:window,button:0,
-      clientX:r.left+r.width/2,clientY:r.top+r.height/2};
-    for(const type of ['pointerdown','mousedown','pointerup','mouseup','click']){
-      try{
-        const Kind=type.startsWith('pointer')?PointerEvent:MouseEvent;
-        el.dispatchEvent(new Kind(type,
-          Object.assign({pointerType:'touch',isPrimary:true},opts)));
-      }catch(_){}
-    }
-  };
-  let ticks=0,fired=0;
-  const timer=setInterval(()=>{
-    ticks++;
-    if(viewerOpen()||ticks>60||fired>=3){clearInterval(timer);return;}
-    // About one attempt per second, once the inline player has rendered.
-    if(ticks%5!==0)return;
-    const player=document.querySelector('article [data-testid="videoPlayer"]')||
-      document.querySelector('[data-testid="videoPlayer"]');
-    const video=(player&&player.querySelector('video'))||
-      document.querySelector('article video');
-    const target=player||video;
-    if(!target)return;
-    const r=target.getBoundingClientRect();
-    if(r.width<80||r.height<60||r.bottom<=0||r.top>=innerHeight)return;
-    fired++;
-    fire(target);
-  },200);
+  const post=/^\/[^\/]+\/status\/\d+\/?$/.test(location.pathname);
+  const player=document.querySelector('article [data-testid="videoPlayer"]')||
+    document.querySelector('[data-testid="videoPlayer"]');
+  const video=(player&&player.querySelector('video'))||
+    document.querySelector('article video');
+  const target=video||player;
+  if(!target)return JSON.stringify({open:open,ready:false});
+  const r=target.getBoundingClientRect();
+  const cy=(r.top+r.bottom)/2;
+  return JSON.stringify({
+    open:open,
+    ready:post&&r.width>80&&r.height>60&&cy>0&&cy<innerHeight,
+    x:r.left+r.width/2,y:cy,w:r.width,dpr:window.devicePixelRatio||1
+  });
 })()
 """.trimIndent()
 
@@ -2130,6 +2112,52 @@ fun MultiTabBrowser(
         return true
     }
 
+    /** A real finger-like tap on the WebView at view-pixel coordinates. */
+    fun tapWebView(web: WebView, x: Float, y: Float) {
+        val down = android.os.SystemClock.uptimeMillis()
+        val press = android.view.MotionEvent.obtain(
+            down, down, android.view.MotionEvent.ACTION_DOWN, x, y, 0
+        )
+        web.dispatchTouchEvent(press)
+        press.recycle()
+        web.postDelayed({
+            val up = android.os.SystemClock.uptimeMillis()
+            val release = android.view.MotionEvent.obtain(
+                down, up, android.view.MotionEvent.ACTION_UP, x, y, 0
+            )
+            web.dispatchTouchEvent(release)
+            release.recycle()
+        }, 70L)
+    }
+
+    /**
+     * In a viewer tab, wait for the inline player and tap it (up to 3 times, until
+     * X's playback viewer is open), doing the "second tap" for the user.
+     */
+    fun autoEnterViewer(tab: TabViewState, web: WebView, attempt: Int = 0, taps: Int = 0) {
+        if (attempt > 45 || taps >= 3) return
+        web.postDelayed({
+            if (webViews[tab.id] !== web || tab.parentTabId == null || tab.id != activeId) {
+                return@postDelayed
+            }
+            web.evaluateJavascript(X_VIEWER_PROBE_SCRIPT) { raw ->
+                val json = runCatching {
+                    JSONObject(JSONArray("[" + raw + "]").getString(0))
+                }.getOrNull()
+                if (json?.optBoolean("open") == true) return@evaluateJavascript
+                if (json != null && json.optBoolean("ready")) {
+                    val dpr = json.optDouble("dpr", 1.0)
+                    tapWebView(
+                        web,
+                        (json.optDouble("x") * dpr).toFloat(),
+                        (json.optDouble("y") * dpr).toFloat()
+                    )
+                    autoEnterViewer(tab, web, attempt + 1, taps + 1)
+                } else autoEnterViewer(tab, web, attempt + 1, taps)
+            }
+        }, if (taps > 0) 1300L else 450L)
+    }
+
     // Every WebView gets its own navigation state, cookies are shared normally
     // by Android WebView, and all navigation stays within the app.
     fun createWebView(tab: TabViewState, initialLoad: Boolean = true): WebView {
@@ -2260,6 +2288,10 @@ fun MultiTabBrowser(
                 if (title.isNotBlank()) tab.title = title.take(120)
                 else if (url != null) tab.title = BrowserAddress.displayName(url)
                 tab.progress = 100
+                if (tab.parentTabId != null && !tab.autoEnterStarted) {
+                    tab.autoEnterStarted = true
+                    autoEnterViewer(tab, web)
+                }
                 tab.canBack = web.canGoBack()
                 tab.canForward = web.canGoForward()
                 if (url != null && BrowserAddress.isWebUrl(url)) {
@@ -2275,9 +2307,6 @@ fun MultiTabBrowser(
                     view?.evaluateJavascript(X_MEDIA_PINCH_ZOOM_SCRIPT, null)
                     view?.evaluateJavascript(X_VIDEO_DOUBLE_TAP_SEEK_SCRIPT, null)
                     view?.evaluateJavascript(X_VIEW_IN_TAB_SCRIPT, null)
-                    if (tab.parentTabId != null) {
-                        view?.evaluateJavascript(X_VIEWER_AUTO_ENTER_SCRIPT, null)
-                    }
                     if (browserVideoFullscreen) {
                         view?.evaluateJavascript(xVideoFullscreenScript(true), null)
                         view?.evaluateJavascript(xImmersiveFitScript(true), null)
@@ -2692,9 +2721,6 @@ fun MultiTabBrowser(
                         browser.evaluateJavascript(X_MEDIA_PINCH_ZOOM_SCRIPT, null)
                         browser.evaluateJavascript(X_VIDEO_DOUBLE_TAP_SEEK_SCRIPT, null)
                         browser.evaluateJavascript(X_VIEW_IN_TAB_SCRIPT, null)
-                        if (selected.parentTabId != null) {
-                            browser.evaluateJavascript(X_VIEWER_AUTO_ENTER_SCRIPT, null)
-                        }
                     }
                     // A React video card on /home must not show download.
                     // Only a visible, open immersive viewer should do so.
