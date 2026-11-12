@@ -239,6 +239,8 @@ private class TabViewState(record: BrowserTabRecord) {
     var restoreSequence: Int = 0
     /** Back from a media viewer: X restores its own list scroll; only fix a reset-to-top. */
     var restoreGentle: Boolean = false
+    /** Set on a tab opened from an X list: closing it returns to that live list tab. */
+    var parentTabId: String? = null
     val mediaSources = mutableStateListOf<String>()
     fun record() = BrowserTabRecord(id, url, title)
 }
@@ -1516,6 +1518,79 @@ internal val X_DEDICATED_X_VIDEO_VIEWER_SCRIPT = """
 })()
 """.trimIndent()
 
+/**
+ * Opening a video from an X list (Home, Bookmarks, Likes) makes X's single-page
+ * app tear the list down and rebuild it on Back, which looked like jumping and
+ * flashing. A tap on a list video is therefore sent to the app, which opens the
+ * video in a NEW tab and keeps this list's WebView untouched. Closing that tab
+ * returns to the exact, still-live list. Everything else is left to X.
+ */
+private val X_VIEW_IN_TAB_SCRIPT = """
+(() => {
+  if (!/^(?:www\.)?(?:x\.com|twitter\.com)$/.test(location.hostname)) return;
+  if (window.__mydownloadViewInTab) return;
+  window.__mydownloadViewInTab = true;
+
+  const MAX_TAP_MS=350, MAX_MOVE=14;
+  let start=null, swallowClickUntil=0;
+  const listPage=()=>/^\/(?:home|i\/bookmarks(?:\/\d+)?|[^\/]+\/likes)\/?$/.test(
+    location.pathname);
+  const interactive=el=>!!el.closest(
+    'button,a,input,textarea,select,[role="button"],[role="link"],'+
+    '[role="slider"],[role="menuitem"],[role="menu"],[role="switch"],'+
+    '#mydownload-optional-x-progress,[data-testid="User-Name"],'+
+    '[data-testid="Tweet-User-Avatar"],[data-testid="socialContext"]');
+  const statusId=e=>{
+    if(!listPage()||!(e.target instanceof Element)||interactive(e.target))
+      return null;
+    const article=e.target.closest('article[data-testid="tweet"]');
+    if(!article)return null;
+    const player=e.target.closest('[data-testid="videoPlayer"],'+
+      '[data-testid="videoComponent"]')||
+      (e.target.tagName==='VIDEO'?e.target:null);
+    if(!player||!article.contains(player))return null;
+    // The post's own timestamp link, never a quoted post's.
+    for(const time of article.querySelectorAll('a[href*="/status/"] time')){
+      const a=time.closest('a');
+      if(!a||a.closest('[role="link"][tabindex]:not(a)'))continue;
+      const m=/\/status\/(\d+)/.exec(a.getAttribute('href')||'');
+      if(m)return m[1];
+    }
+    return null;
+  };
+  document.addEventListener('touchstart',e=>{
+    start=null;
+    if(e.touches.length!==1)return;
+    const id=statusId(e);
+    if(!id)return;
+    const t=e.touches[0];
+    start={x:t.clientX,y:t.clientY,time:performance.now(),id};
+  },{capture:true,passive:true});
+  document.addEventListener('touchmove',e=>{
+    if(!start)return;
+    const t=e.touches[0];
+    if(e.touches.length!==1||
+        Math.hypot(t.clientX-start.x,t.clientY-start.y)>MAX_MOVE)start=null;
+  },{capture:true,passive:true});
+  document.addEventListener('touchend',e=>{
+    const s=start;start=null;
+    if(!s||e.touches.length!==0||performance.now()-s.time>MAX_TAP_MS)return;
+    if(e.cancelable)e.preventDefault();
+    e.stopImmediatePropagation();
+    swallowClickUntil=performance.now()+700;
+    // Handled natively (WebViewClient): opens a new tab, leaves this page as is.
+    location.href='mydownloadviewer://open?u='+
+      encodeURIComponent('https://x.com/i/status/'+s.id);
+  },{capture:true,passive:false});
+  document.addEventListener('click',e=>{
+    if(performance.now()<swallowClickUntil&&e.target instanceof Element&&
+        !interactive(e.target)){
+      e.preventDefault();e.stopImmediatePropagation();
+    }
+  },{capture:true});
+})()
+""".trimIndent()
+
 private val X_VIDEO_DOUBLE_TAP_SEEK_SCRIPT = """
 (() => {
   if (!/^(?:www\.)?(?:x\.com|twitter\.com)$/.test(location.hostname)) return;
@@ -1986,6 +2061,28 @@ fun MultiTabBrowser(
         } else saveSession()
     }
 
+    /** Opens an X video from a list in a new tab; the list's WebView stays untouched. */
+    fun openViewerTab(parent: TabViewState, parentWeb: WebView?, url: String) {
+        if (!BrowserAddress.isWebUrl(url) || !BrowserVideoDiscovery.isXPage(url)) return
+        // Silence the list's inline video before the tab is hidden.
+        parentWeb?.evaluateJavascript(
+            "document.querySelectorAll('video').forEach(function(v){try{v.pause()}catch(e){}})",
+            null
+        )
+        val child = addTab(url, "X 影片") ?: return
+        child.parentTabId = parent.id
+    }
+
+    /** Back on a viewer tab: close it and return to the untouched list tab. */
+    fun closeViewerTab(): Boolean {
+        val tab = tabs.firstOrNull { it.id == activeId } ?: return false
+        val parentId = tab.parentTabId ?: return false
+        val parent = tabs.firstOrNull { it.id == parentId }
+        if (parent != null) selectTab(parent)
+        closeTab(tab.id)
+        return true
+    }
+
     // Every WebView gets its own navigation state, cookies are shared normally
     // by Android WebView, and all navigation stays within the app.
     fun createWebView(tab: TabViewState, initialLoad: Boolean = true): WebView {
@@ -2057,6 +2154,12 @@ fun MultiTabBrowser(
             ): Boolean {
                 if (request == null || !request.isForMainFrame) return false
                 val url = request.url.toString()
+                if (url.startsWith("mydownloadviewer://")) {
+                    request.url.getQueryParameter("u")?.let { target ->
+                        web.post { openViewerTab(tab, web, target) }
+                    }
+                    return true
+                }
                 if (blockAds && AdPageFilter.blocks(url)) return true
                 // Unlike the previous AV01-only browser, allow all regular web
                 // navigation, including x.com and OAuth redirects, in this tab.
@@ -2124,6 +2227,7 @@ fun MultiTabBrowser(
                     view?.evaluateJavascript(xDisplayScript(currentXOptions), null)
                     view?.evaluateJavascript(X_MEDIA_PINCH_ZOOM_SCRIPT, null)
                     view?.evaluateJavascript(X_VIDEO_DOUBLE_TAP_SEEK_SCRIPT, null)
+                    view?.evaluateJavascript(X_VIEW_IN_TAB_SCRIPT, null)
                     if (browserVideoFullscreen) {
                         view?.evaluateJavascript(xVideoFullscreenScript(true), null)
                         view?.evaluateJavascript(xImmersiveFitScript(true), null)
@@ -2278,6 +2382,7 @@ fun MultiTabBrowser(
     }
 
     fun goBackPreservingScroll() {
+        if (closeViewerTab()) return
         val web = currentWebView() ?: return
         if (!web.canGoBack()) return
         captureScroll(web, selected)
@@ -2465,7 +2570,9 @@ fun MultiTabBrowser(
             // Only four expensive WebView instances remain resident. Old tabs
             // persist URL/title and reload lazily when opened again.
             while (webViews.size > 4) {
-                val victimId = webViews.keys.firstOrNull { it != selected.id } ?: break
+                val victimId = webViews.keys.firstOrNull {
+                    it != selected.id && it != selected.parentTabId
+                } ?: break
                 val victim = webViews.remove(victimId) ?: break
                 (victim.parent as? ViewGroup)?.removeView(victim)
                 victim.stopLoading()
@@ -2534,6 +2641,7 @@ fun MultiTabBrowser(
                         browser.evaluateJavascript(xDisplayScript(currentXOptions), null)
                         browser.evaluateJavascript(X_MEDIA_PINCH_ZOOM_SCRIPT, null)
                         browser.evaluateJavascript(X_VIDEO_DOUBLE_TAP_SEEK_SCRIPT, null)
+                        browser.evaluateJavascript(X_VIEW_IN_TAB_SCRIPT, null)
                     }
                     // A React video card on /home must not show download.
                     // Only a visible, open immersive viewer should do so.
@@ -2608,7 +2716,8 @@ fun MultiTabBrowser(
         }
     }
 
-    BackHandler(visible && (browserVideoFullscreen || fullscreenView != null || selected.canBack)) {
+    BackHandler(visible && (browserVideoFullscreen || fullscreenView != null ||
+        selected.canBack || selected.parentTabId != null)) {
         when {
             fullscreenView != null -> currentWebView()?.webChromeClient?.onHideCustomView()
             browserVideoFullscreen -> setVideoFullscreen(false)
@@ -2625,7 +2734,7 @@ fun MultiTabBrowser(
         ) {
             IconButton(
                 onClick = { goBackPreservingScroll() },
-                enabled = selected.canBack,
+                enabled = selected.canBack || selected.parentTabId != null,
                 modifier = Modifier.size(35.dp)
             ) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, "上一頁",
