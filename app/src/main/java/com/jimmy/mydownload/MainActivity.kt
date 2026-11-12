@@ -117,6 +117,7 @@ private fun deleteVideo(context: android.content.Context, item: DownloadRecord) 
     DownloadStore.remove(context, item.id)
     File(context.filesDir, "temp_downloads/" + item.id + ".part").delete()
     File(context.filesDir, "temp_downloads/" + item.id + ".mp4").delete()
+    File(context.filesDir, "temp_downloads/" + item.id + ".audio.part").delete()
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

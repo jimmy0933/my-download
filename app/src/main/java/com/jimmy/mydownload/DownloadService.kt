@@ -387,7 +387,9 @@ class DownloadService : Service() {
     }
     private class HttpStatusException(val code: Int) : IOException("片段 HTTP $code")
 
-    private data class Segments(val list: List<String>, val fragmented: Boolean)
+    private data class Segments(
+        val list: List<String>, val fragmented: Boolean, val audioUrl: String = ""
+    )
 
     private fun parseSegments(
         text: String, base: String, referer: String, userAgent: String = ""
@@ -408,8 +410,15 @@ class DownloadService : Service() {
             val next = if (token.isNullOrBlank() || !Av01Resolver.isCdnUrl(best.url)) best.url else
                 best.url.toHttpUrl().newBuilder().addQueryParameter("access_token", token)
                     .build().toString()
-            return parseSegments(StreamResolver.fetchText(next, referer, userAgent),
+            val inner = parseSegments(StreamResolver.fetchText(next, referer, userAgent),
                 next, referer, userAgent)
+            val audio = best.audioUrl.takeIf { it.isNotBlank() }?.let { raw ->
+                if (token.isNullOrBlank() || !Av01Resolver.isCdnUrl(raw) ||
+                    raw.toHttpUrl().queryParameter("access_token") != null) raw
+                else raw.toHttpUrl().newBuilder()
+                    .addQueryParameter("access_token", token).build().toString()
+            }.orEmpty()
+            return inner.copy(audioUrl = inner.audioUrl.ifBlank { audio })
         }
         val token = runCatching { base.toHttpUrl().queryParameter("access_token") }.getOrNull()
         fun absolute(raw: String): String {
@@ -525,6 +534,12 @@ class DownloadService : Service() {
         }
 
         coroutineContext.ensureActive()
+        // X serves audio as a separate playlist; without it the saved video is silent.
+        val audioPlaylist = item.audioUrl.ifBlank { sources.audioUrl }
+        if (audioPlaylist.isNotBlank()) {
+            downloadAudio(item, audioPlaylist, audioFile(item.id))
+        }
+        coroutineContext.ensureActive()
         // The complete source is on disk. This state survives process death
         // and ensures Pause -> Continue can resume without network access.
         DownloadStore.patch(this, item.id) {
@@ -532,6 +547,60 @@ class DownloadService : Service() {
                 progress = 94, checkpoint = sources.list.size, bytes = partial.length(), error = "")
         }
         finalizeHls(item, partial, sources.fragmented)
+    }
+
+    private fun audioFile(id: Long): File {
+        val dir = File(filesDir, "temp_downloads")
+        dir.mkdirs()
+        return File(dir, id.toString() + ".audio.part")
+    }
+
+    /** Downloads the separate HLS audio playlist (small) into [target], from scratch. */
+    private suspend fun downloadAudio(item: DownloadRecord, playlist: String, target: File) {
+        progress(item, "下載音訊", 93)
+        val text = StreamResolver.fetchText(playlist, item.referer, item.userAgent)
+        val audio = parseSegments(text, playlist, item.referer, item.userAgent)
+        target.delete()
+        for ((index, address) in audio.list.withIndex()) {
+            coroutineContext.ensureActive()
+            var failure: Exception? = null
+            var done = false
+            val before = target.length()
+            for (attempt in 0 until 3) {
+                coroutineContext.ensureActive()
+                try {
+                    java.io.RandomAccessFile(target, "rw").use { it.setLength(before) }
+                    val request = BrowserMediaRequest.builder(
+                        address, item.referer, item.userAgent
+                    ).build()
+                    StreamResolver.client.newCall(request).execute().use { response ->
+                        if (!response.isSuccessful) throw HttpStatusException(response.code)
+                        FileOutputStream(target, true).use { output ->
+                            response.body?.byteStream()?.use { input ->
+                                val buffer = ByteArray(65536)
+                                while (true) {
+                                    coroutineContext.ensureActive()
+                                    val n = input.read(buffer)
+                                    if (n < 0) break
+                                    output.write(buffer, 0, n)
+                                }
+                            } ?: throw IOException("空白音訊片段")
+                        }
+                    }
+                    done = true
+                    break
+                } catch (e: Exception) {
+                    coroutineContext.ensureActive()
+                    failure = e
+                    if (e is HttpStatusException && e.code in setOf(401, 403, 404, 410)) break
+                    kotlinx.coroutines.delay(attempt * 1500L + 500L)
+                }
+            }
+            if (!done) throw IOException(
+                "音訊片段 " + (index + 1) + " 失敗：" + failure?.message
+            )
+        }
+        if (target.length() <= 0L) throw IOException("音訊下載內容是空的")
     }
 
     private fun isFragmentedMp4(file: File): Boolean {
@@ -553,7 +622,10 @@ class DownloadService : Service() {
      */
     private suspend fun finalizeHls(item: DownloadRecord, partial: File, fragmented: Boolean) {
         coroutineContext.ensureActive()
-        if (!item.autoRepairMp4) {
+        val audio = audioFile(item.id).takeIf { it.isFile && it.length() > 0L }
+        // Separate audio can only be delivered by remuxing, regardless of the
+        // "keep original stream" setting.
+        if (!item.autoRepairMp4 && audio == null) {
             // Do not call an initialization-only fMP4 or TS a completed movie.
             verifyMp4(partial)
             val ext = if (fragmented) "mp4" else "ts"
@@ -571,7 +643,7 @@ class DownloadService : Service() {
         val job = coroutineContext[Job]
         var remuxFailure: Throwable? = null
         val indexed = try {
-            remuxToMp4(partial, mp4, job) { percentage ->
+            remuxToMp4(partial, mp4, job, audio = audio) { percentage ->
                 progress(item, "正在建立可快轉 MP4", percentage)
             }
             mp4.isFile && mp4.length() > 0L
@@ -587,14 +659,17 @@ class DownloadService : Service() {
             finish(item, mp4, "mp4", "video/mp4")
             partial.delete()
             mp4.delete()
+            audioFile(item.id).delete()
         } else {
             mp4.delete()
             verifyMp4(partial)
             val extension = if (fragmented) "mp4" else "ts"
             val kind = if (fragmented) "video/mp4" else "video/mp2t"
-            val note = "MP4 整理無法完成，已保留原始串流。" +
+            val note = (if (audio != null) "音訊合併失敗，影片可能沒有聲音。" else "") +
+                "MP4 整理無法完成，已保留原始串流。" +
                 (remuxFailure?.message?.let { "原因：" + it.take(140) } ?: "")
             finish(item, partial, extension, kind, note)
+            audioFile(item.id).delete()
         }
     }
 
@@ -897,42 +972,89 @@ class DownloadService : Service() {
         }
     }
 
+    /**
+     * Remux [input] (and optionally a separate [audio] file, as X serves audio
+     * apart from video) into one MP4. Samples are interleaved by timestamp.
+     */
     private fun remuxToMp4(
         input: File, output: File, job: Job?,
         progressMin: Int = 94, progressMax: Int = 97,
+        audio: File? = null,
         onProgress: (Int) -> Unit
     ) {
-        val extractor = MediaExtractor()
+        val extractors = mutableListOf<MediaExtractor>()
         var muxer: MediaMuxer? = null
         var lastUpdate = 0L
         var processedBytes = 0L
-        val expectedBytes = input.length().coerceAtLeast(1L)
+        val expectedBytes = (input.length() + (audio?.length() ?: 0L)).coerceAtLeast(1L)
         // Do not impose a deadline on remuxing, either automatically or when
         // the user explicitly repairs a completed video in Settings.
         try {
             job?.ensureActive()
-            extractor.setDataSource(input.absolutePath)
             val writer = MediaMuxer(output.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
             muxer = writer
-            val tracks = mutableMapOf<Int, Int>()
-            for (i in 0 until extractor.trackCount) {
-                val format = extractor.getTrackFormat(i)
-                val mime = format.getString(MediaFormat.KEY_MIME).orEmpty()
-                if (mime.startsWith("audio/") || mime.startsWith("video/")) {
-                    tracks[i] = writer.addTrack(format)
-                    extractor.selectTrack(i)
+            // Each entry: extractor + (source track -> muxer track)
+            val sources = mutableListOf<Pair<MediaExtractor, Map<Int, Int>>>()
+            var audioTrackAdded = false
+            for (file in listOfNotNull(input, audio)) {
+                val extractor = MediaExtractor()
+                extractors += extractor
+                extractor.setDataSource(file.absolutePath)
+                val isAudioFile = file === audio
+                val tracks = mutableMapOf<Int, Int>()
+                for (i in 0 until extractor.trackCount) {
+                    val format = extractor.getTrackFormat(i)
+                    val mime = format.getString(MediaFormat.KEY_MIME).orEmpty()
+                    val wanted = if (isAudioFile) {
+                        mime.startsWith("audio/") && !audioTrackAdded
+                    } else {
+                        mime.startsWith("video/") ||
+                            (mime.startsWith("audio/") && audio == null)
+                    }
+                    if (wanted) {
+                        tracks[i] = writer.addTrack(format)
+                        extractor.selectTrack(i)
+                        if (mime.startsWith("audio/")) audioTrackAdded = true
+                    }
                 }
+                sources += extractor to tracks
             }
-            if (tracks.isEmpty()) throw IOException("沒有可封裝的音訊或影像")
+            if (sources.all { it.second.isEmpty() }) {
+                throw IOException("沒有可封裝的音訊或影像")
+            }
+            if (audio != null && !audioTrackAdded) {
+                throw IOException("音訊檔案沒有可用的音訊軌")
+            }
             writer.start()
             val buffer = ByteBuffer.allocateDirect(8 * 1024 * 1024)
             val info = MediaCodec.BufferInfo()
             var total = 0
             while (true) {
                 job?.ensureActive()
+                // Take the next sample from whichever source is earliest.
+                var pick = -1
+                var earliest = Long.MAX_VALUE
+                for ((index, source) in sources.withIndex()) {
+                    val extractor = source.first
+                    if (source.second.isEmpty() || extractor.sampleTrackIndex < 0) continue
+                    val time = extractor.sampleTime.let { if (it < 0) Long.MAX_VALUE - 1 else it }
+                    if (pick < 0 || time < earliest) {
+                        pick = index
+                        earliest = time
+                    }
+                }
+                if (pick < 0) break
+                val (extractor, tracks) = sources[pick]
                 buffer.clear()
                 val size = extractor.readSampleData(buffer, 0)
-                if (size < 0) break
+                if (size < 0) {
+                    if (!extractor.advance()) {
+                        // Nothing more from this source; selecting no track
+                        // makes sampleTrackIndex negative on the next pass.
+                        tracks.keys.forEach { extractor.unselectTrack(it) }
+                    }
+                    continue
+                }
                 val sourceTrack = extractor.sampleTrackIndex
                 val ts = extractor.sampleTime
                 if (sourceTrack in tracks && ts >= 0) {
@@ -950,7 +1072,9 @@ class DownloadService : Service() {
                     onProgress((progressMin + fraction * (progressMax - progressMin) /
                         expectedBytes).toInt().coerceIn(progressMin, progressMax))
                 }
-                if (!extractor.advance()) break
+                if (!extractor.advance()) {
+                    tracks.keys.forEach { extractor.unselectTrack(it) }
+                }
             }
             if (total == 0) throw IOException("沒有可輸出的影片影格")
             job?.ensureActive()
@@ -958,7 +1082,7 @@ class DownloadService : Service() {
         } finally {
             // Only the successful path may call stop(); aborting can hang.
             runCatching { muxer?.release() }
-            extractor.release()
+            extractors.forEach { runCatching { it.release() } }
         }
     }
 

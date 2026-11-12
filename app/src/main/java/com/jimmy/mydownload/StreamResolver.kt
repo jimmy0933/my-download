@@ -15,7 +15,9 @@ data class StreamChoice(
     val kind: String,
     val referer: String,
     val detail: String = "",
-    val userAgent: String = ""
+    val userAgent: String = "",
+    /** Separate HLS audio playlist (X serves audio apart from video); "" if muxed. */
+    val audioUrl: String = ""
 )
 
 object StreamResolver {
@@ -113,6 +115,20 @@ object StreamResolver {
             throw IOException("此來源使用加密串流，無法直接下載")
         }
         val lines = text.lines().map(String::trim)
+        // #EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="a",URI="..." -> separate audio playlist.
+        val audioGroups = mutableMapOf<String, String>()
+        for (line in lines) {
+            if (!line.startsWith("#EXT-X-MEDIA:", true) ||
+                !line.contains("TYPE=AUDIO", true)) continue
+            val group = Regex("""GROUP-ID="([^"]*)"""", RegexOption.IGNORE_CASE)
+                .find(line)?.groupValues?.get(1) ?: continue
+            val uri = Regex("""URI="([^"]+)"""", RegexOption.IGNORE_CASE)
+                .find(line)?.groupValues?.get(1) ?: continue
+            val resolved = runCatching { URL(URL(baseUrl), uri).toString() }.getOrNull()
+                ?.takeIf { it.startsWith("https://") } ?: continue
+            if (group !in audioGroups || line.contains("DEFAULT=YES", true))
+                audioGroups[group] = resolved
+        }
         val variants = mutableListOf<StreamChoice>()
         for (i in lines.indices) {
             if (!lines[i].startsWith("#EXT-X-STREAM-INF:", true)) continue
@@ -128,8 +144,11 @@ object StreamResolver {
                 else -> "自動畫質"
             }
             val resolved = URL(URL(baseUrl), next).toString()
+            val audioGroup = Regex("""AUDIO="([^"]*)"""", RegexOption.IGNORE_CASE)
+                .find(lines[i])?.groupValues?.get(1)
             if (resolved.startsWith("https://")) variants +=
-                StreamChoice(title, label, resolved, "hls", referer)
+                StreamChoice(title, label, resolved, "hls", referer,
+                    audioUrl = audioGroup?.let { audioGroups[it] }.orEmpty())
         }
         if (variants.isNotEmpty()) return variants.sortedByDescending {
             Regex("""\d+""").find(it.label)?.value?.toIntOrNull() ?: 0
