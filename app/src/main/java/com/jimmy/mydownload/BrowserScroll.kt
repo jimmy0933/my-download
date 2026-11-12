@@ -50,7 +50,8 @@ object BrowserScroll {
 (() => {
   const root = document.scrollingElement || document.documentElement;
   const primary = document.querySelector('[data-testid="primaryColumn"]');
-  if (${point.page} > 0) {
+  const current = Math.max(window.scrollY || 0, root?.scrollTop || 0);
+  if (${point.page} > 0 && Math.abs(current - ${point.page}) > 60) {
     window.scrollTo(0, ${point.page});
     if (root) root.scrollTop = ${point.page};
   }
@@ -58,7 +59,8 @@ object BrowserScroll {
     for (let e = primary; e && e !== document.body; e = e.parentElement) {
       if (e.scrollHeight > e.clientHeight + 80 &&
           /(auto|scroll)/.test(getComputedStyle(e).overflowY)) {
-        e.scrollTop = ${point.panel}; break;
+        if (Math.abs(e.scrollTop - ${point.panel}) > 60) e.scrollTop = ${point.panel};
+        break;
       }
     }
   }

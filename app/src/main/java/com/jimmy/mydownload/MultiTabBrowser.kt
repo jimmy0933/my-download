@@ -237,6 +237,8 @@ private class TabViewState(record: BrowserTabRecord) {
     val scrollByUrl = mutableMapOf<String, BrowserScrollPoint>()
     var restoreTarget: String? = null
     var restoreSequence: Int = 0
+    /** Back from a media viewer: X restores its own list scroll; only fix a reset-to-top. */
+    var restoreGentle: Boolean = false
     val mediaSources = mutableStateListOf<String>()
     fun record() = BrowserTabRecord(id, url, title)
 }
@@ -1883,16 +1885,28 @@ fun MultiTabBrowser(
     fun restoreScroll(web: WebView, tab: TabViewState, url: String) {
         val point = tab.scrollByUrl[url] ?: return
         val token = ++tab.restoreSequence
-        listOf(220L, 750L, 1700L).forEachIndexed { index, millis ->
+        // Going back from X's video viewer to the list is a same-document
+        // transition: X re-mounts and restores the list itself. Forcing our own
+        // scrollTo three times on top of that made the list stutter and flash
+        // as if it kept loading. In that case only act once, late, and only if
+        // the list really came back at the top.
+        val gentle = tab.restoreGentle
+        tab.restoreGentle = false
+        val delays = if (gentle) listOf(1700L) else listOf(220L, 750L, 1700L)
+        delays.forEachIndexed { index, millis ->
             web.postDelayed({
                 if (tab.restoreSequence != token || tab.url != url) return@postDelayed
                 if (web.url != url && web.url?.substringBefore('#') != url.substringBefore('#'))
                     return@postDelayed
-                if (point.native > 0) web.scrollTo(0, point.native)
-                if (point.page > 0 || point.panel > 0) {
+                val last = index == delays.lastIndex
+                val skip = gentle && web.scrollY >= 120
+                // Never fight a position that is already (nearly) right.
+                val nativeOff = kotlin.math.abs(web.scrollY - point.native) > 60
+                if (!skip && point.native > 0 && nativeOff) web.scrollTo(0, point.native)
+                if (!skip && (point.page > 0 || point.panel > 0)) {
                     web.evaluateJavascript(BrowserScroll.restoreScript(point), null)
                 }
-                if (index == 2 && tab.restoreTarget == url) tab.restoreTarget = null
+                if (last && tab.restoreTarget == url) tab.restoreTarget = null
             }, millis)
         }
     }
@@ -2238,6 +2252,7 @@ fun MultiTabBrowser(
         val target = if (list.currentIndex > 0)
             list.getItemAtIndex(list.currentIndex - 1)?.url else null
         selected.restoreTarget = target?.takeIf { BrowserAddress.isWebUrl(it) }
+        selected.restoreGentle = XMediaNavigation.isMediaViewer(selected.url)
         web.goBack()  // Reuse WebView's history: never loadUrl() for Back.
     }
 
