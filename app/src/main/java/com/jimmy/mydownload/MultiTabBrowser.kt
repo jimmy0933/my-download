@@ -1591,6 +1591,53 @@ private val X_VIEW_IN_TAB_SCRIPT = """
 })()
 """.trimIndent()
 
+/**
+ * Viewer tabs only: the post page opened from a list shows the video inline and
+ * needs one more tap to enter X's own full playback viewer. Do that tap for the
+ * user (up to three attempts, stopping as soon as the viewer is open), so one
+ * tap in the list plays the video, and swiping afterwards is plain X behaviour.
+ */
+private val X_VIEWER_AUTO_ENTER_SCRIPT = """
+(() => {
+  if(!/^(?:www\.)?(?:x\.com|twitter\.com)$/.test(location.hostname))return;
+  if(!/^\/[^\/]+\/status\/\d+\/?$/.test(location.pathname))return;
+  if(window.__mydownloadAutoEnter)return;
+  window.__mydownloadAutoEnter=true;
+  const viewerOpen=()=>!!document.querySelector(
+    '[data-testid="vss-scroll-view"],[data-testid="immersive-viewer"],'+
+    '#layers [role="dialog"]:has(video)');
+  const fire=el=>{
+    const r=el.getBoundingClientRect();
+    const opts={bubbles:true,cancelable:true,composed:true,view:window,button:0,
+      clientX:r.left+r.width/2,clientY:r.top+r.height/2};
+    for(const type of ['pointerdown','mousedown','pointerup','mouseup','click']){
+      try{
+        const Kind=type.startsWith('pointer')?PointerEvent:MouseEvent;
+        el.dispatchEvent(new Kind(type,
+          Object.assign({pointerType:'touch',isPrimary:true},opts)));
+      }catch(_){}
+    }
+  };
+  let ticks=0,fired=0;
+  const timer=setInterval(()=>{
+    ticks++;
+    if(viewerOpen()||ticks>60||fired>=3){clearInterval(timer);return;}
+    // About one attempt per second, once the inline player has rendered.
+    if(ticks%5!==0)return;
+    const player=document.querySelector('article [data-testid="videoPlayer"]')||
+      document.querySelector('[data-testid="videoPlayer"]');
+    const video=(player&&player.querySelector('video'))||
+      document.querySelector('article video');
+    const target=player||video;
+    if(!target)return;
+    const r=target.getBoundingClientRect();
+    if(r.width<80||r.height<60||r.bottom<=0||r.top>=innerHeight)return;
+    fired++;
+    fire(target);
+  },200);
+})()
+""".trimIndent()
+
 private val X_VIDEO_DOUBLE_TAP_SEEK_SCRIPT = """
 (() => {
   if (!/^(?:www\.)?(?:x\.com|twitter\.com)$/.test(location.hostname)) return;
@@ -2228,6 +2275,9 @@ fun MultiTabBrowser(
                     view?.evaluateJavascript(X_MEDIA_PINCH_ZOOM_SCRIPT, null)
                     view?.evaluateJavascript(X_VIDEO_DOUBLE_TAP_SEEK_SCRIPT, null)
                     view?.evaluateJavascript(X_VIEW_IN_TAB_SCRIPT, null)
+                    if (tab.parentTabId != null) {
+                        view?.evaluateJavascript(X_VIEWER_AUTO_ENTER_SCRIPT, null)
+                    }
                     if (browserVideoFullscreen) {
                         view?.evaluateJavascript(xVideoFullscreenScript(true), null)
                         view?.evaluateJavascript(xImmersiveFitScript(true), null)
@@ -2642,6 +2692,9 @@ fun MultiTabBrowser(
                         browser.evaluateJavascript(X_MEDIA_PINCH_ZOOM_SCRIPT, null)
                         browser.evaluateJavascript(X_VIDEO_DOUBLE_TAP_SEEK_SCRIPT, null)
                         browser.evaluateJavascript(X_VIEW_IN_TAB_SCRIPT, null)
+                        if (selected.parentTabId != null) {
+                            browser.evaluateJavascript(X_VIEWER_AUTO_ENTER_SCRIPT, null)
+                        }
                     }
                     // A React video card on /home must not show download.
                     // Only a visible, open immersive viewer should do so.
