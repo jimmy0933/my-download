@@ -241,7 +241,6 @@ private class TabViewState(record: BrowserTabRecord) {
     var restoreGentle: Boolean = false
     /** Set on a tab opened from an X list: closing it returns to that live list tab. */
     var parentTabId: String? = null
-    var viewerOpenedAt: Long = 0L
     val mediaSources = mutableStateListOf<String>()
     fun record() = BrowserTabRecord(id, url, title)
 }
@@ -1554,19 +1553,18 @@ private val X_VIEW_IN_TAB_SCRIPT = """
     for(const time of article.querySelectorAll('a[href*="/status/"] time')){
       const a=time.closest('a');
       if(!a||a.closest('[role="link"][tabindex]:not(a)'))continue;
-      // "/handle/status/ID" -> the direct playback page /handle/status/ID/video/1
-      const m=/^\/([^\/]+)\/status\/(\d+)/.exec(a.getAttribute('href')||'');
-      if(m)return '/'+m[1]+'/status/'+m[2]+'/video/1';
+      const m=/\/status\/(\d+)/.exec(a.getAttribute('href')||'');
+      if(m)return m[1];
     }
     return null;
   };
   document.addEventListener('touchstart',e=>{
     start=null;
     if(e.touches.length!==1)return;
-    const path=statusId(e);
-    if(!path)return;
+    const id=statusId(e);
+    if(!id)return;
     const t=e.touches[0];
-    start={x:t.clientX,y:t.clientY,time:performance.now(),path};
+    start={x:t.clientX,y:t.clientY,time:performance.now(),id};
   },{capture:true,passive:true});
   document.addEventListener('touchmove',e=>{
     if(!start)return;
@@ -1582,7 +1580,7 @@ private val X_VIEW_IN_TAB_SCRIPT = """
     swallowClickUntil=performance.now()+700;
     // Handled natively (WebViewClient): opens a new tab, leaves this page as is.
     location.href='mydownloadviewer://open?u='+
-      encodeURIComponent('https://x.com'+s.path);
+      encodeURIComponent('https://x.com/i/status/'+s.id);
   },{capture:true,passive:false});
   document.addEventListener('click',e=>{
     if(performance.now()<swallowClickUntil&&e.target instanceof Element&&
@@ -1592,114 +1590,6 @@ private val X_VIEW_IN_TAB_SCRIPT = """
   },{capture:true});
 })()
 """.trimIndent()
-
-/**
- * Runs inside a VIEWER tab only (opened from an X list). A vertical swipe is
- * handed to the app, which asks the still-alive list tab for the previous/next
- * video and loads it here. Never injected into ordinary tabs.
- */
-private val X_VIEWER_TAB_SWIPE_SCRIPT = """
-(() => {
-  if (!/^(?:www\.)?(?:x\.com|twitter\.com)$/.test(location.hostname)) return;
-  if (!/\/status\/\d+/.test(location.pathname)) return;
-  if (window.__mydownloadTabSwipe) return;
-  window.__mydownloadTabSwipe = true;
-  let gesture=null, lockedUntil=0;
-  const blocked=e=>!(e.target instanceof Element)||!!e.target.closest(
-    '#mydownload-optional-x-progress,button,input,[role="button"],[role="slider"]'
-  )||!!window.__mydownloadMediaZoom?.isZoomed?.();
-  document.addEventListener('touchstart',e=>{
-    gesture=null;
-    if(performance.now()<lockedUntil||e.touches.length!==1||blocked(e))return;
-    const t=e.touches[0];
-    gesture={x:t.clientX,y:t.clientY,time:performance.now(),swiping:false};
-  },{capture:true,passive:true});
-  document.addEventListener('touchmove',e=>{
-    if(!gesture)return;
-    if(e.touches.length!==1){gesture=null;return;}
-    const t=e.touches[0];
-    const dx=t.clientX-gesture.x,dy=t.clientY-gesture.y;
-    if(!gesture.swiping){
-      if(Math.abs(dy)>10&&Math.abs(dy)>Math.abs(dx)*1.4)gesture.swiping=true;
-      else if(Math.abs(dx)>16){gesture=null;return;}
-    }
-    if(gesture&&gesture.swiping){
-      if(e.cancelable)e.preventDefault();
-      e.stopImmediatePropagation();
-    }
-  },{capture:true,passive:false});
-  document.addEventListener('touchend',e=>{
-    const g=gesture;gesture=null;
-    if(!g||!g.swiping)return;
-    if(e.cancelable)e.preventDefault();
-    e.stopImmediatePropagation();
-    const t=e.changedTouches[0];
-    const dy=t.clientY-g.y,dt=performance.now()-g.time;
-    if(Math.abs(dy)>=60||(Math.abs(dy)>=30&&dt<260)){
-      lockedUntil=performance.now()+1500;
-      location.href='mydownloadviewer://step?dir='+(dy<0?1:-1);
-    }
-  },{capture:true,passive:false});
-  document.addEventListener('touchcancel',()=>{gesture=null;},
-    {capture:true,passive:true});
-})()
-""".trimIndent()
-
-/** Runs in the LIST tab: finds the previous/next video post relative to [id]. */
-private fun xListNeighborScript(id: String, dir: Int): String = """
-(() => {
-  const info=article=>{
-    if(!article.querySelector(
-      'video,[data-testid="videoPlayer"],[data-testid="videoComponent"]'))return null;
-    for(const time of article.querySelectorAll('a[href*="/status/"] time')){
-      const a=time.closest('a');
-      if(!a||a.closest('[role="link"][tabindex]:not(a)'))continue;
-      const m=/^\/([^\/]+)\/status\/(\d+)/.exec(a.getAttribute('href')||'');
-      if(m)return {id:m[2],path:'/'+m[1]+'/status/'+m[2]+'/video/1',el:article};
-    }
-    return null;
-  };
-  const items=Array.from(document.querySelectorAll('article[data-testid="tweet"]'))
-    .map(info).filter(Boolean);
-  const index=items.findIndex(x=>x.id==='__ID__');
-  if(index<0)return JSON.stringify({status:'lost'});
-  const next=items[index+(__DIR__)];
-  if(!next){
-    // Ask X to load more below; the caller retries shortly.
-    if(__DIR__>0)window.scrollBy(0,Math.round(innerHeight*0.9));
-    return JSON.stringify({status:'end'});
-  }
-  try{next.el.scrollIntoView({block:'center'});}catch(_){}
-  return JSON.stringify({status:'ok',path:next.path});
-})()
-""".trimIndent().replace("__ID__", id).replace("__DIR__", dir.toString())
-
-/** Runs in the LIST tab: hold = keep its videos silent while a viewer tab is on top. */
-private fun xListHoldScript(hold: Boolean): String = """
-(() => {
-  window.__mdHold=__HOLD__;
-  if(!window.__mdHoldInstalled){
-    window.__mdHoldInstalled=true;
-    document.addEventListener('play',e=>{
-      if(window.__mdHold&&e.target&&e.target.pause){try{e.target.pause();}catch(_){}}
-    },true);
-  }
-  if(window.__mdHold)document.querySelectorAll('video').forEach(v=>{
-    try{v.pause();}catch(_){}
-  });
-})()
-""".trimIndent().replace("__HOLD__", hold.toString())
-
-/** Runs in the LIST tab: bring the post with [id] to the middle of the screen. */
-private fun xListFocusScript(id: String): String = """
-(() => {
-  for(const link of document.querySelectorAll('a[href*="/status/__ID__"]')){
-    const article=link.closest('article[data-testid="tweet"]');
-    if(article){article.scrollIntoView({block:'center'});return true;}
-  }
-  return false;
-})()
-""".trimIndent().replace("__ID__", id)
 
 private val X_VIDEO_DOUBLE_TAP_SEEK_SCRIPT = """
 (() => {
@@ -2175,10 +2065,12 @@ fun MultiTabBrowser(
     fun openViewerTab(parent: TabViewState, parentWeb: WebView?, url: String) {
         if (!BrowserAddress.isWebUrl(url) || !BrowserVideoDiscovery.isXPage(url)) return
         // Silence the list's inline video before the tab is hidden.
-        parentWeb?.evaluateJavascript(xListHoldScript(true), null)
+        parentWeb?.evaluateJavascript(
+            "document.querySelectorAll('video').forEach(function(v){try{v.pause()}catch(e){}})",
+            null
+        )
         val child = addTab(url, "X 影片") ?: return
         child.parentTabId = parent.id
-        child.viewerOpenedAt = android.os.SystemClock.elapsedRealtime()
     }
 
     /** Back on a viewer tab: close it and return to the untouched list tab. */
@@ -2186,53 +2078,9 @@ fun MultiTabBrowser(
         val tab = tabs.firstOrNull { it.id == activeId } ?: return false
         val parentId = tab.parentTabId ?: return false
         val parent = tabs.firstOrNull { it.id == parentId }
-        val lastId = Regex("/status/(\\d+)").find(tab.url)?.groupValues?.get(1)
-        val parentWeb = webViews[parentId]
         if (parent != null) selectTab(parent)
         closeTab(tab.id)
-        parentWeb?.evaluateJavascript(xListHoldScript(false), null)
-        // Land the list on the last video that was watched.
-        if (lastId != null) parentWeb?.let { list ->
-            list.postDelayed({
-                list.evaluateJavascript(xListFocusScript(lastId), null)
-            }, 250L)
-        }
         return true
-    }
-
-    /** Swipe in a viewer tab: load the list's previous/next video into this tab. */
-    fun stepViewerTab(tab: TabViewState, viewerWeb: WebView, dir: Int, attempt: Int = 0) {
-        val parentId = tab.parentTabId ?: return
-        val parentWeb = webViews[parentId] ?: return
-        val id = Regex("/status/(\\d+)").find(tab.url)?.groupValues?.get(1) ?: return
-        parentWeb.evaluateJavascript(xListNeighborScript(id, dir)) { raw ->
-            val json = runCatching {
-                JSONObject(JSONArray("[" + raw + "]").getString(0))
-            }.getOrNull()
-            when (json?.optString("status")) {
-                "ok" -> {
-                    val path = json?.optString("path").orEmpty()
-                    if (path.startsWith("/")) {
-                        val host = runCatching { java.net.URI(tab.url).host }.getOrNull()
-                            ?: "x.com"
-                        viewerWeb.loadUrl("https://" + host + path)
-                    }
-                }
-                "end" -> if (dir > 0 && attempt < 3) {
-                    // The list was nudged to load more below; try again shortly.
-                    viewerWeb.postDelayed({
-                        stepViewerTab(tab, viewerWeb, dir, attempt + 1)
-                    }, 900L)
-                } else {
-                    Toast.makeText(
-                        context, if (dir > 0) "已是清單最後一部" else "已是清單第一部",
-                        Toast.LENGTH_SHORT
-                    ).show()
-                }
-                else -> Toast.makeText(context, "找不到這部影片在清單中的位置",
-                    Toast.LENGTH_SHORT).show()
-            }
-        }
     }
 
     // Every WebView gets its own navigation state, cookies are shared normally
@@ -2276,15 +2124,6 @@ fun MultiTabBrowser(
                 }
                 if (!gallerySwipe) tab.scrollY = 0
                 tab.url = url
-                // A viewer tab opened from a list: if X leaves the video page (for
-                // example a swipe-down "dismiss" to the post page), close the tab
-                // and return to the untouched list instead of showing the post.
-                if (tab.parentTabId != null &&
-                    XMediaNavigation.isMediaViewer(oldPage) &&
-                    !XMediaNavigation.isMediaViewer(url) &&
-                    android.os.SystemClock.elapsedRealtime() - tab.viewerOpenedAt > 1500L) {
-                    web.post { if (tab.id == activeId) closeViewerTab() }
-                }
                 // Viewer swipes should never trigger our saved-page scroll restoration.
                 if (gallerySwipe) tab.restoreTarget = null
                 else if (tab.restoreTarget == url) restoreScroll(web, tab, url)
@@ -2316,15 +2155,8 @@ fun MultiTabBrowser(
                 if (request == null || !request.isForMainFrame) return false
                 val url = request.url.toString()
                 if (url.startsWith("mydownloadviewer://")) {
-                    val link = request.url
-                    when (link.host) {
-                        "open" -> link.getQueryParameter("u")?.let { target ->
-                            web.post { openViewerTab(tab, web, target) }
-                        }
-                        "step" -> if (tab.parentTabId != null) {
-                            val dir = if (link.getQueryParameter("dir") == "-1") -1 else 1
-                            web.post { stepViewerTab(tab, web, dir) }
-                        }
+                    request.url.getQueryParameter("u")?.let { target ->
+                        web.post { openViewerTab(tab, web, target) }
                     }
                     return true
                 }
@@ -2396,9 +2228,6 @@ fun MultiTabBrowser(
                     view?.evaluateJavascript(X_MEDIA_PINCH_ZOOM_SCRIPT, null)
                     view?.evaluateJavascript(X_VIDEO_DOUBLE_TAP_SEEK_SCRIPT, null)
                     view?.evaluateJavascript(X_VIEW_IN_TAB_SCRIPT, null)
-                    if (tab.parentTabId != null) {
-                        view?.evaluateJavascript(X_VIEWER_TAB_SWIPE_SCRIPT, null)
-                    }
                     if (browserVideoFullscreen) {
                         view?.evaluateJavascript(xVideoFullscreenScript(true), null)
                         view?.evaluateJavascript(xImmersiveFitScript(true), null)
@@ -2722,31 +2551,20 @@ fun MultiTabBrowser(
             val active = webViews[selected.id] ?: createWebView(selected).also {
                 webViews[selected.id] = it
             }
-            // A viewer tab keeps its list tab attached (and running) underneath, so
-            // the list is never torn down and can load more posts while stepping.
-            val listView = selected.parentTabId?.let { webViews[it] }
             webViews.forEach { (id, view) ->
-                if (id != selected.id && view !== listView) {
+                if (id != selected.id) {
                     view.onPause()
                     view.pauseTimers()
                 }
             }
-            if (active.parent !== host || (listView != null && listView.parent !== host)) {
+            if (active.parent !== host) {
                 (active.parent as? ViewGroup)?.removeView(active)
-                listView?.let { (it.parent as? ViewGroup)?.removeView(it) }
                 host.removeAllViews()
-                listView?.let {
-                    host.addView(it, FrameLayout.LayoutParams(
-                        FrameLayout.LayoutParams.MATCH_PARENT,
-                        FrameLayout.LayoutParams.MATCH_PARENT
-                    ))
-                }
                 host.addView(active, FrameLayout.LayoutParams(
                     FrameLayout.LayoutParams.MATCH_PARENT,
                     FrameLayout.LayoutParams.MATCH_PARENT
                 ))
             }
-            listView?.onResume()
             active.resumeTimers()
             active.onResume()
             // Only four expensive WebView instances remain resident. Old tabs
@@ -2824,9 +2642,6 @@ fun MultiTabBrowser(
                         browser.evaluateJavascript(X_MEDIA_PINCH_ZOOM_SCRIPT, null)
                         browser.evaluateJavascript(X_VIDEO_DOUBLE_TAP_SEEK_SCRIPT, null)
                         browser.evaluateJavascript(X_VIEW_IN_TAB_SCRIPT, null)
-                        if (selected.parentTabId != null) {
-                            browser.evaluateJavascript(X_VIEWER_TAB_SWIPE_SCRIPT, null)
-                        }
                     }
                     // A React video card on /home must not show download.
                     // Only a visible, open immersive viewer should do so.
