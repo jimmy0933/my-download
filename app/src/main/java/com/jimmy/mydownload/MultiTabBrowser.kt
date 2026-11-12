@@ -241,6 +241,7 @@ private class TabViewState(record: BrowserTabRecord) {
     var restoreGentle: Boolean = false
     /** Set on a tab opened from an X list: closing it returns to that live list tab. */
     var parentTabId: String? = null
+    var viewerOpenedAt: Long = 0L
     val mediaSources = mutableStateListOf<String>()
     fun record() = BrowserTabRecord(id, url, title)
 }
@@ -1553,18 +1554,19 @@ private val X_VIEW_IN_TAB_SCRIPT = """
     for(const time of article.querySelectorAll('a[href*="/status/"] time')){
       const a=time.closest('a');
       if(!a||a.closest('[role="link"][tabindex]:not(a)'))continue;
-      const m=/\/status\/(\d+)/.exec(a.getAttribute('href')||'');
-      if(m)return m[1];
+      // "/handle/status/ID" -> the direct playback page /handle/status/ID/video/1
+      const m=/^\/([^\/]+)\/status\/(\d+)/.exec(a.getAttribute('href')||'');
+      if(m)return '/'+m[1]+'/status/'+m[2]+'/video/1';
     }
     return null;
   };
   document.addEventListener('touchstart',e=>{
     start=null;
     if(e.touches.length!==1)return;
-    const id=statusId(e);
-    if(!id)return;
+    const path=statusId(e);
+    if(!path)return;
     const t=e.touches[0];
-    start={x:t.clientX,y:t.clientY,time:performance.now(),id};
+    start={x:t.clientX,y:t.clientY,time:performance.now(),path};
   },{capture:true,passive:true});
   document.addEventListener('touchmove',e=>{
     if(!start)return;
@@ -1580,7 +1582,7 @@ private val X_VIEW_IN_TAB_SCRIPT = """
     swallowClickUntil=performance.now()+700;
     // Handled natively (WebViewClient): opens a new tab, leaves this page as is.
     location.href='mydownloadviewer://open?u='+
-      encodeURIComponent('https://x.com/i/status/'+s.id);
+      encodeURIComponent('https://x.com'+s.path);
   },{capture:true,passive:false});
   document.addEventListener('click',e=>{
     if(performance.now()<swallowClickUntil&&e.target instanceof Element&&
@@ -2071,6 +2073,7 @@ fun MultiTabBrowser(
         )
         val child = addTab(url, "X 影片") ?: return
         child.parentTabId = parent.id
+        child.viewerOpenedAt = android.os.SystemClock.elapsedRealtime()
     }
 
     /** Back on a viewer tab: close it and return to the untouched list tab. */
@@ -2124,6 +2127,15 @@ fun MultiTabBrowser(
                 }
                 if (!gallerySwipe) tab.scrollY = 0
                 tab.url = url
+                // A viewer tab opened from a list: if X leaves the video page (for
+                // example a swipe-down "dismiss" to the post page), close the tab
+                // and return to the untouched list instead of showing the post.
+                if (tab.parentTabId != null &&
+                    XMediaNavigation.isMediaViewer(oldPage) &&
+                    !XMediaNavigation.isMediaViewer(url) &&
+                    android.os.SystemClock.elapsedRealtime() - tab.viewerOpenedAt > 1500L) {
+                    web.post { if (tab.id == activeId) closeViewerTab() }
+                }
                 // Viewer swipes should never trigger our saved-page scroll restoration.
                 if (gallerySwipe) tab.restoreTarget = null
                 else if (tab.restoreTarget == url) restoreScroll(web, tab, url)
