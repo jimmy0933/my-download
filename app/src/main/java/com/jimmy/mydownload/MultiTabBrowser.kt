@@ -1892,14 +1892,47 @@ fun MultiTabBrowser(
         // the list really came back at the top.
         val gentle = tab.restoreGentle
         tab.restoreGentle = false
-        val delays = if (gentle) listOf(1700L) else listOf(220L, 750L, 1700L)
+        if (gentle) {
+            // The list is hidden (alpha 0) by goBackPreservingScroll while X
+            // rebuilds it. Poll briefly: as soon as it is back at the saved
+            // position (X restored it, or we scroll it once from the top),
+            // reveal it, so the intermediate "jump to top" is never visible.
+            var tries = 0
+            val step = object : Runnable {
+                override fun run() {
+                    val stale = tab.restoreSequence != token || tab.url != url
+                    var done = stale
+                    if (!stale) {
+                        if (web.scrollY >= 120) {
+                            done = true // X restored its own scroll position
+                        } else {
+                            if (point.native > 0) web.scrollTo(0, point.native)
+                            if (point.native <= 0 || web.scrollY >= point.native - 60) {
+                                if (point.page > 0 || point.panel > 0) {
+                                    web.evaluateJavascript(BrowserScroll.restoreScript(point), null)
+                                }
+                                done = true
+                            }
+                        }
+                        if (!done && ++tries >= 20) done = true
+                    }
+                    if (done) {
+                        web.alpha = 1f
+                        if (!stale && tab.restoreTarget == url) tab.restoreTarget = null
+                    } else web.postDelayed(this, 100L)
+                }
+            }
+            web.postDelayed(step, 120L)
+            return
+        }
+        val delays = listOf(220L, 750L, 1700L)
         delays.forEachIndexed { index, millis ->
             web.postDelayed({
                 if (tab.restoreSequence != token || tab.url != url) return@postDelayed
                 if (web.url != url && web.url?.substringBefore('#') != url.substringBefore('#'))
                     return@postDelayed
                 val last = index == delays.lastIndex
-                val skip = gentle && web.scrollY >= 120
+                val skip = false
                 // Never fight a position that is already (nearly) right.
                 val nativeOff = kotlin.math.abs(web.scrollY - point.native) > 60
                 if (!skip && point.native > 0 && nativeOff) web.scrollTo(0, point.native)
@@ -2253,6 +2286,13 @@ fun MultiTabBrowser(
             list.getItemAtIndex(list.currentIndex - 1)?.url else null
         selected.restoreTarget = target?.takeIf { BrowserAddress.isWebUrl(it) }
         selected.restoreGentle = XMediaNavigation.isMediaViewer(selected.url)
+        if (selected.restoreGentle &&
+            target?.let { selected.scrollByUrl[it]?.hasPosition() } == true) {
+            // Hide X's momentary jump-to-top while the list is rebuilt; it is
+            // revealed again as soon as the position is right (hard cap 2.5s).
+            web.alpha = 0f
+            web.postDelayed({ web.alpha = 1f }, 2500L)
+        } else selected.restoreGentle = false
         web.goBack()  // Reuse WebView's history: never loadUrl() for Back.
     }
 
