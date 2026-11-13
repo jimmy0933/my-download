@@ -157,8 +157,17 @@ fun RootScreen(shared: String) {
             val result = runCatching { StreamResolver.inspect(link) }
             if (currentRequest == seq && selectedLink == link) {
                 resolving = false
-                result.onSuccess { choices = it }
-                    .onFailure { resolveError = it.message ?: "影片解析失敗" }
+                result.onSuccess { found ->
+                    choices = found
+                    // Add estimated sizes a moment later, if this request is still current.
+                    scope.launch {
+                        val sized = runCatching { StreamResolver.withSizeEstimates(found) }
+                            .getOrNull()
+                        if (sized != null && currentRequest == seq && selectedLink == link) {
+                            choices = sized
+                        }
+                    }
+                }.onFailure { resolveError = it.message ?: "影片解析失敗" }
             }
         }
     }
@@ -182,6 +191,14 @@ fun RootScreen(shared: String) {
                 result.onSuccess { info ->
                     choices = info.choices
                     sourceFailures = info.failures
+                    scope.launch {
+                        val sized = runCatching {
+                            StreamResolver.withSizeEstimates(info.choices)
+                        }.getOrNull()
+                        if (sized != null && currentRequest == seq && selectedLink == pageUrl) {
+                            choices = sized
+                        }
+                    }
                     if (info.choices.isEmpty()) {
                         resolveError = "沒有可直接下載的影片來源。" +
                             if (info.failures.isNotEmpty())
@@ -514,12 +531,20 @@ fun RootScreen(shared: String) {
                                         Modifier.fillMaxWidth().padding(16.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Text(
-                                            stream.label, color = Green,
-                                            fontWeight = FontWeight.Bold,
-                                            maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                            modifier = Modifier.weight(1f)
-                                        )
+                                        Column(Modifier.weight(1f)) {
+                                            Text(
+                                                stream.label, color = Green,
+                                                fontWeight = FontWeight.Bold,
+                                                maxLines = 1, overflow = TextOverflow.Ellipsis
+                                            )
+                                            if (stream.detail.isNotBlank()) {
+                                                Text(
+                                                    stream.detail, color = Soft,
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    maxLines = 2, overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+                                        }
                                         Spacer(Modifier.width(12.dp))
                                         Icon(Icons.Default.Download, "下載此畫質", tint = Green)
                                     }
