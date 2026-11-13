@@ -1,6 +1,7 @@
 package com.jimmy.mydownload
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -195,7 +196,7 @@ object StreamResolver {
     suspend fun withSizeEstimates(list: List<StreamChoice>): List<StreamChoice> =
         kotlinx.coroutines.coroutineScope {
             list.map { choice ->
-                kotlinx.coroutines.async(Dispatchers.IO) {
+                async(Dispatchers.IO) {
                     if (choice.kind != "hls" || choice.bandwidth <= 0L) return@async choice
                     val bytes = runCatching {
                         val request = BrowserMediaRequest.builder(
