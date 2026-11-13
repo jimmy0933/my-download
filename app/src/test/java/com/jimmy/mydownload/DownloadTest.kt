@@ -89,3 +89,39 @@ class SeparateAudioTest {
         assertEquals("", variants.first().audioUrl)
     }
 }
+
+class HlsSizeEstimateTest {
+    @Test fun sumsExtinfDurations() {
+        val playlist = """
+            #EXTM3U
+            #EXT-X-TARGETDURATION:6
+            #EXTINF:5.005,
+            a.ts
+            #EXTINF:4.5,
+            b.ts
+            #EXT-X-ENDLIST
+        """.trimIndent()
+        assertEquals(9.505, StreamResolver.sumExtinf(playlist), 0.0001)
+    }
+
+    @Test fun estimatesBytesFromDurationAndBandwidth() {
+        // 80 s at 800 kbit/s = 8,000,000 bytes
+        assertEquals(8_000_000L, StreamResolver.estimateHlsBytes(80.0, 800_000L, false))
+        // separate audio adds 96 kbit/s: 80 s * 896 kbit/s / 8 = 8,960,000 bytes
+        assertEquals(8_960_000L, StreamResolver.estimateHlsBytes(80.0, 800_000L, true))
+        assertEquals(0L, StreamResolver.estimateHlsBytes(0.0, 800_000L, false))
+        assertEquals(0L, StreamResolver.estimateHlsBytes(80.0, 0L, false))
+    }
+
+    @Test fun manifestKeepsAverageBandwidth() {
+        val master = """
+            #EXTM3U
+            #EXT-X-STREAM-INF:BANDWIDTH=2000000,AVERAGE-BANDWIDTH=1500000,RESOLUTION=1280x720
+            v.m3u8
+        """.trimIndent()
+        val variants = StreamResolver.parseManifest(
+            master, "https://cdn.example.org/m.m3u8", "t", "r"
+        )
+        assertEquals(1_500_000L, variants.first().bandwidth)
+    }
+}
