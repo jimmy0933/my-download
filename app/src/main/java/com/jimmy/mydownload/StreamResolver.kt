@@ -166,7 +166,7 @@ object StreamResolver {
     }
 
     private val sizeClient: OkHttpClient = client.newBuilder()
-        .callTimeout(8, TimeUnit.SECONDS).build()
+        .callTimeout(12, TimeUnit.SECONDS).build()
 
     /** Sum of #EXTINF segment durations, in seconds. */
     fun sumExtinf(playlist: String): Double {
@@ -188,39 +188,61 @@ object StreamResolver {
         return (seconds * bitsPerSecond / 8.0).toLong()
     }
 
+    /** Total playlist duration in seconds, or null. One retry; never throws. */
+    private fun fetchDuration(url: String, referer: String, userAgent: String): Double? {
+        for (attempt in 0 until 2) {
+            try {
+                val request = BrowserMediaRequest.builder(url, referer, userAgent).build()
+                val text = sizeClient.newCall(request).execute().use {
+                    if (!it.isSuccessful) "" else readText(it, 2_000_000)
+                }
+                val seconds = sumExtinf(text)
+                if (seconds > 0.0) return seconds
+            } catch (_: Exception) {
+                // retry once, then give up on this variant
+            }
+        }
+        return null
+    }
+
     /**
      * Adds an estimated size ("約 12.3 MB") to every HLS choice: the media
-     * playlist's total duration times the quality's average bitrate. Fetches run
-     * in parallel with a short timeout; anything that fails is left as it was.
+     * playlist's total duration times the quality's average bitrate. All qualities
+     * of one video share the same duration, so a variant whose own playlist could
+     * not be read borrows the duration from a sibling that could.
      */
     suspend fun withSizeEstimates(list: List<StreamChoice>): List<StreamChoice> =
         kotlinx.coroutines.coroutineScope {
-            list.map { choice ->
+            val durations = list.map { choice ->
                 async(Dispatchers.IO) {
-                    if (choice.kind != "hls" || choice.bandwidth <= 0L) return@async choice
-                    val bytes = runCatching {
-                        val request = BrowserMediaRequest.builder(
-                            choice.url, choice.referer, choice.userAgent
-                        ).build()
-                        val text = sizeClient.newCall(request).execute().use {
-                            if (!it.isSuccessful) return@use ""
-                            readText(it, 2_000_000)
-                        }
-                        estimateHlsBytes(
-                            sumExtinf(text), choice.bandwidth, choice.audioUrl.isNotBlank()
-                        )
-                    }.getOrDefault(0L)
-                    if (bytes <= 0L) return@async choice
-                    val label = "約 " + Mp4Ranges.label(bytes)
-                    val detail = when {
-                        choice.detail.contains("大小未知") ->
-                            choice.detail.replace("大小未知", label)
-                        choice.detail.isBlank() -> "HLS · $label"
-                        else -> choice.detail + " · " + label
-                    }
-                    choice.copy(detail = detail, sizeBytes = bytes)
+                    if (choice.kind != "hls") null
+                    else fetchDuration(choice.url, choice.referer, choice.userAgent)
                 }
             }.map { it.await() }
+            val byVideo = HashMap<String, Double>()
+            list.forEachIndexed { index, choice ->
+                val seconds = durations[index] ?: return@forEachIndexed
+                val key = MediaCandidateResolver.group(choice.url)
+                byVideo[key] = maxOf(byVideo[key] ?: 0.0, seconds)
+            }
+            list.mapIndexed { index, choice ->
+                if (choice.kind != "hls" || choice.bandwidth <= 0L) return@mapIndexed choice
+                val seconds = durations[index]
+                    ?: byVideo[MediaCandidateResolver.group(choice.url)]
+                    ?: return@mapIndexed choice
+                val bytes = estimateHlsBytes(
+                    seconds, choice.bandwidth, choice.audioUrl.isNotBlank()
+                )
+                if (bytes <= 0L) return@mapIndexed choice
+                val label = "約 " + Mp4Ranges.label(bytes)
+                val detail = when {
+                    choice.detail.contains("大小未知") ->
+                        choice.detail.replace("大小未知", label)
+                    choice.detail.isBlank() -> "HLS · $label"
+                    else -> choice.detail + " · " + label
+                }
+                choice.copy(detail = detail, sizeBytes = bytes)
+            }
         }
 
     fun fetchText(url: String, referer: String, userAgent: String = ""): String {
