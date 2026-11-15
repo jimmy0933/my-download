@@ -161,8 +161,26 @@ object MediaCandidateResolver {
                         (e.message ?: "來源無法讀取")
                 }
             }
+            // The same quality can show up twice: once parsed from the master playlist
+            // (with its bitrate and separate audio playlist) and once as a bare media
+            // playlist the player requested on its own (with neither). Keep the most
+            // informative one; plain distinctBy kept whichever came first, which
+            // produced silent downloads and "size unknown" entries.
+            val merged = choices.groupBy { it.url }.values.map { same ->
+                same.maxByOrNull {
+                    (if (it.audioUrl.isNotBlank()) 2 else 0) + (if (it.bandwidth > 0L) 1 else 0)
+                } ?: same.first()
+            }
+            // Qualities of one video share the audio playlist.
+            val audioByVideo = merged.filter { it.audioUrl.isNotBlank() }
+                .associate { group(it.url) to it.audioUrl }
+            val completed = merged.map { choice ->
+                if (choice.kind == "hls" && choice.audioUrl.isBlank()) {
+                    audioByVideo[group(choice.url)]?.let { choice.copy(audioUrl = it) } ?: choice
+                } else choice
+            }
             Result(
-                choices.distinctBy { it.url }.sortedWith(
+                completed.sortedWith(
                     compareBy<StreamChoice> { if (it.kind == "mp4") 0 else 1 }
                         .thenByDescending {
                             val q = resolution(it.url) ?: it.label
