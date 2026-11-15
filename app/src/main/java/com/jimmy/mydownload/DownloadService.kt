@@ -549,6 +549,21 @@ class DownloadService : Service() {
         finalizeHls(item, partial, sources.fragmented)
     }
 
+    private fun hasAudioTrack(file: File): Boolean {
+        val extractor = MediaExtractor()
+        return try {
+            extractor.setDataSource(file.absolutePath)
+            (0 until extractor.trackCount).any {
+                extractor.getTrackFormat(it).getString(MediaFormat.KEY_MIME).orEmpty()
+                    .startsWith("audio/")
+            }
+        } catch (_: Exception) {
+            true // cannot tell; do not raise a false alarm
+        } finally {
+            runCatching { extractor.release() }
+        }
+    }
+
     private fun audioFile(id: Long): File {
         val dir = File(filesDir, "temp_downloads")
         dir.mkdirs()
@@ -656,7 +671,15 @@ class DownloadService : Service() {
         coroutineContext.ensureActive()
         if (indexed) {
             verifyMp4(mp4)
-            finish(item, mp4, "mp4", "video/mp4")
+            // Say so on the download card when the saved file has no sound.
+            val audioNote = when {
+                hasAudioTrack(mp4) -> ""
+                audio != null -> "警告：音訊已下載，但合併後的影片沒有音訊軌。"
+                item.audioUrl.isBlank() ->
+                    "注意：這個來源沒有找到獨立的音訊來源，影片可能沒有聲音。請改選有「畫質＋HLS」的完整來源重新偵測。"
+                else -> "警告：音訊檔遺失，影片沒有聲音，請重新下載。"
+            }
+            finish(item, mp4, "mp4", "video/mp4", audioNote)
             partial.delete()
             mp4.delete()
             audioFile(item.id).delete()
