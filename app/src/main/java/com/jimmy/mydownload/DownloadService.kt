@@ -1083,7 +1083,10 @@ class DownloadService : Service() {
                     .getString(MediaFormat.KEY_MIME).orEmpty().startsWith("video/")
             } ?: throw IOException("修復檔沒有影像軌")
             extractor.selectTrack(video)
-            if (extractor.sampleTrackIndex < 0 || extractor.sampleTime < 0L ||
+            // "No sample" is reported as track index < 0 / size <= 0. A tiny negative
+            // first timestamp (e.g. -11us from MP4 timescale rounding) is a valid
+            // frame and must not fail verification; only reject nonsense values.
+            if (extractor.sampleTrackIndex < 0 || extractor.sampleTime < -500_000L ||
                 extractor.sampleSize <= 0L) {
                 throw IOException("MP4 沒有可播放的影格，可能只有影片初始化資料" +
                     "（軌道=" + extractor.sampleTrackIndex + " 時間=" + extractor.sampleTime +
