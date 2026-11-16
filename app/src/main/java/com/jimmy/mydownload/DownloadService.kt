@@ -549,6 +549,21 @@ class DownloadService : Service() {
         finalizeHls(item, partial, sources.fragmented)
     }
 
+    private fun describeTracks(file: File): String {
+        val extractor = MediaExtractor()
+        return try {
+            extractor.setDataSource(file.absolutePath)
+            if (extractor.trackCount == 0) "無" else
+                (0 until extractor.trackCount).joinToString(",") {
+                    extractor.getTrackFormat(it).getString(MediaFormat.KEY_MIME).orEmpty()
+                }
+        } catch (e: Exception) {
+            "無法讀取"
+        } finally {
+            runCatching { extractor.release() }
+        }
+    }
+
     private fun hasAudioTrack(file: File): Boolean {
         val extractor = MediaExtractor()
         return try {
@@ -653,26 +668,45 @@ class DownloadService : Service() {
         }
         progress(item, "重新封裝 MP4（可暫停）", 94)
         val mp4 = File(partial.parentFile, item.id.toString() + ".mp4")
-        // A previous interrupted remux may leave a partial MP4.
-        mp4.delete()
         val job = coroutineContext[Job]
         var remuxFailure: Throwable? = null
-        val indexed = try {
-            remuxToMp4(partial, mp4, job, audio = audio) { percentage ->
-                progress(item, "正在建立可快轉 MP4", percentage)
+
+        // One mux attempt: remux, then check the result really has playable frames.
+        // A bad result must never fail the whole download, so errors are returned
+        // as "false" and the next, simpler fallback is tried.
+        fun tryMux(withAudio: Boolean): Boolean {
+            mp4.delete() // a previous interrupted remux may leave a partial MP4
+            return try {
+                remuxToMp4(partial, mp4, job, audio = if (withAudio) audio else null) { percentage ->
+                    progress(item, "正在建立可快轉 MP4", percentage)
+                }
+                if (mp4.isFile && mp4.length() > 0L) {
+                    verifyMp4(mp4)
+                    true
+                } else false
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                remuxFailure = e
+                false
             }
-            mp4.isFile && mp4.length() > 0L
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            remuxFailure = e
-            false
+        }
+
+        // 1) video + separate audio, 2) video only, 3) the raw stream.
+        var indexed = tryMux(audio != null)
+        var audioDropped = false
+        if (!indexed && audio != null) {
+            coroutineContext.ensureActive()
+            audioDropped = true
+            indexed = tryMux(false)
         }
         coroutineContext.ensureActive()
         if (indexed) {
-            verifyMp4(mp4)
             // Say so on the download card when the saved file has no sound.
             val audioNote = when {
+                audioDropped ->
+                    "音訊合併失敗，已儲存沒有聲音的影片。" +
+                        (remuxFailure?.message?.let { "原因：" + it.take(100) } ?: "")
                 hasAudioTrack(mp4) -> ""
                 audio != null -> "警告：音訊已下載，但合併後的影片沒有音訊軌。"
                 item.audioUrl.isBlank() ->
@@ -685,7 +719,17 @@ class DownloadService : Service() {
             audioFile(item.id).delete()
         } else {
             mp4.delete()
-            verifyMp4(partial)
+            try {
+                verifyMp4(partial)
+            } catch (e: IOException) {
+                // Say what was actually on disk so the cause can be told apart.
+                throw IOException(
+                    e.message + "（原始串流 " + Mp4Ranges.label(partial.length()) +
+                        "，軌道：" + describeTracks(partial) +
+                        (remuxFailure?.message?.let { "；合併錯誤：" + it.take(80) }.orEmpty()) +
+                        "）", e
+                )
+            }
             val extension = if (fragmented) "mp4" else "ts"
             val kind = if (fragmented) "video/mp4" else "video/mp2t"
             val note = (if (audio != null) "音訊合併失敗，影片可能沒有聲音。" else "") +
