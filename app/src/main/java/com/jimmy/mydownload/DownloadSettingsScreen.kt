@@ -19,9 +19,14 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
@@ -65,6 +70,9 @@ fun DownloadSettingsScreen(
     var preferredPlayer by remember { mutableStateOf(DownloadSettings.videoPlayer(context)) }
     var playerMenuExpanded by remember { mutableStateOf(false) }
     val installedPlayers = remember(context) { VideoPlayerApps.options(context) }
+    val clipboard = LocalClipboardManager.current
+    var showLog by remember { mutableStateOf(false) }
+    var logText by remember { mutableStateOf("") }
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -682,6 +690,48 @@ fun DownloadSettingsScreen(
                         style = MaterialTheme.typography.bodySmall)
                 }
             }
+        }
+
+        // Diagnostic log: download/mux details the user can copy into a bug report.
+        OutlinedButton(
+            onClick = {
+                logText = AppLog.read(context).takeLast(40_000)
+                showLog = true
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("診斷記錄（查看並複製）") }
+        if (showLog) {
+            AlertDialog(
+                onDismissRequest = { showLog = false },
+                title = { Text("診斷記錄") },
+                text = {
+                    SelectionContainer {
+                        Text(
+                            logText,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp,
+                            lineHeight = 14.sp,
+                            modifier = Modifier.heightIn(max = 420.dp)
+                                .verticalScroll(rememberScrollState())
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        clipboard.setText(AnnotatedString(logText))
+                        notice = "記錄已複製到剪貼簿"
+                    }) { Text("複製全部") }
+                },
+                dismissButton = {
+                    Row {
+                        TextButton(onClick = {
+                            AppLog.clear(context)
+                            logText = AppLog.read(context)
+                        }) { Text("清除") }
+                        TextButton(onClick = { showLog = false }) { Text("關閉") }
+                    }
+                }
+            )
         }
 
         Button(

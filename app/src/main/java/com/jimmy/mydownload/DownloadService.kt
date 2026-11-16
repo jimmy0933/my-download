@@ -76,6 +76,7 @@ class DownloadService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        AppLog.init(this)
         getSystemService(NotificationManager::class.java).createNotificationChannel(
             NotificationChannel(CHANNEL, "下載中", NotificationManager.IMPORTANCE_LOW)
         )
@@ -119,6 +120,13 @@ class DownloadService : Service() {
         val job = scope.launch(start = CoroutineStart.LAZY) {
             try {
                 val record = DownloadStore.get(this@DownloadService, id) ?: return@launch
+                AppLog.log(
+                    if (repairRequest) "修復" else "下載",
+                    "開始 id=" + id + " kind=" + record.kind + " 畫質=" + record.label +
+                        " 網址=" + record.url.substringBefore('?').takeLast(90) +
+                        " 音訊清單=" + (if (record.audioUrl.isBlank()) "無"
+                        else record.audioUrl.substringBefore('?').takeLast(70))
+                )
                 if (repairRequest) {
                     if (record.kind != "hls" || record.status != "完成")
                         throw IOException("只有已完成的 HLS 影片可離線修復 MP4")
@@ -136,6 +144,7 @@ class DownloadService : Service() {
                     else it.copy(status = "已暫停")
                 }
             } catch (e: Exception) {
+                AppLog.error(if (repairRequest) "修復" else "下載", "失敗 id=$id", e)
                 DownloadStore.patch(this@DownloadService, id) {
                     if (repairRequest) it.copy(
                         repairStatus = "修復失敗：" + (e.message ?: "未知原因"),
@@ -480,6 +489,8 @@ class DownloadService : Service() {
         }
         val manifest = StreamResolver.fetchText(item.url, item.referer, item.userAgent)
         val sources = parseSegments(manifest, item.url, item.referer, item.userAgent)
+        AppLog.log("下載", "HLS 片段=" + sources.list.size + " fMP4=" + sources.fragmented +
+            " 獨立音訊=" + (item.audioUrl.isNotBlank() || sources.audioUrl.isNotBlank()))
         val saved = DownloadStore.get(this, item.id) ?: item
         val count = if (partial.exists()) saved.checkpoint.coerceIn(0, sources.list.size) else 0
         val bytesSaved = if (partial.exists()) saved.bytes.coerceAtLeast(0) else 0L
@@ -538,6 +549,8 @@ class DownloadService : Service() {
         val audioPlaylist = item.audioUrl.ifBlank { sources.audioUrl }
         if (audioPlaylist.isNotBlank()) {
             downloadAudio(item, audioPlaylist, audioFile(item.id))
+            AppLog.log("下載", "音訊下載完成 " + Mp4Ranges.label(audioFile(item.id).length()) +
+                " " + probe(audioFile(item.id)))
         }
         coroutineContext.ensureActive()
         // The complete source is on disk. This state survives process death
@@ -547,6 +560,40 @@ class DownloadService : Service() {
                 progress = 94, checkpoint = sources.list.size, bytes = partial.length(), error = "")
         }
         finalizeHls(item, partial, sources.fragmented)
+    }
+
+    /** One-line description of a media file: tracks, size, and each track's first sample. */
+    private fun probe(file: File): String {
+        if (!file.isFile) return "檔案不存在"
+        val extractor = MediaExtractor()
+        return try {
+            extractor.setDataSource(file.absolutePath)
+            buildString {
+                append("軌道=").append(extractor.trackCount)
+                for (i in 0 until extractor.trackCount) {
+                    val format = extractor.getTrackFormat(i)
+                    append(" [").append(i).append(' ')
+                        .append(format.getString(MediaFormat.KEY_MIME).orEmpty())
+                    if (format.containsKey(MediaFormat.KEY_WIDTH)) {
+                        append(' ').append(format.getInteger(MediaFormat.KEY_WIDTH)).append('x')
+                            .append(format.getInteger(MediaFormat.KEY_HEIGHT))
+                    }
+                    if (format.containsKey(MediaFormat.KEY_DURATION)) {
+                        append(" 長度=").append(format.getLong(MediaFormat.KEY_DURATION) / 1000)
+                            .append("ms")
+                    }
+                    extractor.selectTrack(i)
+                    append(" 首個樣本=").append(extractor.sampleTime).append("us/")
+                        .append(extractor.sampleSize).append("B")
+                    extractor.unselectTrack(i)
+                    append(']')
+                }
+            }
+        } catch (e: Exception) {
+            "probe失敗：" + e.message
+        } finally {
+            runCatching { extractor.release() }
+        }
     }
 
     private fun describeTracks(file: File): String {
@@ -670,6 +717,7 @@ class DownloadService : Service() {
         val mp4 = File(partial.parentFile, item.id.toString() + ".mp4")
         val job = coroutineContext[Job]
         var remuxFailure: Throwable? = null
+        AppLog.log("合併", "影像原始檔 " + Mp4Ranges.label(partial.length()) + " " + probe(partial))
 
         // One mux attempt: remux, then check the result really has playable frames.
         // A bad result must never fail the whole download, so errors are returned
@@ -682,12 +730,19 @@ class DownloadService : Service() {
                 }
                 if (mp4.isFile && mp4.length() > 0L) {
                     verifyMp4(mp4)
+                    AppLog.log("合併", (if (withAudio) "影像+音訊" else "僅影像") + " 成功 " +
+                        Mp4Ranges.label(mp4.length()) + " " + probe(mp4))
                     true
-                } else false
+                } else {
+                    AppLog.log("合併", (if (withAudio) "影像+音訊" else "僅影像") + " 沒有產生檔案")
+                    false
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 remuxFailure = e
+                AppLog.error("合併", (if (withAudio) "影像+音訊" else "僅影像") +
+                    " 失敗，輸出檔 " + Mp4Ranges.label(mp4.length()) + " " + probe(mp4), e)
                 false
             }
         }
@@ -1030,7 +1085,9 @@ class DownloadService : Service() {
             extractor.selectTrack(video)
             if (extractor.sampleTrackIndex < 0 || extractor.sampleTime < 0L ||
                 extractor.sampleSize <= 0L) {
-                throw IOException("MP4 沒有可播放的影格，可能只有影片初始化資料")
+                throw IOException("MP4 沒有可播放的影格，可能只有影片初始化資料" +
+                    "（軌道=" + extractor.sampleTrackIndex + " 時間=" + extractor.sampleTime +
+                    " 大小=" + extractor.sampleSize + "）")
             }
             // HLS TS/fMP4 may not carry a container-level duration even when
             // valid frames exist. Media samples, not duration metadata, decide.
@@ -1092,6 +1149,13 @@ class DownloadService : Service() {
             if (audio != null && !audioTrackAdded) {
                 throw IOException("音訊檔案沒有可用的音訊軌")
             }
+            // HLS segments often start at a non-zero timestamp. Start the output at 0
+            // (for every track alike) so MediaMuxer does not need an offset/edit list,
+            // which produced files whose first sample had a negative time.
+            val baseUs = sources.filter { it.second.isNotEmpty() }
+                .mapNotNull { it.first.sampleTime.takeIf { time -> time >= 0L } }
+                .minOrNull() ?: 0L
+            AppLog.log("合併", "時間基準 " + baseUs + "us")
             writer.start()
             val buffer = ByteBuffer.allocateDirect(8 * 1024 * 1024)
             val info = MediaCodec.BufferInfo()
@@ -1127,7 +1191,7 @@ class DownloadService : Service() {
                 if (sourceTrack in tracks && ts >= 0) {
                     val flags = if (extractor.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC != 0)
                         MediaCodec.BUFFER_FLAG_KEY_FRAME else 0
-                    info.set(0, size, ts, flags)
+                    info.set(0, size, (ts - baseUs).coerceAtLeast(0L), flags)
                     writer.writeSampleData(tracks.getValue(sourceTrack), buffer, info)
                     total++
                 }
