@@ -48,6 +48,7 @@ private val Soft = Color(0xFFB4C8D5)
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: android.os.Bundle?) {
         super.onCreate(savedInstanceState)
+        AppLog.init(this)
         val shared = if (intent?.action == Intent.ACTION_SEND) {
             intent?.getStringExtra(Intent.EXTRA_TEXT).orEmpty()
         } else ""
