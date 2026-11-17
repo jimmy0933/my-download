@@ -1665,46 +1665,45 @@ private val X_LAYOUT_DIAG_SCRIPT = """
 private fun xMediaviewerFillScript(on: Boolean): String = """
 (() => {
   const attr='data-mydownload-fill';
-  const clear=()=>{
-    for(const el of document.querySelectorAll('['+attr+']')){
-      el.removeAttribute(attr);
-      el.style.removeProperty('transform');
-      el.style.removeProperty('transform-origin');
-    }
+  const release=el=>{
+    el.removeAttribute(attr);
+    el.style.removeProperty('transform');
+    el.style.removeProperty('transform-origin');
   };
-  if(!__ON__||!/\/status\/\d+\/mediaviewer\/?$/.test(location.pathname)){clear();return 'off';}
+  const clearAll=()=>{for(const el of document.querySelectorAll('['+attr+']'))release(el);};
+  if(!__ON__||!/\/status\/\d+\/mediaviewer\/?$/.test(location.pathname)){
+    clearAll();return 'off';
+  }
   const ih=innerHeight,iw=innerWidth;
-  const videos=Array.from(document.querySelectorAll('video'))
-    .filter(v=>{const r=v.getBoundingClientRect();return r.width>100&&r.height>60&&
-      r.bottom>0&&r.top<ih;})
-    .sort((a,b)=>b.offsetWidth*b.offsetHeight-a.offsetWidth*a.offsetHeight);
-  const video=videos[0];
-  if(!video){clear();return 'no-video';}
-  const vh=video.offsetHeight,vw=video.offsetWidth;
-  if(!vh||!vw){clear();return 'no-size';}
-  // The column: the highest ancestor that is still only as tall as the video.
-  let col=video;
-  for(let p=video.parentElement;p&&p!==document.body;p=p.parentElement){
-    if(p.offsetHeight>vh+3)break;
-    col=p;
+  // X stacks one card per video vertically and swipes between them, so EVERY card
+  // gets its own scale (picking just the "current" one left the next card unscaled).
+  const targets=new Map();
+  for(const video of document.querySelectorAll('video')){
+    const vh=video.offsetHeight,vw=video.offsetWidth;
+    if(!vh||!vw)continue;
+    // The column: the highest ancestor that is still only as tall as the video.
+    let col=video;
+    for(let p=video.parentElement;p&&p!==document.body;p=p.parentElement){
+      if(p.offsetHeight>vh+3)break;
+      col=p;
+    }
+    const holder=col.parentElement;
+    const free=ih-col.offsetHeight;
+    if(!holder||holder.offsetHeight<ih*0.9||free<20||free>220)continue;
+    // Displayed picture inside the (object-fit: contain) element.
+    const ratio=(video.videoWidth&&video.videoHeight)?video.videoWidth/video.videoHeight:vw/vh;
+    const pictureW=Math.min(vw,vh*ratio);
+    const scale=Math.min(ih/col.offsetHeight,iw/Math.max(1,pictureW));
+    if(scale<1.02)continue;
+    targets.set(col,scale);
   }
-  const holder=col.parentElement;
-  const free=ih-col.offsetHeight;
-  if(!holder||holder.offsetHeight<ih*0.9||free<20||free>220){clear();return 'n/a';}
-  // Displayed picture size inside the (object-fit: contain) element.
-  const ratio=(video.videoWidth&&video.videoHeight)?video.videoWidth/video.videoHeight:vw/vh;
-  const pictureW=Math.min(vw,vh*ratio);
-  const scale=Math.min(ih/col.offsetHeight,iw/Math.max(1,pictureW));
-  if(scale<1.02){clear();return 'no-gain';}
-  for(const old of document.querySelectorAll('['+attr+']'))if(old!==col){
-    old.removeAttribute(attr);
-    old.style.removeProperty('transform');
-    old.style.removeProperty('transform-origin');
+  for(const el of document.querySelectorAll('['+attr+']'))if(!targets.has(el))release(el);
+  for(const [col,scale] of targets){
+    col.setAttribute(attr,'1');
+    col.style.setProperty('transform-origin','50% 0','important');
+    col.style.setProperty('transform','scale('+scale.toFixed(4)+')','important');
   }
-  col.setAttribute(attr,'1');
-  col.style.setProperty('transform-origin','50% 0','important');
-  col.style.setProperty('transform','scale('+scale.toFixed(4)+')','important');
-  return 'scaled:'+scale.toFixed(3);
+  return 'scaled:'+targets.size;
 })()
 """.trimIndent().replace("__ON__", on.toString())
 
