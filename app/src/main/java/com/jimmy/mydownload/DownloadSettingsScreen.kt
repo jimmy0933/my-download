@@ -692,6 +692,21 @@ fun DownloadSettingsScreen(
             }
         }
 
+        // Recovery for a stuck X page layout: wipe X's local web data (not the login).
+        OutlinedButton(
+            onClick = {
+                runCatching {
+                    val storage = android.webkit.WebStorage.getInstance()
+                    listOf("https://x.com", "https://www.x.com",
+                        "https://twitter.com", "https://www.twitter.com")
+                        .forEach(storage::deleteOrigin)
+                }
+                AppLog.log("設定", "已清除 X 網站本機資料")
+                notice = "已清除 X 的網站本機資料（不會登出）。請回到瀏覽頁重新整理 X。"
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("重設 X 網站資料（版面異常時使用，不會登出）") }
+
         // Diagnostic log: download/mux details the user can copy into a bug report.
         OutlinedButton(
             onClick = {

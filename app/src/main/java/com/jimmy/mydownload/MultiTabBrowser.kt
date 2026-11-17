@@ -1409,6 +1409,7 @@ private val X_LANDSCAPE_CAROUSEL_SCRIPT = """
   };
 
   state.enabled=__ENABLED__;
+  state.refresh=refresh;
   if(!state.listenerInstalledV2){
     state.listenerInstalledV2=true;
     state.rotationToken=0;
@@ -1616,6 +1617,40 @@ private val X_VIEWER_PROBE_SCRIPT = """
     open:open,
     ready:post&&r.width>80&&r.height>60&&cy>0&&cy<innerHeight,
     x:r.left+r.width/2,y:cy,w:r.width,dpr:window.devicePixelRatio||1
+  });
+})()
+""".trimIndent()
+
+/** One compact JSON line describing the fullscreen layout, for the diagnostic log. */
+private val X_LAYOUT_DIAG_SCRIPT = """
+(() => {
+  const rect=e=>{
+    if(!e)return null;
+    const b=e.getBoundingClientRect();
+    return [Math.round(b.left),Math.round(b.top),Math.round(b.width),Math.round(b.height)];
+  };
+  const q=s=>document.querySelector(s);
+  const videos=Array.from(document.querySelectorAll('video')).sort((a,b)=>{
+    const A=a.getBoundingClientRect(),B=b.getBoundingClientRect();
+    return B.width*B.height-A.width*A.height;
+  });
+  const bar=document.getElementById('mydownload-optional-x-progress');
+  const carousel=window.__mydownloadLandscapeCarousel||{};
+  const vv=window.visualViewport;
+  return JSON.stringify({
+    path:location.pathname,
+    iw:innerWidth,ih:innerHeight,dpr:window.devicePixelRatio,
+    vv:vv?[Math.round(vv.width),Math.round(vv.height),vv.scale]:null,
+    attrs:Array.from(document.documentElement.attributes)
+      .filter(a=>a.name.indexOf('data-mydownload')===0)
+      .map(a=>a.name.replace('data-mydownload-','')+'='+a.value).join(','),
+    video:rect(videos[0]),
+    viewer:rect(q('[data-testid="vss-scroll-view"],[data-testid="immersive-viewer"]')),
+    dialog:rect(q('#layers [role="dialog"]')),
+    bar:bar?[bar.style.display,rect(bar)]:null,
+    carousel:{h:carousel.height,on:carousel.enabled,rot:carousel.rotating,track:!!carousel.track},
+    zoomed:window.__mydownloadMediaZoom&&window.__mydownloadMediaZoom.isZoomed?
+      window.__mydownloadMediaZoom.isZoomed():null
   });
 })()
 """.trimIndent()
@@ -2692,6 +2727,7 @@ fun MultiTabBrowser(
         // them every tick re-parses tens of KB of JS and made the page janky,
         // so only refresh them every few ticks. Cheap scans still run each tick.
         var tick = 0
+        var lastLayoutDiag = ""
         while (visible) {
             val heavyTick = tick++ % 5 == 0
             val browser = currentWebView()
@@ -2715,6 +2751,23 @@ fun MultiTabBrowser(
                         // already-installed Like/Bookmark visibility scan.
                         browser.evaluateJavascript(
                             "window.__mydownloadXNativeVisibility?.schedule?.()", null)
+                        // Fullscreen card sizing follows the WebView size; the throttle
+                        // had slowed it to every ~5s, so re-check it every tick (cheap).
+                        if (browserVideoFullscreen) {
+                            browser.evaluateJavascript(
+                                "window.__mydownloadLandscapeCarousel?.refresh?.()", null)
+                        }
+                    }
+                    if (heavyTick && browserVideoFullscreen) {
+                        browser.evaluateJavascript(X_LAYOUT_DIAG_SCRIPT) { raw ->
+                            val line = "web=" + browser.width + "x" + browser.height +
+                                " 區域=" + viewportWidth + "x" + viewportHeight +
+                                " " + raw.take(1100)
+                            if (line != lastLayoutDiag) {
+                                lastLayoutDiag = line
+                                AppLog.log("版面", line)
+                            }
+                        }
                     }
                     if (heavyTick) {
                         browser.evaluateJavascript(xDisplayScript(currentXOptions), null)
