@@ -349,7 +349,7 @@ private val X_DISPLAY_SCRIPT = """
   const modalRoot = document.querySelector(
     '#layers [role="dialog"]:has(video,[data-testid="videoPlayer"])'
   );
-  const mediaRoute = /\/status\/\d+\/(?:photo|video)\/\d+\/?$/.test(location.pathname) ||
+  const mediaRoute = /\/status\/\d+\/(?:(?:photo|video)\/\d+|mediaviewer)\/?$/.test(location.pathname) ||
     /^\/i\/status\/\d+\/?$/.test(location.pathname);
   const seekbarVisible = Array.from(document.querySelectorAll(
     '[role="slider"],input[type="range"],[data-testid="videoPlayer"] [aria-valuenow]'
@@ -1501,7 +1501,7 @@ internal val X_DEDICATED_X_VIDEO_VIEWER_SCRIPT = """
   // Standalone /status/id/video/1 pages can omit all immersive testids.
   // Check the visible page, not merely the URL: a returning user may still
   // have a /status/... route while scrolling multiple feed/reply cards.
-  const videoRoute=/\/status\/\d{6,22}\/(?:video|photo)\/\d+\/?$/.test(
+  const videoRoute=/\/status\/\d{6,22}\/(?:(?:video|photo)\/\d+|mediaviewer)\/?$/.test(
     location.pathname);
   if(!videoRoute)return false;
   let visiblePosts=0;
@@ -2288,7 +2288,8 @@ fun MultiTabBrowser(
                     web.post {
                         if (resource !in tab.mediaSources) {
                             tab.mediaSources.add(0, resource)
-                            if (tab.mediaSources.size > 24) tab.mediaSources.removeAt(24)
+                            // Keep older captures too: the master playlist (audio, bitrates) is the oldest.
+                            if (tab.mediaSources.size > 60) tab.mediaSources.removeAt(60)
                         }
                     }
                 }

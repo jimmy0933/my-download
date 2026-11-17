@@ -8,7 +8,7 @@ import java.net.URI
  * This class only identifies navigation: it never intercepts site links or reloads.
  */
 internal object XMediaNavigation {
-    private val mediaPath = Regex("""^(/[^/]+/status/[0-9]+)/(?:photo|video)/[0-9]+/?$""")
+    private val mediaPath = Regex("""^(/[^/]+/status/[0-9]+)/(?:(?:photo|video)/[0-9]+|mediaviewer)/?$""")
     private val verticalVideoPath = Regex("""^/i/status/[0-9]+/?$""")
     private val xHosts = setOf("x.com", "www.x.com", "twitter.com", "www.twitter.com")
 
