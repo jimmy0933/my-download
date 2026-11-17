@@ -81,9 +81,14 @@ object MediaCandidateResolver {
 
     suspend fun inspect(inputs: List<StreamChoice>, referer: String): Result =
         withContext(Dispatchers.IO) {
+            // Master playlists (the only source of the separate audio playlist and
+            // bitrates) were requested first, i.e. are the OLDEST captured URLs and
+            // were being cut off by take(). Look at them first.
             val urls = inputs.map { it.url }
                 .filter { BrowserVideoDiscovery.kind(it) != null }
-                .distinct().take(10)
+                .distinct()
+                .sortedBy { if (it.contains("/avc1/") || it.contains("/mp4a/")) 1 else 0 }
+                .take(14)
             val title = StreamResolver.safeTitle(inputs.firstOrNull()?.title ?: "影片")
             val choices = mutableListOf<StreamChoice>()
             val failures = mutableListOf<String>()

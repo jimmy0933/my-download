@@ -29,4 +29,10 @@ class XMediaNavigationTest {
         assertFalse(XMediaNavigation.samePostViewer("$base/photo/1", "https://other.example/status/123456/photo/2"))
         assertFalse(XMediaNavigation.samePostViewer("$base/photo/1", "$base/photo/1"))
     }
+
+    @Test fun newMediaviewerRouteCountsAsViewer() {
+        assertTrue(XMediaNavigation.isMediaViewer("$base/mediaviewer"))
+        assertTrue(XMediaNavigation.samePostViewer("$base/mediaviewer", "$base/photo/1"))
+        assertFalse(XMediaNavigation.isMediaViewer("$base/mediaviewerx"))
+    }
 }

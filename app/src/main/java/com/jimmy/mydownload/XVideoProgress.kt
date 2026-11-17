@@ -142,7 +142,7 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
     const layers=document.getElementById('layers');
     if(layers?.contains(video))return layers;
     if(window.__mydownloadVideoFullscreen?.enabled ||
-        /\/status\/\d+\/(?:video|photo)\/\d+\/?$/.test(location.pathname)){
+        /\/status\/\d+\/(?:(?:video|photo)\/\d+|mediaviewer)\/?$/.test(location.pathname)){
       let container=video.parentElement;
       for(let i=0;i<5&&container?.parentElement &&
           container.parentElement!==document.body;i++)
