@@ -145,11 +145,12 @@ class DownloadService : Service() {
                 }
             } catch (e: Exception) {
                 AppLog.error(if (repairRequest) "修復" else "下載", "失敗 id=$id", e)
+                val reason = friendlyMessage(e)
                 DownloadStore.patch(this@DownloadService, id) {
                     if (repairRequest) it.copy(
-                        repairStatus = "修復失敗：" + (e.message ?: "未知原因"),
+                        repairStatus = "修復失敗：" + (reason ?: "未知原因"),
                         repairProgress = 0
-                    ) else it.copy(status = "失敗", error = e.message ?: "下載中斷")
+                    ) else it.copy(status = "失敗", error = reason ?: "下載中斷")
                 }
             } finally {
                 jobs.remove(id)
@@ -184,6 +185,23 @@ class DownloadService : Service() {
             }
         }
         stopSelf()
+    }
+
+    /** Android reports a full disk as ENOSPC; say what it means and what to do. */
+    private fun friendlyMessage(e: Exception): String? {
+        val text = e.message.orEmpty()
+        return if (text.contains("ENOSPC") || text.contains("No space left", true))
+            "手機儲存空間不足，請清出空間後按「繼續」重試。" else e.message
+    }
+
+    private fun requireSpace(need: Long, what: String) {
+        val free = StatFs(filesDir.absolutePath).availableBytes
+        if (free < need) {
+            throw IOException(
+                "手機儲存空間不足：" + what + "約需 " + Mp4Ranges.label(need) +
+                    "，目前只剩 " + Mp4Ranges.label(free) + "。請先清出空間，再按「繼續」。"
+            )
+        }
     }
 
     private fun notifyDone(item: DownloadRecord) {
@@ -702,6 +720,16 @@ class DownloadService : Service() {
         val audio = audioFile(item.id).takeIf { it.isFile && it.length() > 0L }
         // Separate audio can only be delivered by remuxing, regardless of the
         // "keep original stream" setting.
+        // Muxing writes a second file and the final copy a third, so check up front
+        // instead of failing minutes later with a cryptic ENOSPC.
+        if (!item.autoRepairMp4 && audio == null) {
+            requireSpace(partial.length() + 64L * 1024L * 1024L, "儲存影片")
+        } else {
+            requireSpace(
+                partial.length() * 2L + (audio?.length() ?: 0L) + 64L * 1024L * 1024L,
+                "整理並儲存影片"
+            )
+        }
         if (!item.autoRepairMp4 && audio == null) {
             // Do not call an initialization-only fMP4 or TS a completed movie.
             verifyMp4(partial)
