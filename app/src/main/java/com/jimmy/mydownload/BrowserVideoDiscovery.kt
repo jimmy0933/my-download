@@ -179,10 +179,45 @@ object BrowserVideoDiscovery {
     video.querySelector('source')?.src || '';
   const thumb=video.poster ||
     article?.querySelector('img[src*="twimg.com"]')?.src || '';
+  const idRegexThumb=/(?:ext_tw_video_thumb|amplify_video_thumb|tweet_video_thumb)\/(\d+)/;
+  const idRegexMedia=/(?:ext_tw_video|amplify_video|tweet_video|tv_video)\/(\d+)/;
+  // X's newer /mediaviewer cards have no poster and a blob: source, so also look for
+  // a thumbnail in the video's own card (img or CSS background), stopping before a
+  // container that holds another video.
+  const nearbyThumbId=()=>{
+    let node=video.parentElement;
+    for(let depth=0;node&&depth<10;node=node.parentElement,depth++){
+      if(node===document.body||node===document.documentElement||node.id==='layers')break;
+      if(node.querySelectorAll('video').length>1)break;
+      for(const el of node.querySelectorAll('img[src*="_thumb/"],[style*="_thumb/"]')){
+        const text=(el.getAttribute('src')||'')+' '+(el.getAttribute('style')||'');
+        const m=idRegexThumb.exec(text);
+        if(m)return m[1];
+      }
+    }
+    return '';
+  };
+  // Last resort: the media ID the player is fetching segments for right now. The
+  // playing clip keeps requesting segments; a preloaded neighbour only a few.
+  const recentSegmentId=()=>{
+    try{
+      const list=performance.getEntriesByType('resource').filter(e=>
+        /\/(?:ext_tw_video|amplify_video|tweet_video|tv_video)\/\d+\/.*\.(?:m4s|ts|mp4|aac)/
+          .test(e.name)).slice(-12);
+      const counts={};
+      for(const e of list){
+        const m=idRegexMedia.exec(e.name);
+        if(m)counts[m[1]]=(counts[m[1]]||0)+1;
+      }
+      let best='',n=0;
+      for(const k in counts)if(counts[k]>n){best=k;n=counts[k];}
+      return best;
+    }catch(_){return '';}
+  };
   const mediaId=(
-    /(?:ext_tw_video_thumb|amplify_video_thumb|tweet_video_thumb)\/(\d+)/.exec(thumb) ||
-    /(?:ext_tw_video|amplify_video|tweet_video|tv_video)\/(\d+)/.exec(src) ||
-    [,'']
+    idRegexThumb.exec(thumb) ||
+    idRegexMedia.exec(src) ||
+    [,nearbyThumbId() || recentSegmentId()]
   )[1];
   result.pageText=text.slice(0,1200);
   result.pagePostUrl=url || (currentStatus?location.href:'');

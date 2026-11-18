@@ -2651,6 +2651,12 @@ fun MultiTabBrowser(
                 associated.isNotEmpty() -> associated
                 else -> discovered
             }.take(10)
+            AppLog.log(
+                "偵測",
+                "strict=" + strictActive + " 影片ID=" + mediaId.ifBlank { "無" } +
+                    " 已捕捉=" + discovered.size + " 關聯=" + associated.size +
+                    " 使用=" + all.size
+            )
             if (all.isEmpty()) {
                 discoveryMessage = if (strictActive)
                     "目前無法確認這部影片的下載來源，為避免下載上一部，請播放幾秒再試。"
