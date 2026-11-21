@@ -1742,6 +1742,19 @@ private val X_VIEW_IN_TAB_SCRIPT = """
     location.href='mydownloadviewer://open?u='+
       encodeURIComponent('https://x.com/i/status/'+s.id);
   },{capture:true,passive:false});
+  // List pages: links that lead to other websites are not allowed to open.
+  const xHost=h=>/(?:^|\.)(?:x\.com|twitter\.com|twimg\.com)$/i.test(h);
+  document.addEventListener('click',e=>{
+    if(!listPage()||!(e.target instanceof Element))return;
+    const a=e.target.closest('a[href]');
+    if(!a)return;
+    let u;
+    try{u=new URL(a.getAttribute('href'),location.href);}catch(_){return;}
+    if(u.protocol!=='http:'&&u.protocol!=='https:')return;
+    if(xHost(u.hostname))return;
+    e.preventDefault();e.stopImmediatePropagation();
+    try{console.log('[MDEXT] '+u.hostname);}catch(_){}
+  },{capture:true});
   document.addEventListener('click',e=>{
     if(performance.now()<swallowClickUntil&&e.target instanceof Element&&
         (mediaButton(e.target)||!interactive(e.target))){
@@ -2366,6 +2379,16 @@ fun MultiTabBrowser(
     // Popup windows (e.g. X's third-party login) and the tab that opened them.
     val popupParents = remember(context) { HashMap<String, String>() }
 
+    // "External link blocked" hint: shown for exactly one second, never stacked.
+    val blockedToast = remember(context) { arrayOfNulls<Toast>(1) }
+    fun showBlockedLinkToast() {
+        blockedToast[0]?.cancel()
+        val toast = Toast.makeText(context, "外部網站連結已封鎖", Toast.LENGTH_SHORT)
+        blockedToast[0] = toast
+        toast.show()
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ toast.cancel() }, 1000L)
+    }
+
     fun closeTab(id: String) {
         val index = tabs.indexOfFirst { it.id == id }
         if (index < 0) return
@@ -2625,6 +2648,10 @@ fun MultiTabBrowser(
             override fun onConsoleMessage(message: android.webkit.ConsoleMessage?): Boolean {
                 val text = message?.message().orEmpty()
                 if (text.startsWith("[MDVIT]")) AppLog.log("點擊", text.removePrefix("[MDVIT]").trim())
+                if (text.startsWith("[MDEXT]")) {
+                    AppLog.log("點擊", "擋下外部連結 " + text.removePrefix("[MDEXT]").trim())
+                    showBlockedLinkToast()
+                }
                 return super.onConsoleMessage(message)
             }
 
