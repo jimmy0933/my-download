@@ -1645,6 +1645,20 @@ private val X_LAYOUT_DIAG_SCRIPT = """
       .filter(a=>a.name.indexOf('data-mydownload')===0)
       .map(a=>a.name.replace('data-mydownload-','')+'='+a.value).join(','),
     video:rect(videos[0]),
+    acts:Array.from(document.querySelectorAll(
+      '[data-testid="like"],[data-testid="unlike"],[data-testid="bookmark"],[data-testid="removeBookmark"]'))
+      .slice(0,4).map(e=>{
+        const c=getComputedStyle(e);
+        let hid='';
+        for(let p=e;p&&p!==document.body;p=p.parentElement){
+          const k=getComputedStyle(p);
+          if(k.display==='none'||k.visibility==='hidden'||k.opacity==='0'){
+            hid=(p.getAttribute('data-testid')||p.tagName)+':'+k.display+'/'+k.visibility+'/'+k.opacity;break;
+          }
+        }
+        return [e.getAttribute('data-testid'),rect(e),e.getAttribute('data-mydownload-native-like')||
+          e.getAttribute('data-mydownload-native-bookmark')||'',hid];
+      }),
     viewer:rect(q('[data-testid="vss-scroll-view"],[data-testid="immersive-viewer"]')),
     dialog:rect(q('#layers [role="dialog"]')),
     bar:bar?[bar.style.display,rect(bar)]:null,

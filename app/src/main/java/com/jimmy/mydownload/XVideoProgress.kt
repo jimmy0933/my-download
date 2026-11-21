@@ -58,7 +58,8 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
   syncRouteFlag();
   document.getElementById('mydownload-optional-native-seek-css')?.remove();
   document.getElementById('mydownload-optional-native-seek-css-v2')?.remove();
-  const cssId='mydownload-optional-native-seek-css-v3';
+  document.getElementById('mydownload-optional-native-seek-css-v3')?.remove();
+  const cssId='mydownload-optional-native-seek-css-v4';
   if (!document.getElementById(cssId)) {
     const style=document.createElement('style');
     style.id=cssId;
@@ -91,9 +92,9 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
         input[type="range"]:not([aria-label*="volume" i]):not([aria-label*="音量"]),
         [data-testid*="seek" i],[data-testid*="scrub" i],
         [data-testid*="video-progress" i],[data-testid*="video-timeline" i],
-        [aria-label*="seek" i],[aria-label*="timeline" i],
-        [aria-label*="播放進度"]
-      ):not(#mydownload-optional-x-progress):not(#mydownload-optional-x-progress *) {
+        [aria-label*="seek" i],[aria-label*="播放進度"]
+      ):not(#mydownload-optional-x-progress):not(#mydownload-optional-x-progress *):not(:has(video,[data-testid="like"],[data-testid="unlike"],[data-testid="bookmark"],
+                 [data-testid="removeBookmark"],[data-testid="reply"],[data-testid="retweet"])) {
         opacity:0 !important;
         pointer-events:none !important;
       }
