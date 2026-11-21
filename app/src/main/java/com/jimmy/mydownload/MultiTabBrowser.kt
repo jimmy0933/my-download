@@ -1635,6 +1635,7 @@ private val X_VIEW_IN_TAB_SCRIPT = """
   if (!/^(?:www\.)?(?:x\.com|twitter\.com)$/.test(location.hostname)) return;
   if (window.__mydownloadViewInTab) return;
   window.__mydownloadViewInTab = true;
+  try{console.log('[MDVIT] 點擊攔截已安裝 path='+location.pathname);}catch(_){}
 
   const MAX_TAP_MS=350, MAX_MOVE=14;
   let start=null, swallowClickUntil=0;
@@ -1650,30 +1651,40 @@ private val X_VIEW_IN_TAB_SCRIPT = """
   const mediaButton=el=>el.closest(
     'button[aria-label*="查看媒體"],button[aria-label*="View media" i],'+
     'button[aria-label*="媒體"],button[aria-label*="media" i]');
+  let lastDbg=0;
+  const dbg=m=>{const n=performance.now();if(n-lastDbg<400)return;lastDbg=n;
+    try{console.log('[MDVIT] '+m);}catch(_){}};
   const statusId=e=>{
     if(!listPage()||!(e.target instanceof Element))return null;
     const article=e.target.closest('article[data-testid="tweet"]');
     if(!article)return null;
     const mb=mediaButton(e.target);
+    const hasVideo=!!article.querySelector('[data-testid="videoPlayer"],[data-testid="videoComponent"],'+
+      'video,[data-testid="playButton"],[aria-label*="播放"],[aria-label*="Play" i]');
     let player=null;
-    if(mb&&article.contains(mb)&&
-        article.querySelector('[data-testid="videoPlayer"],[data-testid="videoComponent"],'+
-          'video,[data-testid="playButton"],[aria-label*="播放"],[aria-label*="Play" i]')){
+    if(mb&&article.contains(mb)&&hasVideo){
       player=mb;
     }else{
-      if(interactive(e.target))return null;
+      if(interactive(e.target)){
+        dbg('略過:點到其他可點元素 '+e.target.tagName+' mb='+(!!mb)+' 影片='+hasVideo);
+        return null;
+      }
       player=e.target.closest('[data-testid="videoPlayer"],'+
         '[data-testid="videoComponent"]')||
         (e.target.tagName==='VIDEO'?e.target:null);
     }
-    if(!player||!article.contains(player))return null;
+    if(!player||!article.contains(player)){
+      dbg('略過:不是影片區 '+e.target.tagName+' mb='+(!!mb)+' 影片='+hasVideo);
+      return null;
+    }
     // The post's own timestamp link, never a quoted post's.
     for(const time of article.querySelectorAll('a[href*="/status/"] time')){
       const a=time.closest('a');
       if(!a||a.closest('[role="link"][tabindex]:not(a)'))continue;
       const m=/\/status\/(\d+)/.exec(a.getAttribute('href')||'');
-      if(m)return m[1];
+      if(m){dbg('命中影片 id='+m[1]);return m[1];}
     }
+    dbg('略過:找不到貼文時間連結');
     return null;
   };
   document.addEventListener('touchstart',e=>{
@@ -1692,7 +1703,12 @@ private val X_VIEW_IN_TAB_SCRIPT = """
   },{capture:true,passive:true});
   document.addEventListener('touchend',e=>{
     const s=start;start=null;
-    if(!s||e.touches.length!==0||performance.now()-s.time>MAX_TAP_MS)return;
+    if(!s)return;
+    if(e.touches.length!==0||performance.now()-s.time>MAX_TAP_MS){
+      try{console.log('[MDVIT] 略過:按太久 '+Math.round(performance.now()-s.time)+'ms');}catch(_){}
+      return;
+    }
+    try{console.log('[MDVIT] 攔截成功 → 開分頁 '+s.id);}catch(_){}
     if(e.cancelable)e.preventDefault();
     e.stopImmediatePropagation();
     swallowClickUntil=performance.now()+700;
@@ -2580,6 +2596,12 @@ fun MultiTabBrowser(
         }
 
         web.webChromeClient = object : WebChromeClient() {
+            override fun onConsoleMessage(message: android.webkit.ConsoleMessage?): Boolean {
+                val text = message?.message().orEmpty()
+                if (text.startsWith("[MDVIT]")) AppLog.log("點擊", text.removePrefix("[MDVIT]").trim())
+                return super.onConsoleMessage(message)
+            }
+
             override fun onProgressChanged(view: WebView?, newProgress: Int) {
                 tab.progress = newProgress
             }
