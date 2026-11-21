@@ -1656,7 +1656,7 @@ private val X_VIEW_IN_TAB_SCRIPT = """
     try{console.log('[MDVIT] '+m);}catch(_){}};
   const statusId=e=>{
     if(!listPage()||!(e.target instanceof Element))return null;
-    const article=e.target.closest('article[data-testid="tweet"]');
+    const article=e.target.closest('article');
     if(!article)return null;
     const mb=mediaButton(e.target);
     const hasVideo=!!article.querySelector('[data-testid="videoPlayer"],[data-testid="videoComponent"],'+
