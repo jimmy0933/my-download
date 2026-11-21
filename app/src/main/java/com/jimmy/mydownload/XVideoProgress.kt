@@ -362,6 +362,14 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
     }
   };
 
+  // Like / bookmark / share / repost / reply presses must not pop the bar up.
+  const actionTarget=el=>!!el.closest(
+    '[data-testid="share"],[data-testid="like"],[data-testid="unlike"],'+
+    '[data-testid="bookmark"],[data-testid="removeBookmark"],'+
+    '[aria-label*="喜歡"],[aria-label*="書籤"],[aria-label*="分享"],'+
+    '[aria-label*="轉貼"],[aria-label*="回覆"],[aria-label*="Like" i],'+
+    '[aria-label*="Bookmark" i],[aria-label*="Share" i],[aria-label*="Repost" i],'+
+    '[aria-label*="Reply" i]');
   // Once per document: a short SINGLE tap in the currently visible video
   // reveals our controls. Never cancel X's touch event or its swipe gestures,
   // and never confuse a swipe, pinch or download button press with a tap.
@@ -395,12 +403,12 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
       if(performance.now()-start.time>340 ||
          Math.hypot(start.x-t.clientX,start.y-t.clientY)>18)return;
       const target=event.target;
-      if(target instanceof Element&&target.closest(
-        '#mydownload-optional-x-progress,a[href],input,'+
-        'button,[data-testid="share"],[data-testid="like"]'))return;
+      if(target instanceof Element&&(target.closest(
+        '#mydownload-optional-x-progress,a[href],input')||actionTarget(target)))return;
       const r=state.video.getBoundingClientRect();
+      // Also the strip right under the picture, where X keeps its own controls.
       if(t.clientX<r.left||t.clientX>r.right||
-         t.clientY<r.top||t.clientY>r.bottom)return;
+         t.clientY<r.top||t.clientY>Math.min(innerHeight,r.bottom+140))return;
       state.revealBar?.();
     },{capture:true,passive:true});
     document.addEventListener('touchcancel',()=>{
@@ -411,11 +419,11 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
       if(!state.settings?.showCustom || !state.video ||
          event.detail===0)return;
       const target=event.target;
-      if(target instanceof Element&&target.closest(
-        '#mydownload-optional-x-progress,a[href],input,button'))return;
+      if(target instanceof Element&&(target.closest(
+        '#mydownload-optional-x-progress,a[href],input')||actionTarget(target)))return;
       const r=state.video.getBoundingClientRect();
       if(event.clientX>=r.left&&event.clientX<=r.right&&
-         event.clientY>=r.top&&event.clientY<=r.bottom)
+         event.clientY>=r.top&&event.clientY<=Math.min(innerHeight,r.bottom+140))
         state.revealBar?.();
     },{capture:true,passive:true});
   }
