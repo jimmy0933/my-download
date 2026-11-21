@@ -1646,8 +1646,10 @@ private val X_LAYOUT_DIAG_SCRIPT = """
       .map(a=>a.name.replace('data-mydownload-','')+'='+a.value).join(','),
     video:rect(videos[0]),
     acts:Array.from(document.querySelectorAll(
-      '[data-testid="like"],[data-testid="unlike"],[data-testid="bookmark"],[data-testid="removeBookmark"]'))
-      .slice(0,4).map(e=>{
+      '[data-testid="like"],[data-testid="unlike"],[data-testid="bookmark"],[data-testid="removeBookmark"],'+
+      '[data-testid="reply"],[data-testid="retweet"],[role="group"],'+
+      '[aria-label*="Like" i],[aria-label*="Bookmark" i],[aria-label*="喜歡"],[aria-label*="書籤"],[aria-label*="讚"]'))
+      .slice(0,8).map(e=>{
         const c=getComputedStyle(e);
         let hid='';
         for(let p=e;p&&p!==document.body;p=p.parentElement){
@@ -1656,7 +1658,7 @@ private val X_LAYOUT_DIAG_SCRIPT = """
             hid=(p.getAttribute('data-testid')||p.tagName)+':'+k.display+'/'+k.visibility+'/'+k.opacity;break;
           }
         }
-        return [e.getAttribute('data-testid'),rect(e),e.getAttribute('data-mydownload-native-like')||
+        return [(e.getAttribute('data-testid')||e.getAttribute('aria-label')||e.tagName).slice(0,24),rect(e),e.getAttribute('data-mydownload-native-like')||
           e.getAttribute('data-mydownload-native-bookmark')||'',hid];
       }),
     viewer:rect(q('[data-testid="vss-scroll-view"],[data-testid="immersive-viewer"]')),
@@ -2801,6 +2803,7 @@ fun MultiTabBrowser(
         // so only refresh them every few ticks. Cheap scans still run each tick.
         var tick = 0
         var lastLayoutDiag = ""
+        var lastLayoutDiagAt = 0L
         var fillWasOn = false
         while (visible) {
             val heavyTick = tick++ % 5 == 0
@@ -2840,13 +2843,15 @@ fun MultiTabBrowser(
                         fillWasOn = false
                         browser.evaluateJavascript(xMediaviewerFillScript(false), null)
                     }
-                    if (heavyTick && browserVideoFullscreen) {
+                    if (heavyTick && (browserVideoFullscreen || selected.url.contains("/mediaviewer"))) {
                         browser.evaluateJavascript(X_LAYOUT_DIAG_SCRIPT) { raw ->
                             val line = "web=" + browser.width + "x" + browser.height +
                                 " 區域=" + viewportWidth + "x" + viewportHeight +
-                                " " + raw.take(1100)
-                            if (line != lastLayoutDiag) {
+                                " " + raw.take(1800)
+                            if (line != lastLayoutDiag ||
+                                System.currentTimeMillis() - lastLayoutDiagAt > 20_000) {
                                 lastLayoutDiag = line
+                                lastLayoutDiagAt = System.currentTimeMillis()
                                 AppLog.log("版面", line)
                             }
                         }
