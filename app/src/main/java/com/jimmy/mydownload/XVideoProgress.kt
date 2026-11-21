@@ -47,7 +47,17 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
 
   state.settings=settings;
   state.authorLinks=state.authorLinks||new Set();
-  const cssId='mydownload-optional-native-seek-css';
+  // v2 adds the route-wide /mediaviewer rule; drop the stale v1 stylesheet.
+  const mediaviewerRoute=()=>
+    /\/status\/\d+\/mediaviewer\/?$/.test(location.pathname);
+  const syncRouteFlag=()=>{
+    if(mediaviewerRoute())
+      document.documentElement.setAttribute('data-mydownload-mediaviewer','1');
+    else document.documentElement.removeAttribute('data-mydownload-mediaviewer');
+  };
+  syncRouteFlag();
+  document.getElementById('mydownload-optional-native-seek-css')?.remove();
+  const cssId='mydownload-optional-native-seek-css-v2';
   if (!document.getElementById(cssId)) {
     const style=document.createElement('style');
     style.id=cssId;
@@ -68,6 +78,21 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
         [aria-label*="seek" i],[aria-label*="timeline" i],
         [aria-label*="播放進度"]
       ) {
+        opacity:0 !important;
+        pointer-events:none !important;
+      }
+      /* X's /mediaviewer has none of the containers above, so hide the native seek
+         bar for the whole route; otherwise it flashes on every swipe until the
+         script has found and marked it. Never touch our own progress bar. */
+      html[data-mydownload-hide-x-timeline="1"][data-mydownload-mediaviewer="1"]
+      :is(
+        [role="slider"]:not([aria-label*="volume" i]):not([aria-label*="音量"]):not([data-testid*="volume" i]),
+        input[type="range"]:not([aria-label*="volume" i]):not([aria-label*="音量"]),
+        [data-testid*="seek" i],[data-testid*="scrub" i],
+        [data-testid*="video-progress" i],[data-testid*="video-timeline" i],
+        [aria-label*="seek" i],[aria-label*="timeline" i],
+        [aria-label*="播放進度"]
+      ):not(#mydownload-optional-x-progress):not(#mydownload-optional-x-progress *) {
         opacity:0 !important;
         pointer-events:none !important;
       }
@@ -895,6 +920,7 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
     if (state.busy) return;
     state.busy=true;
     try {
+      syncRouteFlag();
       const video=currentVideo();
       const playable=video && Number.isFinite(video.duration) &&
         video.duration>0 && video.readyState>=1;
