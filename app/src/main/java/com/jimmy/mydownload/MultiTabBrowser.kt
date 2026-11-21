@@ -539,20 +539,27 @@ private val X_DISPLAY_SCRIPT = """
   if (!/\/status\/\d+\/(?:mediaviewer|video\/\d+|photo\/\d+)\/?$/.test(location.pathname) &&
       !document.querySelector('[data-testid="vss-scroll-view"],[data-testid="immersive-viewer"]')) {
     const seen = new Set();
-    for (let dx = 10; dx <= 100; dx += 18) {
-      for (let dy = 40; dy <= 170; dy += 18) {
+    for (let dx = 10; dx <= 110; dx += 15) {
+      for (let dy = 30; dy <= 190; dy += 15) {
         const hit = document.elementFromPoint(innerWidth - dx, innerHeight - dy);
+        if (!hit || hit.closest('article,header,nav,[role="navigation"]')) continue;
+        // Outermost small ancestor around the hit: the button itself or its wrapper.
+        let best = null;
         for (let el = hit; el && el !== document.body; el = el.parentElement) {
-          if (seen.has(el)) break;
-          seen.add(el);
-          if (getComputedStyle(el).position !== 'fixed') continue;
           const r = el.getBoundingClientRect();
-          if (r.width > 20 && r.width <= 100 && r.height > 20 && r.height <= 100 &&
-              r.right > innerWidth - 120 && r.bottom > innerHeight - 200 &&
-              !el.querySelector('video,[data-testid="like"],[data-testid="bookmark"]'))
-            el.setAttribute('data-mydownload-fab', '1');
-          break;
+          if (r.width > 100 || r.height > 100) break;
+          if (r.width > 20 && r.height > 20 && r.right > innerWidth - 130 &&
+              r.bottom > innerHeight - 210) best = el;
         }
+        if (!best || seen.has(best)) continue;
+        seen.add(best);
+        const label = (best.getAttribute('aria-label') || '') +
+          (best.getAttribute('href') || '') + (best.getAttribute('data-testid') || '');
+        const interactive = best.matches('a,button,[role="button"],[role="link"]') ||
+          !!best.querySelector('a,button,[role="button"],[role="link"]');
+        if (interactive && !best.querySelector('video,input,textarea,img[src]') &&
+            !/like|bookmark|喜歡|書籤|share|分享/i.test(label))
+          best.setAttribute('data-mydownload-fab', '1');
       }
     }
   }
@@ -643,14 +650,18 @@ private val X_VIDEO_NATIVE_ACTION_VISIBILITY_SCRIPT = """
     // with the seek bar) left Like/Bookmark invisible in portrait. Keep the
     // action row and the buttons themselves opaque on that route; ancestors
     // that contain the video are excluded so the player is untouched.
+    // The diagnostic log showed X's /mediaviewer Like/Bookmark buttons carry only an
+    // aria-label (no data-testid), and the layer that fades them out on idle also
+    // contains the video, so the ancestors are forced opaque too.
     'html[data-mydownload-actions-route="1"] :is(' +
       '[data-testid="like"],[data-testid="unlike"],[data-testid="bookmark"],' +
-      '[data-testid="removeBookmark"],[data-testid="reply"],' +
-      '[data-testid="retweet"],[data-testid="unretweet"]),' +
+      '[data-testid="removeBookmark"],[aria-label*="喜歡"],[aria-label*="書籤"],' +
+      '[aria-label*="Like" i],[aria-label*="Bookmark" i]),' +
     'html[data-mydownload-actions-route="1"] ' +
       ':is(div,span,section,footer,nav):has(' +
       '[data-testid="like"],[data-testid="unlike"],[data-testid="bookmark"],' +
-      '[data-testid="removeBookmark"]):not(:has(video)){' +
+      '[data-testid="removeBookmark"],[aria-label*="喜歡"],[aria-label*="書籤"],' +
+      '[aria-label*="Like" i],[aria-label*="Bookmark" i]){' +
       'opacity:1!important;visibility:visible!important;}';
   if(sheet.textContent!==css)sheet.textContent=css;
   if(/\/status\/\d+\/mediaviewer\/?$/.test(location.pathname))
@@ -1673,6 +1684,27 @@ private val X_VIEWER_PROBE_SCRIPT = """
     ready:post&&r.width>80&&r.height>60&&cy>0&&cy<innerHeight,
     x:r.left+r.width/2,y:cy,w:r.width,dpr:window.devicePixelRatio||1
   });
+})()
+""".trimIndent()
+
+/** Describes what sits in the bottom-right corner of X pages (the compose button). */
+private val X_CORNER_DIAG_SCRIPT = """
+(() => {
+  const out=[];
+  for(const [dx,dy] of [[45,100],[40,130],[60,90]]){
+    const chain=[];
+    for(let el=document.elementFromPoint(innerWidth-dx,innerHeight-dy);
+        el&&el!==document.body&&chain.length<6;el=el.parentElement){
+      const r=el.getBoundingClientRect();
+      chain.push([el.tagName,(el.getAttribute('data-testid')||'').slice(0,24),
+        (el.getAttribute('aria-label')||'').slice(0,12),
+        getComputedStyle(el).position,Math.round(r.width)+'x'+Math.round(r.height),
+        el.getAttribute('data-mydownload-fab')||'']);
+    }
+    out.push(chain);
+  }
+  return JSON.stringify({path:location.pathname.slice(0,40),iw:innerWidth,ih:innerHeight,
+    fab:document.querySelectorAll('[data-mydownload-fab]').length,c:out});
 })()
 """.trimIndent()
 
@@ -2879,6 +2911,8 @@ fun MultiTabBrowser(
         var tick = 0
         var lastLayoutDiag = ""
         var lastLayoutDiagAt = 0L
+        var lastCornerDiag = ""
+        var lastCornerDiagAt = 0L
         var fillWasOn = false
         while (visible) {
             val heavyTick = tick++ % 5 == 0
@@ -2928,6 +2962,18 @@ fun MultiTabBrowser(
                                 lastLayoutDiag = line
                                 lastLayoutDiagAt = System.currentTimeMillis()
                                 AppLog.log("版面", line)
+                            }
+                        }
+                    }
+                    if (heavyTick && !browserVideoFullscreen &&
+                        BrowserVideoDiscovery.isXPage(selected.url) &&
+                        !selected.url.contains("/mediaviewer")) {
+                        browser.evaluateJavascript(X_CORNER_DIAG_SCRIPT) { raw ->
+                            val now = System.currentTimeMillis()
+                            if (raw != lastCornerDiag || now - lastCornerDiagAt > 30_000) {
+                                lastCornerDiag = raw
+                                lastCornerDiagAt = now
+                                AppLog.log("角落", raw.take(1500))
                             }
                         }
                     }
