@@ -1687,10 +1687,25 @@ private val X_VIEW_IN_TAB_SCRIPT = """
     dbg('略過:找不到貼文時間連結');
     return null;
   };
+  // Raw diagnostics: do touch events reach this script at all, and does it throw?
+  const rawAt={};
+  const raw=(kind,e)=>{const n=performance.now();if(n-(rawAt[kind]||0)<700)return;rawAt[kind]=n;
+    try{const t=e.target;console.log('[MDVIT] 原始 '+kind+' path='+location.pathname+
+      ' 目標='+(t&&t.tagName)+' 在貼文內='+(!!(t&&t.closest&&t.closest('article')))+
+      ' 手指='+(e.touches?e.touches.length:'-'));}catch(_){}};
+  window.addEventListener('error',ev=>{
+    try{console.log('[MDVIT] 腳本錯誤 '+ev.message+' @'+(ev.lineno||''));}catch(_){}
+  },true);
+  document.addEventListener('click',e=>raw('click',e),{capture:true});
+  document.addEventListener('pointerdown',e=>raw('pointerdown',e),{capture:true});
   document.addEventListener('touchstart',e=>{
+    raw('touchstart',e);
     start=null;
     if(e.touches.length!==1)return;
-    const id=statusId(e);
+    let id=null;
+    try{id=statusId(e);}catch(err){
+      try{console.log('[MDVIT] statusId 出錯 '+(err&&err.message));}catch(_){}
+    }
     if(!id)return;
     const t=e.touches[0];
     start={x:t.clientX,y:t.clientY,time:performance.now(),id};
