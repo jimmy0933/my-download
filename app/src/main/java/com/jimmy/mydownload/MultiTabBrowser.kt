@@ -2953,6 +2953,11 @@ fun MultiTabBrowser(
         }
     }
 
+    // X-only app: a blank or non-X page left over from an older session opens X home.
+    LaunchedEffect(Unit) {
+        if (!BrowserVideoDiscovery.isXPage(selected.url)) navigate("https://x.com/home")
+    }
+
     BackHandler(visible && (browserVideoFullscreen || fullscreenView != null ||
         selected.canBack || selected.parentTabId != null)) {
         when {
@@ -2966,159 +2971,53 @@ fun MultiTabBrowser(
         // Switching fullscreen only changes layout; AndroidView still owns the
         // same live host/WebView instance and retains playback state.
         if (!browserVideoFullscreen) Row(
-            Modifier.fillMaxWidth().height(54.dp).padding(horizontal = 3.dp),
-            verticalAlignment = Alignment.CenterVertically
+            Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceEvenly
         ) {
+            // X-only app: no address bar, no tabs. Every action is one tap.
             IconButton(
                 onClick = { goBackPreservingScroll() },
                 enabled = selected.canBack || selected.parentTabId != null,
-                modifier = Modifier.size(35.dp)
+                modifier = Modifier.size(46.dp)
             ) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, "上一頁",
-                    modifier = Modifier.size(21.dp))
+                    modifier = Modifier.size(24.dp))
             }
-            OutlinedTextField(
-                value = addressInput, onValueChange = { addressInput = it },
-                modifier = Modifier.weight(1f).height(49.dp),
-                singleLine = true,
-                textStyle = MaterialTheme.typography.bodySmall,
-                placeholder = { Text("網址或搜尋", style = MaterialTheme.typography.bodySmall) },
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Uri, imeAction = ImeAction.Go
-                ),
-                keyboardActions = KeyboardActions(onGo = { navigateInput() }),
-                trailingIcon = {
-                    IconButton(onClick = { navigateInput() }, modifier = Modifier.size(35.dp)) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowForward, "前往網址",
-                            modifier = Modifier.size(19.dp))
-                    }
-                },
-                shape = RoundedCornerShape(13.dp)
-            )
-            val saved = bookmarks.any { it.url == selected.url }
-            IconButton(
-                enabled = BrowserAddress.isWebUrl(selected.url),
-                onClick = {
-                    BrowserStore.toggleBookmark(context, selected.url, selected.title)
-                    bookmarks = BrowserStore.bookmarks(context)
-                },
-                modifier = Modifier.size(37.dp)
-            ) {
-                Icon(
-                    if (saved) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
-                    contentDescription = if (saved) "取消書籤" else "加入書籤",
-                    tint = if (saved) BrowserGreen else Color.White,
-                    modifier = Modifier.size(21.dp)
-                )
-            }
-            // One tap back to X's home timeline.
             IconButton(
                 onClick = { navigate("https://x.com/home") },
-                modifier = Modifier.size(37.dp)
+                modifier = Modifier.size(46.dp)
             ) {
-                Icon(
-                    Icons.Default.Home,
-                    contentDescription = "回 X 首頁",
-                    tint = BrowserGreen,
-                    modifier = Modifier.size(21.dp)
-                )
+                Icon(Icons.Default.Home, "X 首頁",
+                    tint = BrowserGreen, modifier = Modifier.size(26.dp))
             }
-            // One tap to X's own bookmarks timeline (login to X required).
             IconButton(
                 onClick = { navigate("https://x.com/i/bookmarks") },
-                modifier = Modifier.size(37.dp)
+                modifier = Modifier.size(46.dp)
             ) {
-                Icon(
-                    Icons.Default.CollectionsBookmark,
-                    contentDescription = "X 收藏",
-                    tint = BrowserGreen,
-                    modifier = Modifier.size(21.dp)
-                )
+                Icon(Icons.Default.Bookmark, "X 收藏",
+                    tint = BrowserGreen, modifier = Modifier.size(26.dp))
             }
-            IconButton(onClick = { showTabs = true }, modifier = Modifier.size(37.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Layers, "切換分頁", modifier = Modifier.size(20.dp))
-                    Text(tabs.size.toString(), fontSize = 11.sp, color = BrowserGreen)
-                }
+            IconButton(
+                onClick = { currentWebView()?.reload() },
+                modifier = Modifier.size(46.dp)
+            ) {
+                Icon(Icons.Default.Refresh, "重新整理",
+                    modifier = Modifier.size(24.dp))
             }
-            Box {
-                IconButton(
-                    onClick = { showBrowserMenu = true }, modifier = Modifier.size(36.dp)
-                ) {
-                    Icon(Icons.Default.MoreVert, "瀏覽器選單", modifier = Modifier.size(22.dp))
-                }
-                DropdownMenu(
-                    expanded = showBrowserMenu,
-                    onDismissRequest = { showBrowserMenu = false }
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("新增分頁") },
-                        onClick = { showBrowserMenu = false; addTab() },
-                        leadingIcon = { Icon(Icons.Default.Add, null) }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("前進") },
-                        enabled = selected.canForward,
-                        onClick = {
-                            showBrowserMenu = false
-                            currentWebView()?.goForward()
-                        },
-                        leadingIcon = { Icon(Icons.AutoMirrored.Filled.ArrowForward, null) }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("重新整理") },
-                        onClick = {
-                            showBrowserMenu = false
-                            currentWebView()?.reload()
-                        },
-                        leadingIcon = { Icon(Icons.Default.Refresh, null) }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("新分頁首頁") },
-                        onClick = {
-                            showBrowserMenu = false
-                            navigate(BrowserAddress.BLANK_TAB)
-                        },
-                        leadingIcon = { Icon(Icons.Default.Home, null) }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("我的書籤") },
-                        onClick = {
-                            showBrowserMenu = false
-                            bookmarks = BrowserStore.bookmarks(context)
-                            sheetSearch = ""
-                            selectedSheet = BrowserLibrary.BOOKMARKS
-                        },
-                        leadingIcon = { Icon(Icons.Default.Bookmark, null) }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("瀏覽紀錄") },
-                        onClick = {
-                            showBrowserMenu = false
-                            history = BrowserStore.history(context)
-                            sheetSearch = ""
-                            selectedSheet = BrowserLibrary.HISTORY
-                        },
-                        leadingIcon = { Icon(Icons.Default.History, null) }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("設定") },
-                        onClick = { showBrowserMenu = false; currentSettings() },
-                        leadingIcon = { Icon(Icons.Default.Settings, null) }
-                    )
-                }
-            }
-            // Rightmost shortcut; adding it also gives the URL field more compact width.
             IconButton(
                 onClick = { currentDownloads() },
-                modifier = Modifier.size(39.dp)
+                modifier = Modifier.size(46.dp)
             ) {
-                Icon(
-                    Icons.Default.Download,
-                    contentDescription = "下載管理",
-                    tint = BrowserGreen,
-                    modifier = Modifier.size(23.dp)
-                )
+                Icon(Icons.Default.Download, "下載管理",
+                    tint = BrowserGreen, modifier = Modifier.size(26.dp))
+            }
+            IconButton(
+                onClick = { currentSettings() },
+                modifier = Modifier.size(46.dp)
+            ) {
+                Icon(Icons.Default.Settings, "設定",
+                    modifier = Modifier.size(24.dp))
             }
         }
         if (!browserVideoFullscreen && selected.progress in 1..99) {
