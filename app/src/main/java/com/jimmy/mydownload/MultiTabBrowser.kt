@@ -1838,6 +1838,7 @@ private val X_MEDIAVIEWER_INFO_SCRIPT = """
   const keep='button,[role="button"],#mydownload-optional-x-progress,video,'+
     '[aria-label*="喜歡"],[aria-label*="書籤"],[aria-label*="Like" i],[aria-label*="Bookmark" i]';
   const more=/^(?:顯示更多|显示更多|Show more|…|\.\.\.|翻譯自.*|翻译自.*|Translated from.*|顯示原文|显示原文|Show original)$/i;
+  const follow=/^(?:跟隨|跟随|關注|关注|Follow|Following|正在跟隨|正在跟随|已跟隨|已跟随)$/i;
   const walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);
   let n=0,node;
   while((node=walker.nextNode())){
@@ -1847,14 +1848,17 @@ private val X_MEDIAVIEWER_INFO_SCRIPT = """
     if(!el||el.hasAttribute('data-mydownload-hide-info'))continue;
     if(el.closest('script,style,noscript'))continue;
     const isMore=more.test(text);
-    if(!isMore&&el.closest(keep))continue;
-    if(isMore&&el.closest('#mydownload-optional-x-progress'))continue;
+    const isFollow=follow.test(text);
+    if(!isMore&&!isFollow&&el.closest(keep))continue;
+    if((isMore||isFollow)&&el.closest('#mydownload-optional-x-progress'))continue;
     const r=el.getBoundingClientRect();
     // The overlay sits in the lower part of a card; ignore the top bar area.
     const card=Math.floor((r.top+r.bottom)/2/innerHeight);
     const within=((r.top+r.bottom)/2)-card*innerHeight;
     if(r.width<2||r.height<2||within<innerHeight*0.35)continue;
-    el.setAttribute('data-mydownload-hide-info','1');
+    // The Follow button goes too: hide the whole button, not just its label.
+    const target=isFollow?(el.closest('button,[role="button"]')||el):el;
+    target.setAttribute('data-mydownload-hide-info','1');
     n++;
   }
   return 'hid:'+n;
