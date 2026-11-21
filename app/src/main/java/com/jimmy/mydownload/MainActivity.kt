@@ -9,6 +9,7 @@ import android.provider.DocumentsContract
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -19,7 +20,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
@@ -27,7 +32,10 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -246,6 +254,11 @@ fun RootScreen(shared: String) {
 
     // Opening the download manager drops finished entries whose video file was
     // deleted outside the app, so the list never shows dead items.
+    // A link shared into the app is parsed straight away (the paste box is gone).
+    LaunchedEffect(Unit) {
+        if (shared.trim().startsWith("https://")) showDownload(shared.trim())
+    }
+
     LaunchedEffect(tab) {
         if (tab != 1) return@LaunchedEffect
         val missing = withContext(Dispatchers.IO) {
@@ -311,50 +324,13 @@ fun RootScreen(shared: String) {
                 if (tab == 1) {
                     LazyColumn(
                         modifier = Modifier.fillMaxSize().background(Navy),
-                        contentPadding = PaddingValues(18.dp),
-                        verticalArrangement = Arrangement.spacedBy(14.dp)
+                        contentPadding = PaddingValues(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         item {
-                            Text("下載管理", style = MaterialTheme.typography.headlineMedium,
+                            Text("下載管理（" + downloads.size + "）",
+                                style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.Bold)
-                            Spacer(Modifier.height(7.dp))
-                            Text("貼上網址解析影片，或從瀏覽分頁直接選影片下載。", color = Soft)
-                        }
-                        item {
-                            Card(
-                                colors = CardDefaults.cardColors(containerColor = Panel),
-                                shape = RoundedCornerShape(18.dp)
-                            ) {
-                                Column(
-                                    Modifier.fillMaxWidth().padding(16.dp),
-                                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                                ) {
-                                    OutlinedTextField(
-                                        value = manualUrl, onValueChange = { manualUrl = it },
-                                        modifier = Modifier.fillMaxWidth(),
-                                        label = { Text("HTTPS 影片網址") },
-                                        maxLines = 3,
-                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
-                                    )
-                                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                        OutlinedButton(
-                                            onClick = {
-                                                clipboard.getText()?.text?.let { manualUrl = it }
-                                            },
-                                            modifier = Modifier.weight(1f)
-                                        ) { Text("貼上連結") }
-                                        Button(
-                                            onClick = { showDownload(manualUrl.trim()) },
-                                            enabled = manualUrl.trim().startsWith("https://"),
-                                            modifier = Modifier.weight(1f)
-                                        ) { Text("解析下載") }
-                                    }
-                                }
-                            }
-                        }
-                        item {
-                            Text("下載紀錄（" + downloads.size + "）",
-                                style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                         }
                         if (downloads.isEmpty()) {
                             item {
@@ -363,86 +339,70 @@ fun RootScreen(shared: String) {
                             }
                         }
                         items(downloads, key = { it.id }) { item ->
+                            val running = item.status !in setOf("完成", "失敗", "已暫停", "待儲存")
                             Card(
                                 modifier = Modifier.fillMaxWidth()
                                     .clickable(enabled = item.status == "完成") {
                                         playDownloaded(item)
                                     },
                                 colors = CardDefaults.cardColors(containerColor = Panel),
-                                shape = RoundedCornerShape(18.dp)
+                                shape = RoundedCornerShape(12.dp)
                             ) {
-                                Column(
-                                    Modifier.fillMaxWidth().padding(16.dp),
-                                    verticalArrangement = Arrangement.spacedBy(9.dp)
+                                Row(
+                                    Modifier.fillMaxWidth().padding(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                    DownloadThumb(item)
+                                    Spacer(Modifier.width(10.dp))
+                                    Column(Modifier.weight(1f)) {
                                         Text(
-                                            item.title, fontWeight = FontWeight.Bold,
-                                            maxLines = 2, overflow = TextOverflow.Ellipsis,
-                                            modifier = Modifier.weight(1f)
+                                            item.title, fontWeight = FontWeight.Medium,
+                                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                            style = MaterialTheme.typography.bodyMedium
                                         )
-                                        Spacer(Modifier.width(10.dp))
-                                        Text(item.label, color = Green)
-                                    }
-                                    LinearProgressIndicator(
-                                        progress = { item.progress / 100f },
-                                        modifier = Modifier.fillMaxWidth()
-                                    )
-                                    Text(item.status + " · " + item.progress + "%",
-                                        color = Soft, style = MaterialTheme.typography.bodySmall)
-                                    if (item.status == "完成") {
-                                        Text("點一下此列即可播放", color = Green,
-                                            style = MaterialTheme.typography.bodySmall)
-                                        if (item.bytes > 0L) {
-                                            Text("已儲存 " + Mp4Ranges.label(item.bytes),
-                                                color = Soft, style = MaterialTheme.typography.bodySmall)
-                                        }
-                                    }
-                                    if (item.error.isNotBlank()) {
-                                        Text(item.error, color = Color(0xFFFFBC92),
-                                            style = MaterialTheme.typography.bodySmall)
-                                    }
-                                    if (item.repairStatus.isNotBlank()) {
-                                        Text(item.repairStatus, color = if (item.repairStatus.startsWith("修復失敗"))
-                                            Color(0xFFFFBC92) else Green,
-                                            style = MaterialTheme.typography.bodySmall)
-                                        if (item.repairProgress in 1..99) {
+                                        val sizeText = if (item.bytes > 0L)
+                                            " · " + Mp4Ranges.label(item.bytes) else ""
+                                        Text(
+                                            (if (item.status == "完成") "完成" else
+                                                item.status + " " + item.progress + "%") +
+                                                sizeText + " · " + item.label,
+                                            color = Soft, maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                        if (running || item.repairProgress in 1..99) {
+                                            Spacer(Modifier.height(4.dp))
                                             LinearProgressIndicator(
-                                                progress = { item.repairProgress / 100f },
+                                                progress = {
+                                                    (if (item.repairProgress in 1..99)
+                                                        item.repairProgress else item.progress) / 100f
+                                                },
                                                 modifier = Modifier.fillMaxWidth()
                                             )
                                         }
-                                    }
-                                    if (item.kind == "hls" && item.progress in 94..99 &&
-                                        item.status !in setOf("完成", "失敗", "已暫停")) {
-                                        Text("影片片段已下載，正在整理快轉索引或寫入手機。長片可能需要一些時間。",
-                                            color = Soft, style = MaterialTheme.typography.bodySmall)
-                                    }
-                                    Row(horizontalArrangement = Arrangement.End) {
-                                        when (item.status) {
-                                            "完成" -> {
-                                                TextButton(onClick = { playDownloaded(item) }) {
-                                                    Text("播放")
-                                                }
-                                            }
-                                            "已暫停", "失敗", "待儲存" -> TextButton(onClick = {
-                                                DownloadService.start(context, item.id)
-                                            }) { Text("繼續") }
-                                            else -> TextButton(onClick = {
-                                                DownloadService.pause(context, item.id)
-                                            }) { Text("暫停") }
+                                        if (item.error.isNotBlank() && item.status != "完成") {
+                                            Text(item.error, color = Color(0xFFFFBC92),
+                                                maxLines = 2, overflow = TextOverflow.Ellipsis,
+                                                style = MaterialTheme.typography.labelSmall)
                                         }
-                                        if (item.kind == "hls" && item.progress in 94..99 &&
-                                            item.status !in setOf("完成", "失敗", "已暫停")) {
-                                            TextButton(onClick = {
-                                                DownloadService.pause(context, item.id)
-                                                DownloadService.start(context, item.id)
-                                            }) { Text("重試整理") }
+                                    }
+                                    when (item.status) {
+                                        "完成" -> IconButton(onClick = { playDownloaded(item) }) {
+                                            Icon(Icons.Default.PlayArrow, "播放", tint = Green)
                                         }
-                                        TextButton(onClick = {
-                                            deleteVideo(context, item)
-                                            downloads = DownloadStore.read(context)
-                                        }) { Text("刪除", color = Color(0xFFFFB1A8)) }
+                                        "已暫停", "失敗", "待儲存" -> IconButton(onClick = {
+                                            DownloadService.start(context, item.id)
+                                        }) { Icon(Icons.Default.PlayArrow, "繼續", tint = Green) }
+                                        else -> IconButton(onClick = {
+                                            DownloadService.pause(context, item.id)
+                                        }) { Icon(Icons.Default.Pause, "暫停", tint = Green) }
+                                    }
+                                    IconButton(onClick = {
+                                        deleteVideo(context, item)
+                                        downloads = DownloadStore.read(context)
+                                    }) {
+                                        Icon(Icons.Default.Delete, "刪除",
+                                            tint = Color(0xFFFFB1A8))
                                     }
                                 }
                             }
@@ -581,6 +541,44 @@ fun RootScreen(shared: String) {
                     }
                 }
             }
+        }
+    }
+}
+
+
+/** Small preview frame of a finished download, read from the saved video. */
+@Composable
+private fun DownloadThumb(item: DownloadRecord) {
+    val context = LocalContext.current
+    val frame by produceState<android.graphics.Bitmap?>(null, item.id, item.uri, item.status) {
+        value = if (item.status != "完成" || item.uri.isBlank()) null else
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    val retriever = android.media.MediaMetadataRetriever()
+                    try {
+                        retriever.setDataSource(context, Uri.parse(item.uri))
+                        retriever.getFrameAtTime(1_000_000L,
+                            android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                            ?.let { android.graphics.Bitmap.createScaledBitmap(
+                                it, 160, (160f * it.height / it.width).toInt()
+                                    .coerceAtLeast(1), true) }
+                    } finally {
+                        runCatching { retriever.release() }
+                    }
+                }.getOrNull()
+            }
+    }
+    Box(
+        Modifier.size(width = 80.dp, height = 56.dp).clip(RoundedCornerShape(8.dp))
+            .background(Color(0xFF0B1826)),
+        contentAlignment = Alignment.Center
+    ) {
+        val bitmap = frame
+        if (bitmap != null) {
+            Image(bitmap.asImageBitmap(), null, Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop)
+        } else {
+            Icon(Icons.Default.Movie, null, tint = Soft)
         }
     }
 }
