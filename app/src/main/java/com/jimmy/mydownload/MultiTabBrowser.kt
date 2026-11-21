@@ -2192,6 +2192,9 @@ fun MultiTabBrowser(
         }
     }
 
+    // Popup windows (e.g. X's third-party login) and the tab that opened them.
+    val popupParents = remember(context) { HashMap<String, String>() }
+
     fun closeTab(id: String) {
         val index = tabs.indexOfFirst { it.id == id }
         if (index < 0) return
@@ -2229,6 +2232,15 @@ fun MultiTabBrowser(
         val parent = tabs.firstOrNull { it.id == parentId }
         if (parent != null) selectTab(parent)
         closeTab(tab.id)
+        return true
+    }
+
+    /** Close a login/popup tab and return to the page that opened it. */
+    fun closePopupTab(id: String): Boolean {
+        val parentId = popupParents.remove(id) ?: return false
+        val parent = tabs.firstOrNull { it.id == parentId }
+        if (parent != null) selectTab(parent)
+        closeTab(id)
         return true
     }
 
@@ -2458,12 +2470,17 @@ fun MultiTabBrowser(
                 if (!isUserGesture || resultMsg == null) return false
                 val transport = resultMsg.obj as? WebView.WebViewTransport ?: return false
                 val next = addTab() ?: return false
+                popupParents[next.id] = tab.id
                 // WebViewTransport requires a never-navigated WebView.
                 val child = createWebView(next, initialLoad = false)
                 webViews[next.id] = child
                 transport.webView = child
                 resultMsg.sendToTarget()
                 return true
+            }
+
+            override fun onCloseWindow(window: WebView?) {
+                web.post { closePopupTab(tab.id) }
             }
 
             override fun onShowCustomView(view: View?, callback: CustomViewCallback?) {
@@ -2584,7 +2601,10 @@ fun MultiTabBrowser(
     fun goBackPreservingScroll() {
         if (closeViewerTab()) return
         val web = currentWebView() ?: return
-        if (!web.canGoBack()) return
+        if (!web.canGoBack()) {
+            closePopupTab(selected.id)
+            return
+        }
         captureScroll(web, selected)
         val list = web.copyBackForwardList()
         val target = if (list.currentIndex > 0)
@@ -2959,7 +2979,8 @@ fun MultiTabBrowser(
     }
 
     BackHandler(visible && (browserVideoFullscreen || fullscreenView != null ||
-        selected.canBack || selected.parentTabId != null)) {
+        selected.canBack || selected.parentTabId != null ||
+            popupParents.containsKey(selected.id))) {
         when {
             fullscreenView != null -> currentWebView()?.webChromeClient?.onHideCustomView()
             browserVideoFullscreen -> setVideoFullscreen(false)
@@ -2978,7 +2999,8 @@ fun MultiTabBrowser(
             // X-only app: no address bar, no tabs. Every action is one tap.
             IconButton(
                 onClick = { goBackPreservingScroll() },
-                enabled = selected.canBack || selected.parentTabId != null,
+                enabled = selected.canBack || selected.parentTabId != null ||
+                    popupParents.containsKey(selected.id),
                 modifier = Modifier.size(46.dp)
             ) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, "上一頁",
