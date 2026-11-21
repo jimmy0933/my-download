@@ -263,6 +263,19 @@ private val X_DISPLAY_SCRIPT = """
     'a[href="/compose/post"]', 'a[href^="/compose/post?"]',
     'a[href="/compose/tweet"]', 'a[href^="/compose/tweet?"]'
   ];
+  // X-only app: X's own bottom navigation bar and the floating compose button
+  // are always hidden (the app toolbar replaces them).
+  selectors.push(
+    'a[href^="/compose"]', '[data-testid*="NewTweet" i]',
+    '[data-testid*="FloatingAction" i]',
+    '[aria-label="發佈"]:is(a,button,[role="link"],[role="button"])',
+    '[aria-label="Post" i]:is(a[href^="/compose"],button[data-testid*="Tweet" i])',
+    '[data-testid="BottomBar"]', '[data-testid="BottomNav"]',
+    'nav:has([data-testid^="AppTabBar_"])',
+    'nav:has(a[href="/home"]):has(a[href^="/notifications"])',
+    '[role="navigation"]:has(a[href="/home"]):has(a[href^="/notifications"])',
+    'nav[aria-label="Bottom navigation" i]'
+  );
   if (flags[0]) selectors.push('[data-testid="reply"]');
   if (flags[1]) selectors.push('[data-testid="retweet"]', '[data-testid="unretweet"]');
   if (flags[2]) selectors.push(
