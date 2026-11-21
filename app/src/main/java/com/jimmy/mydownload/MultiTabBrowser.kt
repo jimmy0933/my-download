@@ -556,9 +556,16 @@ private val X_DISPLAY_SCRIPT = """
   // Skipped on video viewer routes, whose own controls may also be fixed.
   if (!/\/status\/\d+\/(?:mediaviewer|video\/\d+|photo\/\d+)\/?$/.test(location.pathname) &&
       !document.querySelector('[data-testid="vss-scroll-view"],[data-testid="immersive-viewer"]')) {
+    const fabNow = performance.now();
+    const marked = document.querySelector('[data-mydownload-fab]');
+    if (!marked && fabNow - (window.__mydownloadFabProbeAt || 0) > 15000) {
+      window.__mydownloadFabProbeAt = fabNow;
+    } else {
+      return;
+    }
     const seen = new Set();
-    for (let dx = 10; dx <= 110; dx += 15) {
-      for (let dy = 30; dy <= 190; dy += 15) {
+    for (let dx = 10; dx <= 110; dx += 25) {
+      for (let dy = 30; dy <= 190; dy += 25) {
         const hit = document.elementFromPoint(innerWidth - dx, innerHeight - dy);
         if (!hit || hit.closest('article,header,nav,[role="navigation"]')) continue;
         // Outermost small ancestor around the hit: the button itself or its wrapper.
@@ -904,8 +911,20 @@ private val X_VIDEO_NATIVE_ACTION_VISIBILITY_SCRIPT = """
   // Every 950ms WebView refresh replaces this function with current
   // preferences. Observers/listeners always call the newest scan closure.
   state.refresh=scan;
+  // X mutates class/style on the feed constantly while scrolling. Scanning the whole
+  // DOM for viewer buttons on every burst made list scrolling choppy, so do nothing
+  // unless a video viewer (route or dialog) can actually be open.
+  const viewerPossible=()=>
+    /\/status\/\d+\/(?:mediaviewer|video\/\d+|photo\/\d+)\/?$/.test(location.pathname) ||
+    !!document.querySelector('[data-testid="vss-scroll-view"],[data-testid="immersive-viewer"],' +
+      '#layers [role="dialog"]');
   const schedule=()=>{
     if(state.scheduled)return;
+    if(!viewerPossible()){
+      if(state.hadViewer){state.hadViewer=false;clearAll();}
+      return;
+    }
+    state.hadViewer=true;
     state.scheduled=true;
     // The carousel rewrites style/class on every animation frame while the
     // user swipes between posts. Scanning each frame (querySelectorAll +
@@ -2694,6 +2713,17 @@ fun MultiTabBrowser(
             return
         }
         captureScroll(web, selected)
+        val fromUrl = selected.url
+        val fromY = web.scrollY
+        for (delay in longArrayOf(400L, 1500L, 3500L)) {
+            web.postDelayed({
+                AppLog.log("返回", "從=" + fromUrl.takeLast(40) + " 前Y=" + fromY +
+                    " 現在=" + (web.url ?: "").takeLast(40) + " Y=" + web.scrollY +
+                    " 已存=" + (selected.scrollByUrl.entries.firstOrNull {
+                        it.key != fromUrl
+                    }?.value?.native ?: -1) + " 延遲=" + delay)
+            }, delay)
+        }
         val list = web.copyBackForwardList()
         val target = if (list.currentIndex > 0)
             list.getItemAtIndex(list.currentIndex - 1)?.url else null
@@ -3009,18 +3039,6 @@ fun MultiTabBrowser(
                                 lastLayoutDiag = line
                                 lastLayoutDiagAt = System.currentTimeMillis()
                                 AppLog.log("版面", line)
-                            }
-                        }
-                    }
-                    if (heavyTick && !browserVideoFullscreen &&
-                        BrowserVideoDiscovery.isXPage(selected.url) &&
-                        !selected.url.contains("/mediaviewer")) {
-                        browser.evaluateJavascript(X_CORNER_DIAG_SCRIPT) { raw ->
-                            val now = System.currentTimeMillis()
-                            if (raw != lastCornerDiag || now - lastCornerDiagAt > 30_000) {
-                                lastCornerDiag = raw
-                                lastCornerDiagAt = now
-                                AppLog.log("角落", raw.take(1500))
                             }
                         }
                     }
