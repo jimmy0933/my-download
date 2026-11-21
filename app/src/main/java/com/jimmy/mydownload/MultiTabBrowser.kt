@@ -1657,7 +1657,8 @@ private val X_VIEW_IN_TAB_SCRIPT = """
     const mb=mediaButton(e.target);
     let player=null;
     if(mb&&article.contains(mb)&&
-        article.querySelector('[data-testid="videoPlayer"],video')){
+        article.querySelector('[data-testid="videoPlayer"],[data-testid="videoComponent"],'+
+          'video,[data-testid="playButton"],[aria-label*="播放"],[aria-label*="Play" i]')){
       player=mb;
     }else{
       if(interactive(e.target))return null;
@@ -2255,7 +2256,7 @@ fun MultiTabBrowser(
                             // a back (the log showed it jumping ~2900px up around 1.5s
                             // and recovering ~2s later), so only reveal once it has
                             // stayed here for a while.
-                            if (++stable >= 6) done = true
+                            if (++stable >= 4) done = true
                         } else {
                             // Still at the top, or X pushed the list away: put it back.
                             stable = 0
@@ -2349,6 +2350,7 @@ fun MultiTabBrowser(
             "document.querySelectorAll('video').forEach(function(v){try{v.pause()}catch(e){}})",
             null
         )
+        AppLog.log("返回", "點清單影片 → 開檢視分頁 " + url.takeLast(30))
         val child = addTab(url, "X 影片") ?: return
         child.parentTabId = parent.id
     }
@@ -2736,28 +2738,38 @@ fun MultiTabBrowser(
         captureScroll(web, selected)
         val fromUrl = selected.url
         val fromY = web.scrollY
-        for (delay in longArrayOf(400L, 1500L, 3500L)) {
+        val list = web.copyBackForwardList()
+        // Swiping between videos in X's viewer pushes one history entry per clip, so a
+        // single Back landed on the previous clip instead of the list (the log showed
+        // "back" ending on another /mediaviewer page). Skip every viewer entry.
+        var steps = 1
+        if (XMediaNavigation.isMediaViewer(fromUrl)) {
+            var i = list.currentIndex - 1
+            while (i >= 0 &&
+                XMediaNavigation.isMediaViewer(list.getItemAtIndex(i)?.url.orEmpty())) i--
+            if (i >= 0) steps = list.currentIndex - i
+        }
+        val target = if (list.currentIndex - steps >= 0)
+            list.getItemAtIndex(list.currentIndex - steps)?.url else null
+        val savedY = target?.let { selected.scrollByUrl[it]?.native } ?: -1
+        AppLog.log("返回", "按返回 從=" + fromUrl.takeLast(36) + " 退" + steps + "步到=" +
+            (target ?: "").takeLast(30) + " 已存Y=" + savedY)
+        for (delay in longArrayOf(500L, 1500L, 3000L)) {
             web.postDelayed({
-                AppLog.log("返回", "從=" + fromUrl.takeLast(40) + " 前Y=" + fromY +
-                    " 現在=" + (web.url ?: "").takeLast(40) + " Y=" + web.scrollY +
-                    " 已存=" + (selected.scrollByUrl.entries.firstOrNull {
-                        it.key != fromUrl
-                    }?.value?.native ?: -1) + " 延遲=" + delay)
+                AppLog.log("返回", "現在=" + (web.url ?: "").takeLast(30) + " Y=" + web.scrollY +
+                    " 目標Y=" + savedY + " 延遲=" + delay)
             }, delay)
         }
-        val list = web.copyBackForwardList()
-        val target = if (list.currentIndex > 0)
-            list.getItemAtIndex(list.currentIndex - 1)?.url else null
         selected.restoreTarget = target?.takeIf { BrowserAddress.isWebUrl(it) }
-        selected.restoreGentle = XMediaNavigation.isMediaViewer(selected.url)
+        selected.restoreGentle = XMediaNavigation.isMediaViewer(fromUrl)
         if (selected.restoreGentle &&
             target?.let { selected.scrollByUrl[it]?.hasPosition() } == true) {
             // Hide X's momentary jump-to-top while the list is rebuilt; it is
-            // revealed again as soon as the position is right (hard cap 2.5s).
+            // revealed again as soon as the position is right (hard cap 6s).
             web.alpha = 0f
             web.postDelayed({ web.alpha = 1f }, 6000L)
         } else selected.restoreGentle = false
-        web.goBack()  // Reuse WebView's history: never loadUrl() for Back.
+        web.goBackOrForward(-steps)  // Reuse WebView's history: never loadUrl() for Back.
     }
 
     fun navigate(url: String) {
