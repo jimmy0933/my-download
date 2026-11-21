@@ -2389,6 +2389,23 @@ fun MultiTabBrowser(
         android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ toast.cancel() }, 1000L)
     }
 
+    /**
+     * List pages (Home / Bookmarks / Likes) must never lead to another website, even when
+     * X's own script navigates there (ads), not only when a plain link is tapped.
+     */
+    fun isBlockedExternal(tab: TabViewState, target: String): Boolean {
+        val scheme = target.substringBefore(':').lowercase()
+        if (scheme != "http" && scheme != "https") return false
+        val host = runCatching { java.net.URI(target).host.orEmpty().lowercase() }.getOrDefault("")
+        if (host.isBlank()) return false
+        if (host == "x.com" || host.endsWith(".x.com") || host == "twitter.com" ||
+            host.endsWith(".twitter.com") || host == "twimg.com" || host.endsWith(".twimg.com")) return false
+        val base = popupParents[tab.id]?.let { id -> tabs.firstOrNull { it.id == id } } ?: tab
+        if (!BrowserVideoDiscovery.isXPage(base.url)) return false
+        val path = runCatching { java.net.URI(base.url).path.orEmpty() }.getOrDefault("")
+        return Regex("^/(?:home|i/bookmarks(?:/\\d+)?|[^/]+/likes)/?$").matches(path)
+    }
+
     fun closeTab(id: String) {
         val index = tabs.indexOfFirst { it.id == id }
         if (index < 0) return
@@ -2562,6 +2579,14 @@ fun MultiTabBrowser(
                     }
                     return true
                 }
+                if (isBlockedExternal(tab, url)) {
+                    web.post {
+                        AppLog.log("點擊", "擋下外部跳轉 " + url.take(60))
+                        showBlockedLinkToast()
+                        if (popupParents.containsKey(tab.id)) closePopupTab(tab.id)
+                    }
+                    return true
+                }
                 if (blockAds && AdPageFilter.blocks(url)) return true
                 // Unlike the previous AV01-only browser, allow all regular web
                 // navigation, including x.com and OAuth redirects, in this tab.
@@ -2594,6 +2619,13 @@ fun MultiTabBrowser(
 
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                 super.onPageStarted(view, url, favicon)
+                if (url != null && isBlockedExternal(tab, url)) {
+                    view?.stopLoading()
+                    AppLog.log("點擊", "擋下外部頁面載入 " + url.take(60))
+                    showBlockedLinkToast()
+                    if (popupParents.containsKey(tab.id)) closePopupTab(tab.id)
+                    return
+                }
                 val mediaSwipe = url != null &&
                     XMediaNavigation.isMediaSwipe(tab.url, url)
                 if (url != null) updateUrl(url)
