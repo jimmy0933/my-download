@@ -2229,25 +2229,34 @@ fun MultiTabBrowser(
             // position (X restored it, or we scroll it once from the top),
             // reveal it, so the intermediate "jump to top" is never visible.
             var tries = 0
+            var stable = 0
             val step = object : Runnable {
                 override fun run() {
                     val stale = tab.restoreSequence != token || tab.url != url
                     var done = stale
                     if (!stale) {
-                        if (web.scrollY >= 120) {
-                            done = true // X restored its own scroll position
+                        val y = web.scrollY
+                        if (point.native <= 0) {
+                            done = true
+                        } else if (kotlin.math.abs(y - point.native) <= 300) {
+                            // Right place. X keeps re-measuring the posts above after
+                            // a back (the log showed it jumping ~2900px up around 1.5s
+                            // and recovering ~2s later), so only reveal once it has
+                            // stayed here for a while.
+                            if (++stable >= 6) done = true
                         } else {
-                            if (point.native > 0) web.scrollTo(0, point.native)
-                            if (point.native <= 0 || web.scrollY >= point.native - 60) {
-                                if (point.page > 0 || point.panel > 0) {
-                                    web.evaluateJavascript(BrowserScroll.restoreScript(point), null)
-                                }
-                                done = true
-                            }
+                            // Still at the top, or X pushed the list away: put it back.
+                            stable = 0
+                            web.scrollTo(0, point.native)
                         }
-                        if (!done && ++tries >= 20) done = true
+                        if (!done && ++tries >= 48) done = true
                     }
                     if (done) {
+                        if (!stale && point.native > 0 &&
+                            kotlin.math.abs(web.scrollY - point.native) <= 300 &&
+                            (point.page > 0 || point.panel > 0)) {
+                            web.evaluateJavascript(BrowserScroll.restoreScript(point), null)
+                        }
                         web.alpha = 1f
                         if (!stale && tab.restoreTarget == url) tab.restoreTarget = null
                     } else web.postDelayed(this, 100L)
@@ -2734,7 +2743,7 @@ fun MultiTabBrowser(
             // Hide X's momentary jump-to-top while the list is rebuilt; it is
             // revealed again as soon as the position is right (hard cap 2.5s).
             web.alpha = 0f
-            web.postDelayed({ web.alpha = 1f }, 2500L)
+            web.postDelayed({ web.alpha = 1f }, 6000L)
         } else selected.restoreGentle = false
         web.goBack()  // Reuse WebView's history: never loadUrl() for Back.
     }
