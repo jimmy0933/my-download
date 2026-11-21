@@ -528,9 +528,34 @@ private val X_DISPLAY_SCRIPT = """
     (mobileButtons.length ?
       '\n@media (max-width: 900px) { ' + mobileButtons.join(',\n') +
       ' { display: none !important; } }' : '') +
+    '\n[data-mydownload-fab="1"] { display: none !important; }' +
     '\n['+viewerViewAttribute+'="1"],['+viewerShareAttribute+'="1"]' +
     ' { visibility: hidden !important; pointer-events: none !important; }';
   if (style.textContent !== css) style.textContent = css;
+
+  // X's floating compose button has no stable selector. Find any small fixed
+  // element near the bottom-right corner instead and mark it for the CSS above.
+  // Skipped on video viewer routes, whose own controls may also be fixed.
+  if (!/\/status\/\d+\/(?:mediaviewer|video\/\d+|photo\/\d+)\/?$/.test(location.pathname) &&
+      !document.querySelector('[data-testid="vss-scroll-view"],[data-testid="immersive-viewer"]')) {
+    const seen = new Set();
+    for (let dx = 10; dx <= 100; dx += 18) {
+      for (let dy = 40; dy <= 170; dy += 18) {
+        const hit = document.elementFromPoint(innerWidth - dx, innerHeight - dy);
+        for (let el = hit; el && el !== document.body; el = el.parentElement) {
+          if (seen.has(el)) break;
+          seen.add(el);
+          if (getComputedStyle(el).position !== 'fixed') continue;
+          const r = el.getBoundingClientRect();
+          if (r.width > 20 && r.width <= 100 && r.height > 20 && r.height <= 100 &&
+              r.right > innerWidth - 120 && r.bottom > innerHeight - 200 &&
+              !el.querySelector('video,[data-testid="like"],[data-testid="bookmark"]'))
+            el.setAttribute('data-mydownload-fab', '1');
+          break;
+        }
+      }
+    }
+  }
 })()
 """.trimIndent()
 
