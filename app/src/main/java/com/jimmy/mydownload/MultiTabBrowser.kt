@@ -2729,6 +2729,35 @@ fun MultiTabBrowser(
         } else browser.loadUrl(url)
     }
 
+    /**
+     * Go to an X path (e.g. /home) inside the running page, like tapping X's own link,
+     * so the app does not reload the whole site. Falls back to a normal load if the
+     * page did not move there.
+     */
+    fun spaNavigate(path: String) {
+        val web = currentWebView()
+        if (web == null || !BrowserVideoDiscovery.isXPage(selected.url)) {
+            navigate("https://x.com" + path)
+            return
+        }
+        val js = "(function(){var p='" + path + "';" +
+            "var a=document.querySelector('a[href=\"'+p+'\"]');" +
+            "if(a){a.click();return 'click';}" +
+            "history.pushState({},'',p);" +
+            "window.dispatchEvent(new PopStateEvent('popstate',{state:{}}));" +
+            "return 'push';})()"
+        web.evaluateJavascript(js, null)
+        web.postDelayed({
+            if (currentWebView() !== web) return@postDelayed
+            web.evaluateJavascript("location.pathname") { raw ->
+                val now = raw?.trim('"').orEmpty()
+                if (!now.startsWith(path) && currentWebView() === web) {
+                    navigate("https://x.com" + path)
+                }
+            }
+        }, 1500L)
+    }
+
     fun offerDetectedVideo(video: VisibleVideo? = null, strictActive: Boolean = false) {
         val page = selected.url
         if (strictActive && video == null) {
@@ -3109,14 +3138,14 @@ fun MultiTabBrowser(
                     modifier = Modifier.size(24.dp))
             }
             IconButton(
-                onClick = { navigate("https://x.com/home") },
+                onClick = { spaNavigate("/home") },
                 modifier = Modifier.size(46.dp)
             ) {
                 Icon(Icons.Default.Home, "X 首頁",
                     tint = BrowserGreen, modifier = Modifier.size(26.dp))
             }
             IconButton(
-                onClick = { navigate("https://x.com/i/bookmarks") },
+                onClick = { spaNavigate("/i/bookmarks") },
                 modifier = Modifier.size(46.dp)
             ) {
                 Icon(Icons.Default.Bookmark, "X 收藏",
