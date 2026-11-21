@@ -1846,7 +1846,10 @@ private val X_MEDIAVIEWER_INFO_SCRIPT = """
       // Whatever is under the finger: a small square image (or background image) in the
       // lower part of the screen is the avatar. Not tied to the image URL, which is a
       // placeholder on a freshly loaded first clip.
-      const lower=y>innerHeight*0.45;
+      // Landscape is wide and short: the overlay starts higher and spreads further right.
+      const land=innerWidth>innerHeight*1.12;
+      const lower=y>innerHeight*(land?0.25:0.45);
+      const leftZone=x<innerWidth*(land?0.5:0.4);
       let hit=false;
       const seen=[];
       for(const c of document.elementsFromPoint(x,y)){
@@ -1855,13 +1858,13 @@ private val X_MEDIAVIEWER_INFO_SCRIPT = """
           Math.abs(r.width-r.height)<=8;
         const css=getComputedStyle(c);
         const img=c.tagName==='IMG'||/url\(/.test(css.backgroundImage||'');
-        if(lower&&x<innerWidth*0.4)seen.push(c.tagName+(sq?'□':'')+(img?'●':''));
+        if(lower&&leftZone)seen.push(c.tagName+(sq?'□':'')+(img?'●':''));
         if(sq&&img){hit=true;break;}
       }
-      if(lower&&x<innerWidth*0.4){
-        try{console.log('[MDVIT] 頭像探測 '+(hit?'命中':'沒中')+' '+seen.join('>'));}catch(_){}
+      if(lower&&leftZone){
+        try{console.log('[MDVIT] 頭像探測 '+(land?'橫 ':'直 ')+(hit?'命中':'沒中')+' '+seen.join('>'));}catch(_){}
       }
-      if(!hit)return;
+      if(!hit||!lower||!leftZone)return;
       e.preventDefault();e.stopImmediatePropagation();
       const handle=m[1];
       const a=Array.from(document.querySelectorAll('a[href]')).find(el=>
@@ -1886,7 +1889,7 @@ private val X_MEDIAVIEWER_INFO_SCRIPT = """
     const r=badge.getBoundingClientRect();
     const card=Math.floor((r.top+r.bottom)/2/innerHeight);
     const within=((r.top+r.bottom)/2)-card*innerHeight;
-    if(r.width<2||within<innerHeight*0.35)continue;
+    if(r.width<2||within<innerHeight*(innerWidth>innerHeight*1.12?0.2:0.35))continue;
     badge.setAttribute('data-mydownload-hide-info','1');
     n++;
   }
@@ -1906,7 +1909,7 @@ private val X_MEDIAVIEWER_INFO_SCRIPT = """
     // The overlay sits in the lower part of a card; ignore the top bar area.
     const card=Math.floor((r.top+r.bottom)/2/innerHeight);
     const within=((r.top+r.bottom)/2)-card*innerHeight;
-    if(r.width<2||r.height<2||within<innerHeight*0.35)continue;
+    if(r.width<2||r.height<2||within<innerHeight*(innerWidth>innerHeight*1.12?0.2:0.35))continue;
     // The Follow button goes too: hide the whole button, not just its label.
     const target=isFollow?(el.closest('button,[role="button"]')||el):el;
     target.setAttribute('data-mydownload-hide-info','1');
