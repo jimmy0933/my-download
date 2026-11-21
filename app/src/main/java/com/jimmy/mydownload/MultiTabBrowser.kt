@@ -1645,14 +1645,26 @@ private val X_VIEW_IN_TAB_SCRIPT = """
     '[role="slider"],[role="menuitem"],[role="menu"],[role="switch"],'+
     '#mydownload-optional-x-progress,[data-testid="User-Name"],'+
     '[data-testid="Tweet-User-Avatar"],[data-testid="socialContext"]');
+  // X now lays a "view media" button over the video, which used to count as some
+  // other interactive element and made this handler skip the tap.
+  const mediaButton=el=>el.closest(
+    'button[aria-label*="查看媒體"],button[aria-label*="View media" i],'+
+    'button[aria-label*="媒體"],button[aria-label*="media" i]');
   const statusId=e=>{
-    if(!listPage()||!(e.target instanceof Element)||interactive(e.target))
-      return null;
+    if(!listPage()||!(e.target instanceof Element))return null;
     const article=e.target.closest('article[data-testid="tweet"]');
     if(!article)return null;
-    const player=e.target.closest('[data-testid="videoPlayer"],'+
-      '[data-testid="videoComponent"]')||
-      (e.target.tagName==='VIDEO'?e.target:null);
+    const mb=mediaButton(e.target);
+    let player=null;
+    if(mb&&article.contains(mb)&&
+        article.querySelector('[data-testid="videoPlayer"],video')){
+      player=mb;
+    }else{
+      if(interactive(e.target))return null;
+      player=e.target.closest('[data-testid="videoPlayer"],'+
+        '[data-testid="videoComponent"]')||
+        (e.target.tagName==='VIDEO'?e.target:null);
+    }
     if(!player||!article.contains(player))return null;
     // The post's own timestamp link, never a quoted post's.
     for(const time of article.querySelectorAll('a[href*="/status/"] time')){
@@ -1689,7 +1701,7 @@ private val X_VIEW_IN_TAB_SCRIPT = """
   },{capture:true,passive:false});
   document.addEventListener('click',e=>{
     if(performance.now()<swallowClickUntil&&e.target instanceof Element&&
-        !interactive(e.target)){
+        (mediaButton(e.target)||!interactive(e.target))){
       e.preventDefault();e.stopImmediatePropagation();
     }
   },{capture:true});
