@@ -1705,9 +1705,10 @@ private val X_VIEW_IN_TAB_SCRIPT = """
     const s=start;start=null;
     if(!s)return;
     if(e.touches.length!==0||performance.now()-s.time>MAX_TAP_MS){
-      dbg('略過:按太久 '+Math.round(performance.now()-s.time)+'ms');return;
+      try{console.log('[MDVIT] 略過:按太久 '+Math.round(performance.now()-s.time)+'ms');}catch(_){}
+      return;
     }
-    dbg('攔截成功 → 開分頁 '+s.id);
+    try{console.log('[MDVIT] 攔截成功 → 開分頁 '+s.id);}catch(_){}
     if(e.cancelable)e.preventDefault();
     e.stopImmediatePropagation();
     swallowClickUntil=performance.now()+700;
