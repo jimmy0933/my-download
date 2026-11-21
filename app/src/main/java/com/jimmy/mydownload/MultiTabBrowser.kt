@@ -1684,15 +1684,18 @@ private val X_VIEW_IN_TAB_SCRIPT = """
       const m=/\/status\/(\d+)/.exec(a.getAttribute('href')||'');
       if(m){dbg('命中影片 id='+m[1]);return m[1];}
     }
-    // New X markup: no usable <time> link. Fall back to any link to this post itself
-    // (the stats/analytics link, the share link, ...), never a quoted post's.
+    // New X markup: no usable <time> link. Take any link to a post. A quoted post is a
+    // link-role wrapper INSIDE this article; wrappers outside it are fine.
+    const hrefs=[];
     for(const a of article.querySelectorAll('a[href*="/status/"]')){
-      if(a.closest('[role="link"][tabindex]:not(a)'))continue;
-      const m=/^\/[^\/?#]+\/status\/(\d+)(?:\/(?:analytics|likes|retweets|quotes|reposts))?\/?(?:[?#].*)?$/
-        .exec(a.getAttribute('href')||'');
+      const href=a.getAttribute('href')||'';
+      hrefs.push(href.slice(0,40));
+      const wrap=a.closest('[role="link"][tabindex]:not(a)');
+      if(wrap&&article.contains(wrap)&&wrap!==article)continue;
+      const m=/\/status\/(\d+)/.exec(href);
       if(m){dbg('命中影片(備用連結) id='+m[1]);return m[1];}
     }
-    dbg('略過:找不到貼文連結 數量='+article.querySelectorAll('a[href*="/status/"]').length);
+    dbg('略過:找不到貼文連結 '+hrefs.join(' | '));
     return null;
   };
   // Raw diagnostics: do touch events reach this script at all, and does it throw?
