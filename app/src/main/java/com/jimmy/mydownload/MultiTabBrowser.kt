@@ -599,8 +599,25 @@ private val X_VIDEO_NATIVE_ACTION_VISIBILITY_SCRIPT = """
     '['+keepAttr+'="1"]{visibility:visible!important;'+
     'opacity:1!important;pointer-events:auto!important;}' +
     '['+keepDisplayAttr+'="1"]{'+
-    'display:var(--mydownload-x-original-display,flex)!important;}';
+    'display:var(--mydownload-x-original-display,flex)!important;}' +
+    // /mediaviewer has no vss-scroll-view/immersive-viewer root, so the scan
+    // below never finds it and X's idle fade (opacity:0 on the action row, as
+    // with the seek bar) left Like/Bookmark invisible in portrait. Keep the
+    // action row and the buttons themselves opaque on that route; ancestors
+    // that contain the video are excluded so the player is untouched.
+    'html[data-mydownload-actions-route="1"] :is(' +
+      '[data-testid="like"],[data-testid="unlike"],[data-testid="bookmark"],' +
+      '[data-testid="removeBookmark"],[data-testid="reply"],' +
+      '[data-testid="retweet"],[data-testid="unretweet"]),' +
+    'html[data-mydownload-actions-route="1"] ' +
+      ':is(div,span,section,footer,nav):has(' +
+      '[data-testid="like"],[data-testid="unlike"],[data-testid="bookmark"],' +
+      '[data-testid="removeBookmark"]):not(:has(video)){' +
+      'opacity:1!important;visibility:visible!important;}';
   if(sheet.textContent!==css)sheet.textContent=css;
+  if(/\/status\/\d+\/mediaviewer\/?$/.test(location.pathname))
+    document.documentElement.setAttribute('data-mydownload-actions-route','1');
+  else document.documentElement.removeAttribute('data-mydownload-actions-route');
 
   const clearAll=()=>{
     document.querySelectorAll('['+likeAttr+'],['+bookmarkAttr+'],'+
