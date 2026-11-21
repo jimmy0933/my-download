@@ -1843,13 +1843,23 @@ private val X_MEDIAVIEWER_INFO_SCRIPT = """
       const m=/^\/([^\/?#]+)\/status\/\d+\/mediaviewer\/?$/.exec(location.pathname);
       if(!m||m[1]==='i')return;
       const x=e.clientX,y=e.clientY;
-      const cands=document.querySelectorAll(
-        'img[src*="profile_images"],[style*="profile_images"]');
+      // Whatever is under the finger: a small square image (or background image) in the
+      // lower part of the screen is the avatar. Not tied to the image URL, which is a
+      // placeholder on a freshly loaded first clip.
+      const lower=y>innerHeight*0.45;
       let hit=false;
-      for(const c of cands){
+      const seen=[];
+      for(const c of document.elementsFromPoint(x,y)){
         const r=c.getBoundingClientRect();
-        if(r.width<16||r.width>90||r.height<16||r.height>90)continue;
-        if(x>=r.left&&x<=r.right&&y>=r.top&&y<=r.bottom){hit=true;break;}
+        const sq=r.width>=24&&r.width<=90&&r.height>=24&&r.height<=90&&
+          Math.abs(r.width-r.height)<=8;
+        const css=getComputedStyle(c);
+        const img=c.tagName==='IMG'||/url\(/.test(css.backgroundImage||'');
+        if(lower&&x<innerWidth*0.4)seen.push(c.tagName+(sq?'□':'')+(img?'●':''));
+        if(sq&&img){hit=true;break;}
+      }
+      if(lower&&x<innerWidth*0.4){
+        try{console.log('[MDVIT] 頭像探測 '+(hit?'命中':'沒中')+' '+seen.join('>'));}catch(_){}
       }
       if(!hit)return;
       e.preventDefault();e.stopImmediatePropagation();
@@ -1867,8 +1877,21 @@ private val X_MEDIAVIEWER_INFO_SCRIPT = """
     '[aria-label*="喜歡"],[aria-label*="書籤"],[aria-label*="Like" i],[aria-label*="Bookmark" i]';
   const more=/^(?:顯示更多|显示更多|Show more|…|\.\.\.|翻譯自.*|翻译自.*|Translated from.*|顯示原文|显示原文|Show original)$/i;
   const follow=/^(?:跟隨|跟随|關注|关注|Follow|Following|正在跟隨|正在跟随|已跟隨|已跟随)$/i;
+  // The blue verified tick next to the author name.
+  let n=0;
+  for(const badge of document.querySelectorAll(
+      '[data-testid="icon-verified"],svg[aria-label*="認證"],svg[aria-label*="已驗證"],'+
+      'svg[aria-label*="Verified" i]')){
+    if(badge.hasAttribute('data-mydownload-hide-info'))continue;
+    const r=badge.getBoundingClientRect();
+    const card=Math.floor((r.top+r.bottom)/2/innerHeight);
+    const within=((r.top+r.bottom)/2)-card*innerHeight;
+    if(r.width<2||within<innerHeight*0.35)continue;
+    badge.setAttribute('data-mydownload-hide-info','1');
+    n++;
+  }
   const walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);
-  let n=0,node;
+  let node;
   while((node=walker.nextNode())){
     const text=(node.nodeValue||'').trim();
     if(!text)continue;
