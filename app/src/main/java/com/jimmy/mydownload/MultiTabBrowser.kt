@@ -1835,6 +1835,34 @@ private val X_MEDIAVIEWER_INFO_SCRIPT = """
     st.textContent='[data-mydownload-hide-info="1"]{visibility:hidden!important}';
     (document.head||document.documentElement).appendChild(st);
   }
+  // Tapping the author avatar opens the author's profile (the page path names the author
+  // of the clip on screen). Hit-tested by coordinates because X layers overlays on top.
+  if(!window.__mydownloadAvatarTap){
+    window.__mydownloadAvatarTap=true;
+    document.addEventListener('click',e=>{
+      const m=/^\/([^\/?#]+)\/status\/\d+\/mediaviewer\/?$/.exec(location.pathname);
+      if(!m||m[1]==='i')return;
+      const x=e.clientX,y=e.clientY;
+      const cands=document.querySelectorAll(
+        'img[src*="profile_images"],[style*="profile_images"]');
+      let hit=false;
+      for(const c of cands){
+        const r=c.getBoundingClientRect();
+        if(r.width<16||r.width>90||r.height<16||r.height>90)continue;
+        if(x>=r.left&&x<=r.right&&y>=r.top&&y<=r.bottom){hit=true;break;}
+      }
+      if(!hit)return;
+      e.preventDefault();e.stopImmediatePropagation();
+      const handle=m[1];
+      const a=Array.from(document.querySelectorAll('a[href]')).find(el=>
+        (el.getAttribute('href')||'').toLowerCase()==='/'+handle.toLowerCase());
+      if(a){a.click();return;}
+      try{
+        history.pushState({},'','/'+handle);
+        window.dispatchEvent(new PopStateEvent('popstate',{state:{}}));
+      }catch(_){location.href='/'+handle;}
+    },{capture:true});
+  }
   const keep='button,[role="button"],#mydownload-optional-x-progress,video,'+
     '[aria-label*="喜歡"],[aria-label*="書籤"],[aria-label*="Like" i],[aria-label*="Bookmark" i]';
   const more=/^(?:顯示更多|显示更多|Show more|…|\.\.\.|翻譯自.*|翻译自.*|Translated from.*|顯示原文|显示原文|Show original)$/i;
@@ -2905,6 +2933,16 @@ fun MultiTabBrowser(
     }
 
     fun goBackPreservingScroll() {
+        // A viewer tab that wandered to an author's profile steps back to the clip first.
+        run {
+            val tab = tabs.firstOrNull { it.id == activeId } ?: return@run
+            val web = webViews[tab.id] ?: return@run
+            if (tab.parentTabId != null && web.canGoBack() &&
+                !XMediaNavigation.isMediaViewer(tab.url)) {
+                web.goBack()
+                return
+            }
+        }
         if (closeViewerTab()) return
         val web = currentWebView() ?: return
         if (!web.canGoBack()) {
