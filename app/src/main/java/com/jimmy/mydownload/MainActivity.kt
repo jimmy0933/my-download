@@ -35,8 +35,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.IOException
 
@@ -239,6 +241,30 @@ fun RootScreen(shared: String) {
         while (true) {
             downloads = DownloadStore.read(context)
             delay(900)
+        }
+    }
+
+    // Opening the download manager drops finished entries whose video file was
+    // deleted outside the app, so the list never shows dead items.
+    LaunchedEffect(tab) {
+        if (tab != 1) return@LaunchedEffect
+        val missing = withContext(Dispatchers.IO) {
+            DownloadStore.read(context)
+                .filter { it.status == "完成" && it.uri.isNotBlank() }
+                .filter { record ->
+                    val uri = DownloadStore.contentUri(record) ?: return@filter false
+                    val gone = runCatching {
+                        context.contentResolver.openAssetFileDescriptor(uri, "r")
+                            ?.use { false } ?: true
+                    }.getOrElse { it is java.io.FileNotFoundException ||
+                        it is IllegalArgumentException }
+                    gone
+                }
+                .map { it.id }
+        }
+        if (missing.isNotEmpty()) {
+            missing.forEach { DownloadStore.remove(context, it) }
+            downloads = DownloadStore.read(context)
         }
     }
 
