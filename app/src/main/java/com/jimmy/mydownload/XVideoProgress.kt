@@ -57,7 +57,8 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
   };
   syncRouteFlag();
   document.getElementById('mydownload-optional-native-seek-css')?.remove();
-  const cssId='mydownload-optional-native-seek-css-v2';
+  document.getElementById('mydownload-optional-native-seek-css-v2')?.remove();
+  const cssId='mydownload-optional-native-seek-css-v3';
   if (!document.getElementById(cssId)) {
     const style=document.createElement('style');
     style.id=cssId;
@@ -84,7 +85,7 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
       /* X's /mediaviewer has none of the containers above, so hide the native seek
          bar for the whole route; otherwise it flashes on every swipe until the
          script has found and marked it. Never touch our own progress bar. */
-      html[data-mydownload-hide-x-timeline="1"][data-mydownload-mediaviewer="1"]
+      html[data-mydownload-timeline-pref="1"][data-mydownload-mediaviewer="1"]
       :is(
         [role="slider"]:not([aria-label*="volume" i]):not([aria-label*="音量"]):not([data-testid*="volume" i]),
         input[type="range"]:not([aria-label*="volume" i]):not([aria-label*="音量"]),
@@ -900,10 +901,15 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
   // Markers and observer are active only while the user enables the option.
   // Set the root flag immediately, even before loadedmetadata, so X's next
   // seekbar is hidden by the persistent CSS on its very first paint.
+  // "timeline-pref" mirrors the user's setting and, unlike hide-x-timeline, is never
+  // cleared when the active video is momentarily unknown during a swipe, so the
+  // route-wide /mediaviewer rule keeps hiding X's native bar across clip changes.
   if (settings.hideNative) {
     document.documentElement.setAttribute('data-mydownload-hide-x-timeline','1');
+    document.documentElement.setAttribute('data-mydownload-timeline-pref','1');
   } else {
     clearNative();
+    document.documentElement.removeAttribute('data-mydownload-timeline-pref');
   }
   if(settings.hideAuthor){
     document.documentElement.setAttribute('data-mydownload-hide-x-author','1');
