@@ -276,6 +276,24 @@ private val X_DISPLAY_SCRIPT = """
     '[role="navigation"]:has(a[href="/home"]):has(a[href^="/notifications"])',
     'nav[aria-label="Bottom navigation" i]'
   );
+  // X's /mediaviewer action buttons carry only an aria-label (no data-testid), so
+  // the testid rules above/below never hid them there. Same switches, by label.
+  const mv = 'html[data-mydownload-actions-route="1"] ';
+  if (flags[0]) selectors.push(
+    mv + ':is(button,[role="button"],a)[aria-label*="回覆"]',
+    mv + ':is(button,[role="button"],a)[aria-label*="Repl" i]');
+  if (flags[1]) selectors.push(
+    mv + ':is(button,[role="button"],a)[aria-label*="轉貼"]',
+    mv + ':is(button,[role="button"],a)[aria-label*="轉發"]',
+    mv + ':is(button,[role="button"],a)[aria-label*="轉推"]',
+    mv + ':is(button,[role="button"],a)[aria-label*="Repost" i]',
+    mv + ':is(button,[role="button"],a)[aria-label*="Retweet" i]');
+  if (flags[3] || flags[17]) selectors.push(
+    mv + ':is(button,[role="button"],a)[aria-label*="分享"]',
+    mv + ':is(button,[role="button"],a)[aria-label*="Share" i]');
+  if (flags[2] || flags[16]) selectors.push(
+    mv + ':is(button,[role="button"],a)[aria-label*="觀看"]',
+    mv + ':is(button,[role="button"],a)[aria-label*="View" i]');
   if (flags[0]) selectors.push('[data-testid="reply"]');
   if (flags[1]) selectors.push('[data-testid="retweet"]', '[data-testid="unretweet"]');
   if (flags[2]) selectors.push(

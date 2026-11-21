@@ -428,7 +428,7 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
     root.id='mydownload-optional-x-progress';
     Object.assign(root.style,{
       position:'fixed',left:'12px',right:'12px',
-      bottom:'96px',height:'56px',zIndex:'2147483647',
+      bottom:'60px',height:'56px',zIndex:'2147483647',
       display:'none',alignItems:'center',gap:'7px',
       pointerEvents:'none',background:'transparent',
       boxSizing:'border-box',isolation:'isolate'
@@ -785,7 +785,7 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
   const locateNativeToggle=video=>{
     if(!video)return;
     const vr=video.getBoundingClientRect();
-    const bottom=innerWidth>innerHeight?52:96;
+    const bottom=innerWidth>innerHeight?52:60;
     const barTop=innerHeight-bottom-56;
     const low=Math.max(vr.top+vr.height*.55,barTop-225);
     const high=Math.min(innerHeight-36,barTop+35);
@@ -864,7 +864,7 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
     for(const el of state.authorLinks){
       if(!el.isConnected)state.authorLinks.delete(el);
     }
-    const bottom=innerWidth>innerHeight?52:96;
+    const bottom=innerWidth>innerHeight?52:60;
     const barTop=innerHeight-bottom-56;
     const minY=Math.max(innerHeight*.47,barTop-160);
     const maxY=Math.min(innerHeight-10,barTop+105);
@@ -976,7 +976,7 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
       state.video=video;
       state.autoHideDelay=delay;
       bindVideo(video);
-      state.root.style.bottom=(innerWidth>innerHeight?'52px':'96px');
+      state.root.style.bottom=(innerWidth>innerHeight?'52px':'60px');
       // Do NOT force display:flex during routine React/950ms refresh.
       // Otherwise the bar would reappear immediately after auto hiding.
       if(created||progressVideoChanged||delayChanged)state.revealBar?.();
