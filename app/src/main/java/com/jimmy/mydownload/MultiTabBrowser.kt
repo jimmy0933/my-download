@@ -2167,8 +2167,9 @@ private val X_VIDEO_DOUBLE_TAP_SEEK_SCRIPT = """
   // completed short tap so X never applies its own second seek.
   window.addEventListener('touchstart',e=>{
     tapStart=null;
-    if(e.touches.length!==1||!validTarget(e)||
-        window.__mydownloadMediaZoom?.isZoomed?.()){
+    // Zoomed or not, a stationary two-tap on the left/right side seeks. A pan or pinch
+    // moves more than MAX_MOVE (or uses two fingers), so it never counts as a tap.
+    if(e.touches.length!==1||!validTarget(e)){
       // A Like/Bookmark/button tap must not chain into the next seek: X's own
       // tap tracker can pair it with the following video tap.
       lastTap=null;lastSeek=null;return;
