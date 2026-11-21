@@ -1651,6 +1651,10 @@ private val X_VIEW_IN_TAB_SCRIPT = """
   const mediaButton=el=>el.closest(
     'button[aria-label*="查看媒體"],button[aria-label*="View media" i],'+
     'button[aria-label*="媒體"],button[aria-label*="media" i]');
+  let curHandle='';
+  const grab=href=>{const m=/^\/([^\/?#]+)\/status\/(\d+)/.exec(href||'');
+    if(m){curHandle=m[1];return m[2];}
+    const n=/\/status\/(\d+)/.exec(href||'');return n?n[1]:null;};
   let lastDbg=0;
   const dbg=m=>{const n=performance.now();if(n-lastDbg<400)return;lastDbg=n;
     try{console.log('[MDVIT] '+m);}catch(_){}};
@@ -1681,8 +1685,8 @@ private val X_VIEW_IN_TAB_SCRIPT = """
     for(const time of article.querySelectorAll('a[href*="/status/"] time')){
       const a=time.closest('a');
       if(!a||a.closest('[role="link"][tabindex]:not(a)'))continue;
-      const m=/\/status\/(\d+)/.exec(a.getAttribute('href')||'');
-      if(m){dbg('命中影片 id='+m[1]);return m[1];}
+      const id=grab(a.getAttribute('href'));
+      if(id){dbg('命中影片 id='+id);return id;}
     }
     // New X markup: no usable <time> link. Take any link to a post. A quoted post is a
     // link-role wrapper INSIDE this article; wrappers outside it are fine.
@@ -1692,8 +1696,8 @@ private val X_VIEW_IN_TAB_SCRIPT = """
       hrefs.push(href.slice(0,40));
       const wrap=a.closest('[role="link"][tabindex]:not(a)');
       if(wrap&&article.contains(wrap)&&wrap!==article)continue;
-      const m=/\/status\/(\d+)/.exec(href);
-      if(m){dbg('命中影片(備用連結) id='+m[1]);return m[1];}
+      const id=grab(href);
+      if(id){dbg('命中影片(備用連結) id='+id);return id;}
     }
     dbg('略過:找不到貼文連結 '+hrefs.join(' | '));
     return null;
@@ -1739,8 +1743,11 @@ private val X_VIEW_IN_TAB_SCRIPT = """
     e.stopImmediatePropagation();
     swallowClickUntil=performance.now()+700;
     // Handled natively (WebViewClient): opens a new tab, leaves this page as is.
-    location.href='mydownloadviewer://open?u='+
-      encodeURIComponent('https://x.com/i/status/'+s.id);
+    // Straight to X's player route when the author is known, skipping the post page.
+    const target=curHandle&&curHandle!=='i'?
+      'https://x.com/'+curHandle+'/status/'+s.id+'/mediaviewer':
+      'https://x.com/i/status/'+s.id;
+    location.href='mydownloadviewer://open?u='+encodeURIComponent(target);
   },{capture:true,passive:false});
   // List pages: links that lead to other websites are not allowed to open.
   const xHost=h=>/(?:^|\.)(?:x\.com|twitter\.com|twimg\.com)$/i.test(h);
@@ -1772,7 +1779,7 @@ private val X_VIEW_IN_TAB_SCRIPT = """
  */
 private val X_VIEWER_PROBE_SCRIPT = """
 (() => {
-  const open=!!document.querySelector(
+  const open=/\/status\/\d+\/mediaviewer\/?$/.test(location.pathname)||!!document.querySelector(
     '[data-testid="vss-scroll-view"],[data-testid="immersive-viewer"],'+
     '#layers [role="dialog"]:has(video)');
   const post=/^\/[^\/]+\/status\/\d+\/?$/.test(location.pathname);
@@ -2434,6 +2441,23 @@ fun MultiTabBrowser(
         )
         AppLog.log("返回", "點清單影片 → 開檢視分頁 " + url.takeLast(30))
         val child = addTab(url, "X 影片") ?: return
+        // Direct player route skips the post page. If it shows no video within a few
+        // seconds (X refused a cold load), fall back to the post page + auto-enter.
+        val postId = Regex("/status/(\\d+)").find(url)?.groupValues?.get(1)
+        if (postId != null && url.endsWith("/mediaviewer")) {
+            host.postDelayed({
+                val web = webViews[child.id] ?: return@postDelayed
+                if (tabs.none { it.id == child.id }) return@postDelayed
+                web.evaluateJavascript(
+                    "(function(){return !!document.querySelector('video')})()"
+                ) { has ->
+                    if (has != "true" && webViews[child.id] === web) {
+                        AppLog.log("返回", "播放頁沒有影片，改走貼文頁")
+                        web.loadUrl("https://x.com/i/status/" + postId)
+                    }
+                }
+            }, 5000L)
+        }
         child.parentTabId = parent.id
     }
 
