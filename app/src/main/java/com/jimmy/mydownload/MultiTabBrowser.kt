@@ -1820,6 +1820,47 @@ private val X_CORNER_DIAG_SCRIPT = """
 })()
 """.trimIndent()
 
+/**
+ * X's player page overlays the author name, handle, caption and "show more" on the
+ * video. Keep only the avatar (and the buttons): hide every other text in the lower part
+ * of the screen. X's new markup has no stable test ids, so this goes by text and
+ * position, not by selector. Idempotent; runs on the /mediaviewer route only.
+ */
+private val X_MEDIAVIEWER_INFO_SCRIPT = """
+(() => {
+  if(!/\/status\/\d+\/mediaviewer\/?$/.test(location.pathname))return 'no';
+  if(!document.getElementById('mydownload-hide-info-css')){
+    const st=document.createElement('style');
+    st.id='mydownload-hide-info-css';
+    st.textContent='[data-mydownload-hide-info="1"]{visibility:hidden!important}';
+    (document.head||document.documentElement).appendChild(st);
+  }
+  const keep='button,[role="button"],#mydownload-optional-x-progress,video,'+
+    '[aria-label*="喜歡"],[aria-label*="書籤"],[aria-label*="Like" i],[aria-label*="Bookmark" i]';
+  const more=/^(?:顯示更多|显示更多|Show more|…|\.\.\.|翻譯自.*|翻译自.*|Translated from.*|顯示原文|显示原文|Show original)$/i;
+  const walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);
+  let n=0,node;
+  while((node=walker.nextNode())){
+    const text=(node.nodeValue||'').trim();
+    if(!text)continue;
+    const el=node.parentElement;
+    if(!el||el.hasAttribute('data-mydownload-hide-info'))continue;
+    if(el.closest('script,style,noscript'))continue;
+    const isMore=more.test(text);
+    if(!isMore&&el.closest(keep))continue;
+    if(isMore&&el.closest('#mydownload-optional-x-progress'))continue;
+    const r=el.getBoundingClientRect();
+    // The overlay sits in the lower part of a card; ignore the top bar area.
+    const card=Math.floor((r.top+r.bottom)/2/innerHeight);
+    const within=((r.top+r.bottom)/2)-card*innerHeight;
+    if(r.width<2||r.height<2||within<innerHeight*0.35)continue;
+    el.setAttribute('data-mydownload-hide-info','1');
+    n++;
+  }
+  return 'hid:'+n;
+})()
+""".trimIndent()
+
 /** One compact JSON line describing the fullscreen layout, for the diagnostic log. */
 private val X_LAYOUT_DIAG_SCRIPT = """
 (() => {
@@ -3192,6 +3233,9 @@ fun MultiTabBrowser(
                     } else if (fillWasOn) {
                         fillWasOn = false
                         browser.evaluateJavascript(xMediaviewerFillScript(false), null)
+                    }
+                    if (selected.url.contains("/mediaviewer")) {
+                        browser.evaluateJavascript(X_MEDIAVIEWER_INFO_SCRIPT, null)
                     }
                     if (heavyTick && (browserVideoFullscreen || selected.url.contains("/mediaviewer"))) {
                         browser.evaluateJavascript(X_LAYOUT_DIAG_SCRIPT) { raw ->
