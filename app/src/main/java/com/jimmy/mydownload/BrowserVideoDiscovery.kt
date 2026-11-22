@@ -88,6 +88,18 @@ object BrowserVideoDiscovery {
     val ACTIVE_VIDEO_SCAN_SCRIPT = """
 (() => {
   const result = {width:innerWidth, videos:[], pageText:'', pagePostUrl:''};
+  // The browser keeps only 250 resource-timing entries and then silently stops recording,
+  // so after a few clips "the latest segments" were really old ones (a previously
+  // downloaded clip). Make room, and start over whenever the buffer fills up.
+  try{
+    if(!window.__mdRtGuard){
+      window.__mdRtGuard=true;
+      performance.setResourceTimingBufferSize(5000);
+      performance.addEventListener('resourcetimingbufferfull',()=>{
+        try{performance.clearResourceTimings();}catch(_){}
+      });
+    }
+  }catch(_){}
   const within = rect => rect.width >= 100 && rect.height >= 70 &&
     rect.left < innerWidth && rect.right > 0 &&
     rect.top < innerHeight && rect.bottom > 0;
@@ -201,9 +213,14 @@ object BrowserVideoDiscovery {
   // playing clip keeps requesting segments; a preloaded neighbour only a few.
   const recentSegmentId=()=>{
     try{
-      const list=performance.getEntriesByType('resource').filter(e=>
+      const all=performance.getEntriesByType('resource').filter(e=>
         /\/(?:ext_tw_video|amplify_video|tweet_video|tv_video)\/\d+\/.*\.(?:m4s|ts|mp4|aac)/
-          .test(e.name)).slice(-12);
+          .test(e.name));
+      // Segments fetched in the last 10 seconds first; only if there are none (paused
+      // clip) fall back to the last few entries.
+      const nowMs=performance.now();
+      const fresh=all.filter(e=>nowMs-e.startTime<10000);
+      const list=(fresh.length?fresh:all).slice(-12);
       const counts={};
       for(const e of list){
         const m=idRegexMedia.exec(e.name);
