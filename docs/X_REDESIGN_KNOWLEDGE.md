@@ -249,3 +249,7 @@
 ## 陷阱：檢視分頁殘留 → 「最多可同時開啟 12 個分頁」
 - 重啟後 `parentTabId` 不會還原，舊的檢視分頁永遠關不掉，累積到 12 個後點清單影片毫無反應。
 - 對策：啟動只保留主分頁；`openViewerTab` 開新分頁前先關掉非主分頁/非祖先分頁；Home/書籤鈕用 `openMainPath`（回主分頁並關掉其他分頁）。
+
+## 陷阱：下載的影片沒有聲音
+- X 的音訊是獨立的 `/mp4a/` 播放清單。若沒擷取到 master 清單，畫質選項就沒有 audioUrl → 靜音。
+- 對策：`MediaCandidateResolver.inspect` 把播放器自己請求過的 `/mp4a/` 清單（同影片 ID）補成 audioUrl，並排除 mp4a 本身當畫質選項。
