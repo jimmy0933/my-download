@@ -185,8 +185,9 @@ object DownloadSettings {
             hideViewerShare = prefs.getBoolean(X_HIDE_VIEWER_SHARE, false),
             showViewerLike = prefs.getBoolean(X_SHOW_VIEWER_LIKE, true),
             showViewerBookmark = prefs.getBoolean(X_SHOW_VIEWER_BOOKMARK, true),
-            hideNativeXVideoProgress = prefs.getBoolean(X_HIDE_NATIVE_VIDEO_PROGRESS, false),
-            showCustomXVideoProgress = prefs.getBoolean(X_SHOW_CUSTOM_VIDEO_PROGRESS, false),
+            // X-only app: a fresh install uses the custom bar and hides X's native one.
+            hideNativeXVideoProgress = prefs.getBoolean(X_HIDE_NATIVE_VIDEO_PROGRESS, true),
+            showCustomXVideoProgress = prefs.getBoolean(X_SHOW_CUSTOM_VIDEO_PROGRESS, true),
             hideViewerAuthorShortcut = prefs.getBoolean(X_HIDE_VIEWER_AUTHOR_SHORTCUT, false),
             customXProgressAutoHideSeconds = prefs.getInt(X_CUSTOM_PROGRESS_AUTO_HIDE_SECONDS, 0).coerceIn(0, 30)
         )
