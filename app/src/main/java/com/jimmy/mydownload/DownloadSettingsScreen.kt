@@ -185,7 +185,7 @@ fun DownloadSettingsScreen(
                     }
                     Switch(checked = adsBlocked, onCheckedChange = onBlockChange)
                 }
-                Text("啟用後會阻止常見廣告網域與外站彈出頁，保留 AV01 的內部導覽。",
+                Text("啟用後會阻止常見廣告網域。另外，首頁、書籤、「讚」清單頁上任何跳到其他網站的連結或跳轉，一律會被擋下（不受此開關影響）。",
                     color = Color(0xFFB4C8D5), style = MaterialTheme.typography.bodySmall)
                 Text("廣告阻擋是輕量功能，無法保證清除全部廣告。若播放器或網站按鈕異常可關閉。",
                     color = Color(0xFF9CAFC0), style = MaterialTheme.typography.bodySmall)
@@ -199,9 +199,9 @@ fun DownloadSettingsScreen(
         ) {
             Column(Modifier.fillMaxWidth().padding(18.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("下載圖示", style = MaterialTheme.typography.titleMedium,
+                Text("下載／全螢幕按鈕", style = MaterialTheme.typography.titleMedium,
                     color = Color(0xFF27DBB3), fontWeight = FontWeight.Bold)
-                Text("影片下載按鈕只顯示圖示，按一下下載；長按拖曳後會記住位置。",
+                Text("下載與全螢幕按鈕合成一顆膠囊：按綠色圖示下載、按右側圖示全螢幕，拖曳可移動並記住位置（直向、橫向各自記）。透明度套用在整顆膠囊。",
                     color = Color(0xFFB4C8D5), style = MaterialTheme.typography.bodySmall)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("按鈕透明度", modifier = Modifier.weight(1f),
@@ -352,23 +352,6 @@ fun DownloadSettingsScreen(
                     onHiddenChange = { onXDisplayChange(xDisplayOptions.copy(hideShare = it)) }
                 )
                 HorizontalDivider(color = Color(0xFF304458))
-                XVisibilitySetting(
-                    title = "觀看圖片／影片時隱藏文字說明",
-                    description = "只隱藏 X 媒體檢視器裡的貼文內文，其他貼文仍正常顯示。",
-                    hidden = xDisplayOptions.hideMediaDescription,
-                    onHiddenChange = {
-                        onXDisplayChange(xDisplayOptions.copy(hideMediaDescription = it))
-                    }
-                )
-                XVisibilitySetting(
-                    title = "觀看圖片／影片時隱藏標題",
-                    description = "只隱藏媒體檢視器中的標題，保留圖片、影片與關閉等操作。",
-                    hidden = xDisplayOptions.hideMediaTitle,
-                    onHiddenChange = {
-                        onXDisplayChange(xDisplayOptions.copy(hideMediaTitle = it))
-                    }
-                )
-                HorizontalDivider(color = Color(0xFF304458))
                 Text("X 播放進度條", style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold)
                 Text(
@@ -424,14 +407,6 @@ fun DownloadSettingsScreen(
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
-                XVisibilitySetting(
-                    title = "隱藏進度條旁的作者頁按鈕",
-                    description = "隱藏 X 影片播放畫面左下方可誤觸的作者個人頁快捷鈕，保留影片及其他操作。",
-                    hidden = xDisplayOptions.hideViewerAuthorShortcut,
-                    onHiddenChange = {
-                        onXDisplayChange(xDisplayOptions.copy(hideViewerAuthorShortcut = it))
-                    }
-                )
                 Text(
                     "新版進度條左側只有一顆播放／暫停切換鈕，會依影片狀態切換圖示，並顯示已播放時間與總長度。",
                     color = Color(0xFF9CAFC0), style = MaterialTheme.typography.bodySmall
@@ -492,93 +467,6 @@ fun DownloadSettingsScreen(
                         onXDisplayChange(xDisplayOptions.copy(hideViewerShare = it))
                     }
                 )
-                HorizontalDivider(color = Color(0xFF304458))
-                XVisibilitySetting(
-                    title = "播放時隱藏進度條下方資訊",
-                    description = "一鍵隱藏 X 影片進度條下方的帳號名稱、頭像及貼文說明；保留影片、進度條、播放控制與下載按鈕。",
-                    hidden = xDisplayOptions.hideVideoBelowProgressDetails,
-                    onHiddenChange = {
-                        onXDisplayChange(xDisplayOptions.copy(hideVideoBelowProgressDetails = it))
-                    }
-                )
-                XVisibilitySetting(
-                    title = "只隱藏影片下方內文",
-                    description = "僅隱藏貼文說明文字，不隱藏作者資訊；適合想保留帳號名稱的情況。",
-                    hidden = xDisplayOptions.hideVideoPlaybackText,
-                    onHiddenChange = {
-                        onXDisplayChange(xDisplayOptions.copy(hideVideoPlaybackText = it))
-                    }
-                )
-                XVisibilitySetting(
-                    title = "只隱藏影片下方作者／標題",
-                    description = "僅隱藏帳號名稱、頭像和作者資訊，進度條與貼文內文仍保留。",
-                    hidden = xDisplayOptions.hideVideoPlaybackTitle,
-                    onHiddenChange = {
-                        onXDisplayChange(xDisplayOptions.copy(hideVideoPlaybackTitle = it))
-                    }
-                )
-                HorizontalDivider(color = Color(0xFF304458))
-                Text("底部導覽列", style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold)
-                XVisibilitySetting(
-                    title = "隱藏整排底部導覽列",
-                    description = "一次隱藏整排；以下個別選項會保留，重新顯示時仍有效。",
-                    hidden = xDisplayOptions.hideBottomNavigation,
-                    onHiddenChange = {
-                        onXDisplayChange(xDisplayOptions.copy(hideBottomNavigation = it))
-                    }
-                )
-                HorizontalDivider(color = Color(0xFF304458))
-                XVisibilitySetting(
-                    title = "隱藏 Home／首頁",
-                    description = "只隱藏底部首頁按鈕。",
-                    hidden = xDisplayOptions.hideBottomHome,
-                    onHiddenChange = {
-                        onXDisplayChange(xDisplayOptions.copy(hideBottomHome = it))
-                    }
-                )
-                XVisibilitySetting(
-                    title = "隱藏搜尋",
-                    description = "只隱藏底部搜尋／Explore 按鈕。",
-                    hidden = xDisplayOptions.hideBottomSearch,
-                    onHiddenChange = {
-                        onXDisplayChange(xDisplayOptions.copy(hideBottomSearch = it))
-                    }
-                )
-                XVisibilitySetting(
-                    title = "隱藏 Grok",
-                    description = "只隱藏底部 Grok 按鈕。",
-                    hidden = xDisplayOptions.hideBottomGrok,
-                    onHiddenChange = {
-                        onXDisplayChange(xDisplayOptions.copy(hideBottomGrok = it))
-                    }
-                )
-                XVisibilitySetting(
-                    title = "隱藏聊天",
-                    description = "只隱藏底部聊天／訊息按鈕。",
-                    hidden = xDisplayOptions.hideBottomChat,
-                    onHiddenChange = {
-                        onXDisplayChange(xDisplayOptions.copy(hideBottomChat = it))
-                    }
-                )
-                XVisibilitySetting(
-                    title = "隱藏通知",
-                    description = "只隱藏底部通知按鈕。",
-                    hidden = xDisplayOptions.hideBottomNotifications,
-                    onHiddenChange = {
-                        onXDisplayChange(xDisplayOptions.copy(hideBottomNotifications = it))
-                    }
-                )
-                XVisibilitySetting(
-                    title = "隱藏底部分享",
-                    description = "只隱藏底部工具列／媒體檢視器的分享按鈕，不影響下載鈕。",
-                    hidden = xDisplayOptions.hideBottomShare,
-                    onHiddenChange = {
-                        onXDisplayChange(xDisplayOptions.copy(hideBottomShare = it))
-                    }
-                )
-                Text("部分 X 版本可能調整按鈕位置；此功能僅隱藏畫面元素，不影響帳號設定。",
-                    color = Color(0xFF9CAFC0), style = MaterialTheme.typography.bodySmall)
             }
         }
 

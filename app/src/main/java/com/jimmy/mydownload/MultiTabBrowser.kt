@@ -561,15 +561,18 @@ private val X_DISPLAY_SCRIPT = """
 """.trimIndent()
 
 private fun xDisplayScript(options: XDisplayOptions): String {
+    // The bottom navigation, media-viewer text and below-progress-info switches were
+    // removed from Settings (the app now always hides them), so stored values of those
+    // old options must never take effect: they are passed as false.
     val flags = listOf(
         options.hideReply, options.hideRepost, options.hideViews,
-        options.hideShare, options.hideBottomNavigation,
-        options.hideMediaDescription, options.hideMediaTitle,
-        options.hideBottomHome, options.hideBottomSearch,
-        options.hideBottomGrok, options.hideBottomChat,
-        options.hideBottomNotifications, options.hideBottomShare,
-        options.hideVideoPlaybackText, options.hideVideoPlaybackTitle,
-        options.hideVideoBelowProgressDetails,
+        options.hideShare, false,
+        false, false,
+        false, false,
+        false, false,
+        false, false,
+        false, false,
+        false,
         options.hideViewerViews, options.hideViewerShare
     ).joinToString(",") { it.toString() }
     // Optional seekbar options are separate from the X cosmetic CSS.
