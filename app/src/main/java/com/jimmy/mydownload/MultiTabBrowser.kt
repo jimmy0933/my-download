@@ -2329,10 +2329,16 @@ fun MultiTabBrowser(
     val session = remember(context) { BrowserStore.loadSession(context) }
     val tabs = remember(context) {
         mutableStateListOf<TabViewState>().apply {
-            session.tabs.forEach { add(TabViewState(it)) }
+            // X-only app with no tab switcher: viewer/popup tabs of an earlier run lost their
+            // parent link and could never be closed, filling the 12-tab limit ("點影片沒反應").
+            // Keep just the main page tab across restarts.
+            val main = session.tabs.firstOrNull {
+                !XMediaNavigation.isMediaViewer(it.url) && !VideoTitle.isXStatus(it.url)
+            } ?: session.tabs.first()
+            add(TabViewState(main))
         }
     }
-    var activeId by remember(context) { mutableStateOf(session.activeId) }
+    var activeId by remember(context) { mutableStateOf(tabs.first().id) }
     val selected = tabs.firstOrNull { it.id == activeId } ?: tabs.first()
     // Explicit fullscreen state is per active browser page, not a new tab.
     LaunchedEffect(selected.id) { browserVideoFullscreen = false }
@@ -2520,6 +2526,12 @@ fun MultiTabBrowser(
         } else saveSession()
     }
 
+    /** The main page tab is always the first one; everything else is a viewer/popup tab. */
+    fun closeStrayTabs(keep: Set<String>) {
+        val main = tabs.first().id
+        tabs.map { it.id }.filter { it != main && it !in keep }.forEach { closeTab(it) }
+    }
+
     /** Opens an X video from a list in a new tab; the list's WebView stays untouched. */
     fun openViewerTab(parent: TabViewState, parentWeb: WebView?, url: String) {
         if (!BrowserAddress.isWebUrl(url) || !BrowserVideoDiscovery.isXPage(url)) return
@@ -2529,7 +2541,18 @@ fun MultiTabBrowser(
             null
         )
         AppLog.log("返回", "點清單影片 → 開檢視分頁 " + url.takeLast(30))
-        val child = addTab(url, "X 影片") ?: return
+        // Free the tab limit: keep only this parent and its own chain of ancestors.
+        val chain = HashSet<String>()
+        var cursor: TabViewState? = parent
+        while (cursor != null && chain.add(cursor.id)) {
+            cursor = cursor.parentTabId?.let { id -> tabs.firstOrNull { it.id == id } }
+        }
+        closeStrayTabs(chain)
+        val child = addTab(url, "X 影片")
+        if (child == null) {
+            AppLog.log("返回", "開不了檢視分頁（分頁已滿） 目前分頁=" + tabs.size)
+            return
+        }
         // Direct player route skips the post page. If it shows no video within a few
         // seconds (X refused a cold load), fall back to the post page + auto-enter.
         val postId = Regex("/status/(\\d+)").find(url)?.groupValues?.get(1)
@@ -3051,6 +3074,25 @@ fun MultiTabBrowser(
         }, 1500L)
     }
 
+    /**
+     * Home / Bookmarks buttons: from a video or profile tab, go back to the (untouched) main
+     * page tab and close the extra tabs; navigate only when that page is not already there.
+     */
+    fun openMainPath(path: String) {
+        val fromExtraTab = tabs.size > 1
+        if (fromExtraTab) {
+            val main = tabs.first()
+            if (activeId != main.id) selectTab(main)
+            closeStrayTabs(emptySet())
+        }
+        val here = runCatching { java.net.URI(tabs.first().url).path.orEmpty() }
+            .getOrDefault("").trimEnd('/')
+        if (fromExtraTab && here == path.trimEnd('/')) return
+        if (fromExtraTab) {
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ spaNavigate(path) }, 350L)
+        } else spaNavigate(path)
+    }
+
     fun offerDetectedVideo(video: VisibleVideo? = null, strictActive: Boolean = false) {
         val page = selected.url
         if (strictActive && video == null) {
@@ -3422,14 +3464,14 @@ fun MultiTabBrowser(
                     modifier = Modifier.size(24.dp))
             }
             IconButton(
-                onClick = { spaNavigate("/home") },
+                onClick = { openMainPath("/home") },
                 modifier = Modifier.size(46.dp)
             ) {
                 Icon(Icons.Default.Home, "X 首頁",
                     tint = BrowserGreen, modifier = Modifier.size(26.dp))
             }
             IconButton(
-                onClick = { spaNavigate("/i/bookmarks") },
+                onClick = { openMainPath("/i/bookmarks") },
                 modifier = Modifier.size(46.dp)
             ) {
                 Icon(Icons.Default.Bookmark, "X 收藏",
