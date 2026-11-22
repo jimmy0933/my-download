@@ -10,10 +10,10 @@ package com.jimmy.mydownload
 internal fun xVideoProgressScript(options: XDisplayOptions): String {
     val settings = "{hideNative:" + options.hideNativeXVideoProgress +
         ",showCustom:" + options.showCustomXVideoProgress +
-        ",hideAuthor:" + options.hideViewerAuthorShortcut +
-        ",hideNativeTitle:" + (options.hideVideoPlaybackTitle ||
-            options.hideVideoBelowProgressDetails ||
-            options.showCustomXVideoProgress) +
+        // The "author shortcut" switch was removed (the player overlay is handled by
+        // X_MEDIAVIEWER_INFO_SCRIPT); the native-title hiding follows the custom bar.
+        ",hideAuthor:false" +
+        ",hideNativeTitle:" + options.showCustomXVideoProgress +
         ",autoHideSeconds:" + options.customXProgressAutoHideSeconds.coerceIn(0, 30) + "}"
     return X_OPTIONAL_VIDEO_PROGRESS_SCRIPT
         .replace("__SETTINGS__", settings)
