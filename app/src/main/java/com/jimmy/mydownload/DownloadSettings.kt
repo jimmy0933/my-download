@@ -235,11 +235,11 @@ object DownloadSettings {
     /** Applies to all video download overlays, not just X. */
     fun floatingButtonOpacityPercent(context: Context): Int =
         context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
-            .getInt(FLOAT_BUTTON_OPACITY, 85).coerceIn(20, 100)
+            .getInt(FLOAT_BUTTON_OPACITY, 85).coerceIn(10, 100)
 
     fun setFloatingButtonOpacityPercent(context: Context, percent: Int) {
         context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit()
-            .putInt(FLOAT_BUTTON_OPACITY, percent.coerceIn(20, 100))
+            .putInt(FLOAT_BUTTON_OPACITY, percent.coerceIn(10, 100))
             .apply()
     }
 

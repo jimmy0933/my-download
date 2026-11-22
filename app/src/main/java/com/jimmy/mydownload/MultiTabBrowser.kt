@@ -140,7 +140,7 @@ private fun BoxScope.MovableVideoControls(
     Row(
         modifier = Modifier.align(Alignment.TopStart)
             .offset { IntOffset(posX, posY) }
-            .alpha(opacityPercent.coerceIn(20, 100) / 100f)
+            .alpha(opacityPercent.coerceIn(10, 100) / 100f)
             .onSizeChanged { size ->
                 pillWidth = size.width
                 pillHeight = size.height
@@ -3534,7 +3534,7 @@ fun MultiTabBrowser(
                                 .size(width = 36.dp, height = 34.dp)
                                 .clip(RoundedCornerShape(10.dp))
                                 .background(Color(0xEA27DBB3))
-                                .alpha(downloadButtonOpacityPercent.coerceIn(20, 100) / 100f)
+                                .alpha(downloadButtonOpacityPercent.coerceIn(10, 100) / 100f)
                                 .clickable { currentDownload(tile.url) },
                             contentAlignment = Alignment.Center
                         ) {
@@ -3565,7 +3565,7 @@ fun MultiTabBrowser(
                                 .size(37.dp, 35.dp)
                                 .clip(RoundedCornerShape(12.dp))
                                 .background(Color(0xEA27DBB3))
-                                .alpha(downloadButtonOpacityPercent.coerceIn(20, 100) / 100f)
+                                .alpha(downloadButtonOpacityPercent.coerceIn(10, 100) / 100f)
                                 .clickable { offerDetectedVideo(video) },
                             contentAlignment = Alignment.Center
                         ) {
