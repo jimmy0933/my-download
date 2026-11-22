@@ -203,6 +203,11 @@
 12. **協程**：`async` 必須在 `coroutineScope { … }` 的 receiver 內呼叫（CI 抓過編譯錯誤）。
 13. **雙擊快轉**：X 自己的雙擊追蹤會和我們配對，導致隨機大跳躍；已有 `guardNativeSeek` / 過期目標防護，
     不要輕易拿掉。放大時的停用判斷已移除（本輪）。
+14. **連續瀏覽幾部之後，下載會抓到之前抓過的影片**：播放頁卡片沒有 poster、來源是 blob，影片 ID 只能靠
+    `recentSegmentId`（看 `performance.getEntriesByType('resource')` 最近的片段）。**瀏覽器的 resource timing
+    緩衝只有 250 筆，滿了就不再記錄**，之後「最近 12 筆」其實是舊資料。修法：`setResourceTimingBufferSize(5000)`、
+    `resourcetimingbufferfull` 時 `clearResourceTimings()`，並優先看最近 10 秒內的片段
+    （`BrowserVideoDiscovery.ACTIVE_VIDEO_SCAN_SCRIPT`）。診斷看「偵測」記錄的 `影片ID`。
 
 ---
 
