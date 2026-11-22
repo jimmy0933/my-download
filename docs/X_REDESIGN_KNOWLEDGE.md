@@ -208,6 +208,10 @@
     緩衝只有 250 筆，滿了就不再記錄**，之後「最近 12 筆」其實是舊資料。修法：`setResourceTimingBufferSize(5000)`、
     `resourcetimingbufferfull` 時 `clearResourceTimings()`，並優先看最近 10 秒內的片段
     （`BrowserVideoDiscovery.ACTIVE_VIDEO_SCAN_SCRIPT`）。診斷看「偵測」記錄的 `影片ID`。
+15. **下載檔名要用影片內文**：`VideoTitle.preferred` 本來就優先用貼文內文，但播放頁卡片不是 `<article>`、
+    內文也沒有 `tweetText` 標籤，讀不到就退成「X影片」。現在 `ACTIVE_VIDEO_SCAN_SCRIPT` 內的
+    `mediaviewerText()` 取「含該影片與愛心鈕、且不含別的影片」的卡片文字（排除按鈕、進度條、作者名稱 / 帳號連結、
+    數字、時間、「顯示更多」等），讀 `textContent`（不受我們自己的 `visibility:hidden` 影響）。檔名最多 78 字。
 
 ---
 
