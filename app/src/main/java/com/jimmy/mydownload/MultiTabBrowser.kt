@@ -46,6 +46,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.History
@@ -107,10 +108,12 @@ private fun BoxScope.MovableVideoControls(
     fullscreen: Boolean,
     showDownload: Boolean,
     showFullscreen: Boolean,
+    showManager: Boolean = false,
     onMove: (FloatingDownloadPosition) -> Unit,
     onMoveFinished: (FloatingDownloadPosition) -> Unit,
     onDownload: () -> Unit,
-    onFullscreen: () -> Unit
+    onFullscreen: () -> Unit,
+    onManager: () -> Unit = {}
 ) {
     val density = LocalDensity.current
     val endMargin = with(density) { 16.dp.roundToPx() }
@@ -177,6 +180,20 @@ private fun BoxScope.MovableVideoControls(
             ) {
                 Icon(Icons.Default.Download, contentDescription = "下載或偵測影片",
                     modifier = Modifier.size(25.dp))
+            }
+        }
+        if (showManager) {
+            // Opens the download list. A different icon from the arrow-down "download this
+            // video" button, so the two cannot be mixed up.
+            IconButton(
+                onClick = onManager,
+                modifier = Modifier.size(46.dp)
+            ) {
+                Icon(
+                    Icons.Default.VideoLibrary,
+                    contentDescription = "下載管理（已下載的影片）",
+                    tint = BrowserGreen, modifier = Modifier.size(26.dp)
+                )
             }
         }
         if (showFullscreen) {
@@ -3429,7 +3446,7 @@ fun MultiTabBrowser(
                 onClick = { currentDownloads() },
                 modifier = Modifier.size(46.dp)
             ) {
-                Icon(Icons.Default.Download, "下載管理",
+                Icon(Icons.Default.VideoLibrary, "下載管理",
                     tint = BrowserGreen, modifier = Modifier.size(26.dp))
             }
             IconButton(
@@ -3592,6 +3609,7 @@ fun MultiTabBrowser(
                     fullscreen = browserVideoFullscreen,
                     showDownload = showDownloadControl,
                     showFullscreen = showFullscreenControl,
+                    showManager = true,
                     onMove = { moved ->
                         if (landscape) fullscreenLandscapePosition = moved
                         else fullscreenPortraitPosition = moved
@@ -3607,7 +3625,8 @@ fun MultiTabBrowser(
                             downloadCurrentXVideo()
                         } else offerDetectedVideo(videoElements.videos.firstOrNull())
                     },
-                    onFullscreen = { setVideoFullscreen(!browserVideoFullscreen) }
+                    onFullscreen = { setVideoFullscreen(!browserVideoFullscreen) },
+                    onManager = { currentDownloads() }
                 )
             }
         }
