@@ -38,6 +38,8 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true }
+    // docs/X_REDESIGN_KNOWLEDGE.md is shown (and copyable) inside the app: Settings.
+    sourceSets["main"].assets.srcDirs("src/main/assets", "../docs")
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
 }
 

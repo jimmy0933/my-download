@@ -72,6 +72,8 @@ fun DownloadSettingsScreen(
     val installedPlayers = remember(context) { VideoPlayerApps.options(context) }
     val clipboard = LocalClipboardManager.current
     var showLog by remember { mutableStateOf(false) }
+    var showKnowledge by remember { mutableStateOf(false) }
+    var knowledgeText by remember { mutableStateOf("") }
     var logText by remember { mutableStateOf("") }
 
     LaunchedEffect(Unit) {
@@ -745,6 +747,45 @@ fun DownloadSettingsScreen(
                         }) { Text("清除") }
                         TextButton(onClick = { showLog = false }) { Text("關閉") }
                     }
+                }
+            )
+        }
+
+        // The X-redesign knowledge base (docs/X_REDESIGN_KNOWLEDGE.md, bundled as an asset):
+        // copy it and paste it to the developer before the next X change.
+        OutlinedButton(
+            onClick = {
+                knowledgeText = runCatching {
+                    context.assets.open("X_REDESIGN_KNOWLEDGE.md")
+                        .bufferedReader(Charsets.UTF_8).use { it.readText() }
+                }.getOrElse { "讀取失敗：" + (it.message ?: "") }
+                showKnowledge = true
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("X 改版知識（查看並複製）") }
+        if (showKnowledge) {
+            AlertDialog(
+                onDismissRequest = { showKnowledge = false },
+                title = { Text("X 改版知識") },
+                text = {
+                    SelectionContainer {
+                        Text(
+                            knowledgeText,
+                            fontSize = 12.sp,
+                            lineHeight = 16.sp,
+                            modifier = Modifier.heightIn(max = 420.dp)
+                                .verticalScroll(rememberScrollState())
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        clipboard.setText(AnnotatedString(knowledgeText))
+                        notice = "X 改版知識已複製到剪貼簿，可直接貼給開發者"
+                    }) { Text("複製全部") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showKnowledge = false }) { Text("關閉") }
                 }
             )
         }
