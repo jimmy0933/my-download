@@ -231,6 +231,44 @@ object BrowserVideoDiscovery {
       return best;
     }catch(_){return '';}
   };
+  // X's /mediaviewer cards are not <article>s and their caption has no test id. Take the
+  // caption from the active card's own text: the ancestor that holds this video and its
+  // like button (but no other video), ignoring buttons, our bar, the author's name/handle
+  // links and counters. textContent is read, so our own visibility:hidden does not matter.
+  const mediaviewerText=()=>{
+    try{
+      const m=/^\/([^\/?#]+)\/status\/\d+\/mediaviewer\/?$/.exec(location.pathname);
+      if(!m)return '';
+      const handle=m[1].toLowerCase();
+      let card=null,node=video.parentElement;
+      for(let depth=0;node&&depth<16;node=node.parentElement,depth++){
+        if(node===document.body||node===document.documentElement||node.id==='layers')break;
+        if(node.querySelectorAll('video').length>1)break;
+        if(node.querySelector('[aria-label*="喜歡"],[aria-label*="Like" i]'))card=node;
+      }
+      if(!card)return '';
+      const junk=/^(?:顯示更多|显示更多|Show more|…|\.\.\.|·|翻譯自.*|翻译自.*|Translated from.*|顯示原文|显示原文|Show original|\d{1,2}:\d{2}|-?\d{1,2}:\d{2}:\d{2}|[\d,.]+[KkMm萬万]?|\d+x)$/;
+      const out=[];
+      const walker=document.createTreeWalker(card,NodeFilter.SHOW_TEXT);
+      let t;
+      while((t=walker.nextNode())){
+        const v=(t.nodeValue||'').replace(/\s+/g,' ').trim();
+        if(!v)continue;
+        const el=t.parentElement;
+        if(!el||el.closest('script,style,noscript,button,[role="button"],#mydownload-optional-x-progress'))continue;
+        const link=el.closest('a[href]');
+        if(link){
+          const h=(link.getAttribute('href')||'').split(/[?#]/)[0].toLowerCase();
+          if(h==='/'+handle)continue;
+        }
+        if(/^@\w{1,15}$/.test(v)){ if(out.length)out.pop(); continue; } // handle: drop it and the name before it
+        if(junk.test(v))continue;
+        out.push(v);
+      }
+      return out.join(' ').slice(0,1200);
+    }catch(_){return '';}
+  };
+  if(!text)text=mediaviewerText();
   const mediaId=(
     idRegexThumb.exec(thumb) ||
     idRegexMedia.exec(src) ||
