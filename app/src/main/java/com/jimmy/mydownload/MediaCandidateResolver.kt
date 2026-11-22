@@ -179,9 +179,14 @@ object MediaCandidateResolver {
             // Qualities of one video share the audio playlist.
             val audioByVideo = merged.filter { it.audioUrl.isNotBlank() }
                 .associate { group(it.url) to it.audioUrl }
-            val completed = merged.map { choice ->
+            // The player also requests the audio playlist itself (".../mp4a/..."); when the
+            // master playlist was never captured, that is the only audio source we have.
+            val playerAudio = urls.filter { it.contains("/mp4a/", true) }
+                .groupBy { group(it) }.mapValues { it.value.last() }
+            val completed = merged.filterNot { it.url.contains("/mp4a/", true) }.map { choice ->
                 if (choice.kind == "hls" && choice.audioUrl.isBlank()) {
-                    audioByVideo[group(choice.url)]?.let { choice.copy(audioUrl = it) } ?: choice
+                    val g = group(choice.url)
+                    (audioByVideo[g] ?: playerAudio[g])?.let { choice.copy(audioUrl = it) } ?: choice
                 } else choice
             }
             Result(
