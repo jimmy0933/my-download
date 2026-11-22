@@ -4,6 +4,13 @@ import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material.icons.filled.VideoLibrary
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -199,12 +206,42 @@ fun DownloadSettingsScreen(
         ) {
             Column(Modifier.fillMaxWidth().padding(18.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("下載／全螢幕按鈕", style = MaterialTheme.typography.titleMedium,
+                Text("浮動膠囊（下載／下載管理／全螢幕）", style = MaterialTheme.typography.titleMedium,
                     color = Color(0xFF27DBB3), fontWeight = FontWeight.Bold)
-                Text("下載與全螢幕按鈕合成一顆膠囊：按綠色圖示下載、按右側圖示全螢幕，拖曳可移動並記住位置（直向、橫向各自記）。透明度套用在整顆膠囊。",
+                Text("播放影片時浮在畫面上的膠囊：綠色箭頭＝下載這部影片、影片庫圖示＝下載管理、右側＝全螢幕。拖曳可移動並記住位置（直向、橫向各自記）。下方的透明度套用在整顆膠囊，預覽會跟著變。",
                     color = Color(0xFFB4C8D5), style = MaterialTheme.typography.bodySmall)
+                // Live preview of the pill at the chosen opacity.
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                    val pillShape = RoundedCornerShape(28.dp)
+                    Row(
+                        modifier = Modifier
+                            .alpha(downloadButtonOpacityPercent.coerceIn(10, 100) / 100f)
+                            .clip(pillShape)
+                            .background(Color(0xE60B1826))
+                            .border(1.dp, Color(0xFF27DBB3).copy(alpha = 0.38f), pillShape)
+                            .padding(5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Box(
+                            Modifier.size(46.dp).clip(CircleShape).background(Color(0xFF27DBB3)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Default.Download, null, tint = Color(0xFF091421),
+                                modifier = Modifier.size(25.dp))
+                        }
+                        Box(Modifier.size(46.dp), contentAlignment = Alignment.Center) {
+                            Icon(Icons.Default.VideoLibrary, null, tint = Color(0xFF27DBB3),
+                                modifier = Modifier.size(26.dp))
+                        }
+                        Box(Modifier.size(46.dp), contentAlignment = Alignment.Center) {
+                            Icon(Icons.Default.Fullscreen, null, tint = Color(0xFF27DBB3),
+                                modifier = Modifier.size(28.dp))
+                        }
+                    }
+                }
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("按鈕透明度", modifier = Modifier.weight(1f),
+                    Text("膠囊透明度", modifier = Modifier.weight(1f),
                         fontWeight = FontWeight.Medium)
                     Text("${downloadButtonOpacityPercent}%",
                         color = Color(0xFF27DBB3),
@@ -214,13 +251,13 @@ fun DownloadSettingsScreen(
                     value = downloadButtonOpacityPercent.toFloat(),
                     onValueChange = { amount ->
                         onDownloadButtonOpacityChange(
-                            ((amount / 5f).roundToInt() * 5).coerceIn(20, 100)
+                            ((amount / 5f).roundToInt() * 5).coerceIn(10, 100)
                         )
                     },
-                    valueRange = 20f..100f, steps = 15
+                    valueRange = 10f..100f, steps = 17
                 )
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("較透明 20%", color = Color(0xFF9CAFC0),
+                    Text("較透明 10%", color = Color(0xFF9CAFC0),
                         style = MaterialTheme.typography.bodySmall)
                     TextButton(onClick = { onDownloadButtonOpacityChange(85) }) {
                         Text("預設 85%")
