@@ -253,3 +253,7 @@
 ## 陷阱：下載的影片沒有聲音
 - X 的音訊是獨立的 `/mp4a/` 播放清單。若沒擷取到 master 清單，畫質選項就沒有 audioUrl → 靜音。
 - 對策：`MediaCandidateResolver.inspect` 把播放器自己請求過的 `/mp4a/` 清單（同影片 ID）補成 audioUrl，並排除 mp4a 本身當畫質選項。
+
+## 陷阱：播放頁作者名稱/說明時隱時現
+- X 在首支影片載入、點擊影片時會重建疊層，App 每秒輪詢來不及重新隱藏。
+- 對策：`X_MEDIAVIEWER_INFO_SCRIPT` 以 MutationObserver（略過自家進度條）＋點擊後 0/150/500ms 重新掃描。

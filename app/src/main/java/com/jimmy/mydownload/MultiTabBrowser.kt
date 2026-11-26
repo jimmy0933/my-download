@@ -1869,6 +1869,7 @@ private val X_MEDIAVIEWER_INFO_SCRIPT = """
     '[aria-label*="喜歡"],[aria-label*="書籤"],[aria-label*="Like" i],[aria-label*="Bookmark" i]';
   const more=/^(?:顯示更多|显示更多|Show more|…|\.\.\.|翻譯自.*|翻译自.*|Translated from.*|顯示原文|显示原文|Show original)$/i;
   const follow=/^(?:跟隨|跟随|關注|关注|Follow|Following|正在跟隨|正在跟随|已跟隨|已跟随)$/i;
+  const scan=()=>{
   // The blue verified tick next to the author name.
   let n=0;
   for(const badge of document.querySelectorAll(
@@ -1904,7 +1905,34 @@ private val X_MEDIAVIEWER_INFO_SCRIPT = """
     target.setAttribute('data-mydownload-hide-info','1');
     n++;
   }
-  return 'hid:'+n;
+    return n;
+  };
+  window.__mydownloadHideInfoScan=scan;
+  // X rebuilds the overlay (first clip loading, tapping the video) faster than the app's
+  // polling; re-hide on every DOM change and shortly after every tap.
+  if(!window.__mydownloadHideInfoObs){
+    let timer=0;
+    const later=ms=>{
+      if(timer)return;
+      timer=setTimeout(()=>{
+        timer=0;
+        if(!/\/status\/\d+\/mediaviewer\/?$/.test(location.pathname))return;
+        try{window.__mydownloadHideInfoScan&&window.__mydownloadHideInfoScan();}catch(_){}
+      },ms);
+    };
+    window.__mydownloadHideInfoObs=new MutationObserver(list=>{
+      for(const m of list){
+        const t=m.target&&m.target.nodeType===1?m.target:m.target&&m.target.parentElement;
+        if(t&&t.closest&&t.closest('#mydownload-optional-x-progress'))continue;
+        later(60);return;
+      }
+    });
+    window.__mydownloadHideInfoObs.observe(document.body,{childList:true,subtree:true,characterData:true});
+    for(const ev of ['touchend','click']){
+      document.addEventListener(ev,()=>{later(0);setTimeout(()=>later(0),150);setTimeout(()=>later(0),500);},{capture:true,passive:true});
+    }
+  }
+  return 'hid:'+scan();
 })()
 """.trimIndent()
 
