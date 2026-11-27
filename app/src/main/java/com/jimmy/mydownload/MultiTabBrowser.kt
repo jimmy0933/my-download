@@ -1884,6 +1884,40 @@ private val X_MEDIAVIEWER_INFO_SCRIPT = """
       e.preventDefault();e.stopImmediatePropagation();
     },{capture:true});
   }
+  // The player page is a dead end by design: any tap on a link (post page, profile, ads,
+  // "view post" overlays) is swallowed. Our own avatar handler clicks programmatically
+  // (not trusted), which is let through.
+  if(!window.__mydownloadViewerLinkGuard){
+    window.__mydownloadViewerLinkGuard=true;
+    document.addEventListener('click',e=>{
+      if(!e.isTrusted)return;
+      if(!/\/status\/\d+\/mediaviewer\/?$/i.test(location.pathname))return;
+      const t=e.target&&e.target.closest?e.target:null;
+      const link=t&&t.closest('a[href],[role="link"]');
+      if(!link)return;
+      if(t.closest('button,[role="button"],#mydownload-optional-x-progress'))return;
+      e.preventDefault();e.stopImmediatePropagation();
+      try{console.log('[MDVIT] 擋下連結點擊 '+(link.getAttribute('href')||link.getAttribute('aria-label')||link.tagName).slice(0,80));}catch(_){}
+    },{capture:true});
+  }
+  // Diagnostic: list what is still tappable on this clip (once per clip).
+  if(window.__mydownloadTapDumpFor!==location.pathname){
+    window.__mydownloadTapDumpFor=location.pathname;
+    setTimeout(()=>{
+      try{
+        const out=[];
+        for(const el of document.querySelectorAll('a[href],button,[role="button"],[role="link"]')){
+          const r=el.getBoundingClientRect();
+          if(r.width<2||r.height<2||r.bottom<0||r.top>innerHeight)continue;
+          if(getComputedStyle(el).visibility==='hidden')continue;
+          out.push((el.tagName+':'+((el.getAttribute('aria-label')||el.getAttribute('href')||el.textContent||'').trim().slice(0,24))+
+            '@'+Math.round(r.left)+','+Math.round(r.top)+','+Math.round(r.width)+'x'+Math.round(r.height)));
+          if(out.length>=14)break;
+        }
+        console.log('[MDVIT] 可點元素 '+out.join(' | '));
+      }catch(_){}
+    },1500);
+  }
   const keep='button,[role="button"],#mydownload-optional-x-progress,video,'+
     '[aria-label*="喜歡"],[aria-label*="書籤"],[aria-label*="Like" i],[aria-label*="Bookmark" i]';
   const more=/^(?:顯示更多|显示更多|Show more|…|\.\.\.|翻譯自.*|翻译自.*|Translated from.*|顯示原文|显示原文|Show original)$/i;
