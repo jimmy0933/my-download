@@ -49,7 +49,7 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
   state.authorLinks=state.authorLinks||new Set();
   // v2 adds the route-wide /mediaviewer rule; drop the stale v1 stylesheet.
   const mediaviewerRoute=()=>
-    /\/status\/\d+\/mediaviewer\/?$/.test(location.pathname);
+    /\/status\/\d+\/mediaviewer\/?$/i.test(location.pathname);
   const syncRouteFlag=()=>{
     if(mediaviewerRoute())
       document.documentElement.setAttribute('data-mydownload-mediaviewer','1');
@@ -169,7 +169,7 @@ private val X_OPTIONAL_VIDEO_PROGRESS_SCRIPT = """
     const layers=document.getElementById('layers');
     if(layers?.contains(video))return layers;
     if(window.__mydownloadVideoFullscreen?.enabled ||
-        /\/status\/\d+\/(?:(?:video|photo)\/\d+|mediaviewer)\/?$/.test(location.pathname)){
+        /\/status\/\d+\/(?:(?:video|photo)\/\d+|mediaviewer)\/?$/i.test(location.pathname)){
       let container=video.parentElement;
       for(let i=0;i<5&&container?.parentElement &&
           container.parentElement!==document.body;i++)

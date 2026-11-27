@@ -237,7 +237,7 @@ object BrowserVideoDiscovery {
   // links and counters. textContent is read, so our own visibility:hidden does not matter.
   const mediaviewerText=()=>{
     try{
-      const m=/^\/([^\/?#]+)\/status\/\d+\/mediaviewer\/?$/.exec(location.pathname);
+      const m=/^\/([^\/?#]+)\/status\/\d+\/mediaviewer\/?$/i.exec(location.pathname);
       if(!m)return '';
       const handle=m[1].toLowerCase();
       let card=null,node=video.parentElement;

@@ -257,3 +257,6 @@
 ## 陷阱：播放頁作者名稱/說明時隱時現
 - X 在首支影片載入、點擊影片時會重建疊層，App 每秒輪詢來不及重新隱藏。
 - 對策：`X_MEDIAVIEWER_INFO_SCRIPT` 以 MutationObserver（略過自家進度條）＋點擊後 0/150/500ms 重新掃描。
+
+## 陷阱：路徑大小寫 mediaViewer / mediaviewer
+- X 載入後會把網址改成 `/mediaViewer`（大寫 V）。所有 `/mediaviewer` 的比對（JS regex 與 Kotlin `contains`）都必須不分大小寫，否則第一則影片的隱藏/進度條等功能都不會啟動，滑到下一則（網址變回小寫）才生效。

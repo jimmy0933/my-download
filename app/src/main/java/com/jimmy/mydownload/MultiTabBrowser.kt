@@ -366,7 +366,7 @@ private val X_DISPLAY_SCRIPT = """
   const modalRoot = document.querySelector(
     '#layers [role="dialog"]:has(video,[data-testid="videoPlayer"])'
   );
-  const mediaRoute = /\/status\/\d+\/(?:(?:photo|video)\/\d+|mediaviewer)\/?$/.test(location.pathname) ||
+  const mediaRoute = /\/status\/\d+\/(?:(?:photo|video)\/\d+|mediaviewer)\/?$/i.test(location.pathname) ||
     /^\/i\/status\/\d+\/?$/.test(location.pathname);
   const seekbarVisible = Array.from(document.querySelectorAll(
     '[role="slider"],input[type="range"],[data-testid="videoPlayer"] [aria-valuenow]'
@@ -678,7 +678,7 @@ private val X_VIDEO_NATIVE_ACTION_VISIBILITY_SCRIPT = """
       '[aria-label*="Like" i],[aria-label*="Bookmark" i]){' +
       'opacity:1!important;visibility:visible!important;}';
   if(sheet.textContent!==css)sheet.textContent=css;
-  if(/\/status\/\d+\/mediaviewer\/?$/.test(location.pathname))
+  if(/\/status\/\d+\/mediaviewer\/?$/i.test(location.pathname))
     document.documentElement.setAttribute('data-mydownload-actions-route','1');
   else document.documentElement.removeAttribute('data-mydownload-actions-route');
 
@@ -1593,7 +1593,7 @@ internal val X_DEDICATED_X_VIDEO_VIEWER_SCRIPT = """
   // Standalone /status/id/video/1 pages can omit all immersive testids.
   // Check the visible page, not merely the URL: a returning user may still
   // have a /status/... route while scrolling multiple feed/reply cards.
-  const videoRoute=/\/status\/\d{6,22}\/(?:(?:video|photo)\/\d+|mediaviewer)\/?$/.test(
+  const videoRoute=/\/status\/\d{6,22}\/(?:(?:video|photo)\/\d+|mediaviewer)\/?$/i.test(
     location.pathname);
   if(!videoRoute)return false;
   let visiblePosts=0;
@@ -1768,7 +1768,7 @@ private val X_VIEW_IN_TAB_SCRIPT = """
  */
 private val X_VIEWER_PROBE_SCRIPT = """
 (() => {
-  const open=/\/status\/\d+\/mediaviewer\/?$/.test(location.pathname)||!!document.querySelector(
+  const open=/\/status\/\d+\/mediaviewer\/?$/i.test(location.pathname)||!!document.querySelector(
     '[data-testid="vss-scroll-view"],[data-testid="immersive-viewer"],'+
     '#layers [role="dialog"]:has(video)');
   const post=/^\/[^\/]+\/status\/\d+\/?$/.test(location.pathname);
@@ -1817,7 +1817,7 @@ private val X_CORNER_DIAG_SCRIPT = """
  */
 private val X_MEDIAVIEWER_INFO_SCRIPT = """
 (() => {
-  if(!/\/status\/\d+\/mediaviewer\/?$/.test(location.pathname))return 'no';
+  if(!/\/status\/\d+\/mediaviewer\/?$/i.test(location.pathname))return 'no';
   if(!document.getElementById('mydownload-hide-info-css')){
     const st=document.createElement('style');
     st.id='mydownload-hide-info-css';
@@ -1829,7 +1829,7 @@ private val X_MEDIAVIEWER_INFO_SCRIPT = """
   if(!window.__mydownloadAvatarTap){
     window.__mydownloadAvatarTap=true;
     document.addEventListener('click',e=>{
-      const m=/^\/([^\/?#]+)\/status\/\d+\/mediaviewer\/?$/.exec(location.pathname);
+      const m=/^\/([^\/?#]+)\/status\/\d+\/mediaviewer\/?$/i.exec(location.pathname);
       if(!m||m[1]==='i')return;
       const x=e.clientX,y=e.clientY;
       // Whatever is under the finger: a small square image (or background image) in the
@@ -1916,7 +1916,7 @@ private val X_MEDIAVIEWER_INFO_SCRIPT = """
       if(timer)return;
       timer=setTimeout(()=>{
         timer=0;
-        if(!/\/status\/\d+\/mediaviewer\/?$/.test(location.pathname))return;
+        if(!/\/status\/\d+\/mediaviewer\/?$/i.test(location.pathname))return;
         try{window.__mydownloadHideInfoScan&&window.__mydownloadHideInfoScan();}catch(_){}
       },ms);
     };
@@ -2002,7 +2002,7 @@ private fun xMediaviewerFillScript(on: Boolean): String = """
     el.style.removeProperty('transform-origin');
   };
   const clearAll=()=>{for(const el of document.querySelectorAll('['+attr+']'))release(el);};
-  if(!__ON__||!/\/status\/\d+\/mediaviewer\/?$/.test(location.pathname)){
+  if(!__ON__||!/\/status\/\d+\/mediaviewer\/?$/i.test(location.pathname)){
     clearAll();return 'off';
   }
   const ih=innerHeight,iw=innerWidth;
@@ -2584,7 +2584,7 @@ fun MultiTabBrowser(
         // Direct player route skips the post page. If it shows no video within a few
         // seconds (X refused a cold load), fall back to the post page + auto-enter.
         val postId = Regex("/status/(\\d+)").find(url)?.groupValues?.get(1)
-        if (postId != null && url.endsWith("/mediaviewer")) {
+        if (postId != null && url.endsWith("/mediaviewer", ignoreCase = true)) {
             host.postDelayed({
                 val web = webViews[child.id] ?: return@postDelayed
                 if (tabs.none { it.id == child.id }) return@postDelayed
@@ -3362,10 +3362,10 @@ fun MultiTabBrowser(
                         fillWasOn = false
                         browser.evaluateJavascript(xMediaviewerFillScript(false), null)
                     }
-                    if (selected.url.contains("/mediaviewer")) {
+                    if (selected.url.contains("/mediaviewer", ignoreCase = true)) {
                         browser.evaluateJavascript(X_MEDIAVIEWER_INFO_SCRIPT, null)
                     }
-                    if (heavyTick && (browserVideoFullscreen || selected.url.contains("/mediaviewer"))) {
+                    if (heavyTick && (browserVideoFullscreen || selected.url.contains("/mediaviewer", ignoreCase = true))) {
                         browser.evaluateJavascript(X_LAYOUT_DIAG_SCRIPT) { raw ->
                             val line = "web=" + browser.width + "x" + browser.height +
                                 " 區域=" + viewportWidth + "x" + viewportHeight +
