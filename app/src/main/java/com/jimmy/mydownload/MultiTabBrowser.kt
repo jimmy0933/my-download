@@ -1821,7 +1821,7 @@ private val X_MEDIAVIEWER_INFO_SCRIPT = """
   if(!document.getElementById('mydownload-hide-info-css')){
     const st=document.createElement('style');
     st.id='mydownload-hide-info-css';
-    st.textContent='[data-mydownload-hide-info="1"]{visibility:hidden!important}';
+    st.textContent='[data-mydownload-hide-info="1"]{visibility:hidden!important;pointer-events:none!important}';
     (document.head||document.documentElement).appendChild(st);
   }
   // Tapping the author avatar opens the author's profile (the page path names the author
@@ -1865,6 +1865,25 @@ private val X_MEDIAVIEWER_INFO_SCRIPT = """
       }catch(_){location.href='/'+handle;}
     },{capture:true});
   }
+  // Tapping where the hidden author name / caption was must not open the post page:
+  // swallow the click there (buttons, like/bookmark and the avatar still work).
+  if(!window.__mydownloadHiddenTapGuard){
+    window.__mydownloadHiddenTapGuard=true;
+    document.addEventListener('click',e=>{
+      if(!/\/status\/\d+\/mediaviewer\/?$/i.test(location.pathname))return;
+      const x=e.clientX,y=e.clientY;
+      let inside=false;
+      for(const h of document.querySelectorAll('[data-mydownload-hide-info]')){
+        const r=h.getBoundingClientRect();
+        if(r.width>1&&x>=r.left-6&&x<=r.right+6&&y>=r.top-6&&y<=r.bottom+6){inside=true;break;}
+      }
+      if(!inside)return;
+      for(const c of document.elementsFromPoint(x,y)){
+        if(c.closest&&c.closest('button,[role="button"],#mydownload-optional-x-progress,[aria-label*="喜歡"],[aria-label*="書籤"],[aria-label*="Like" i],[aria-label*="Bookmark" i]'))return;
+      }
+      e.preventDefault();e.stopImmediatePropagation();
+    },{capture:true});
+  }
   const keep='button,[role="button"],#mydownload-optional-x-progress,video,'+
     '[aria-label*="喜歡"],[aria-label*="書籤"],[aria-label*="Like" i],[aria-label*="Bookmark" i]';
   const more=/^(?:顯示更多|显示更多|Show more|…|\.\.\.|翻譯自.*|翻译自.*|Translated from.*|顯示原文|显示原文|Show original)$/i;
@@ -1903,6 +1922,11 @@ private val X_MEDIAVIEWER_INFO_SCRIPT = """
     // The Follow button goes too: hide the whole button, not just its label.
     const target=isFollow?(el.closest('button,[role="button"]')||el):el;
     target.setAttribute('data-mydownload-hide-info','1');
+    const link=target.closest('a[href],[role="link"]');
+    if(link&&!link.querySelector('video,button,[role="button"],img')){
+      const lr=link.getBoundingClientRect();
+      if(lr.height<140)link.setAttribute('data-mydownload-hide-info','1');
+    }
     n++;
   }
     return n;
