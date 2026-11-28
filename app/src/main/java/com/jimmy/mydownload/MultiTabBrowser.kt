@@ -2108,11 +2108,21 @@ private val X_VIDEO_DOUBLE_TAP_SEEK_SCRIPT = """
   let pointerStart=null, lastSeek=null;
   const distance=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
   const viewer=()=>__DEDICATED_VIEWER__;
-  const validTarget=e=>!(e.target instanceof Element &&
-    e.target.closest(
-      '#mydownload-optional-x-progress,button,a,input,'+
-      '[role="button"],[role="slider"],[data-testid="playButton"]'
-    ));
+  const validTarget=e=>{
+    if(!(e.target instanceof Element))return true;
+    if(e.target.closest(
+      '#mydownload-optional-x-progress,button,input,'+
+      '[role="button"],[role="slider"],[data-testid="playButton"]'))return false;
+    // Large link overlays (author/post links laid over the picture) are not controls:
+    // excluding them let X's own, unguarded double-tap seek run and jump far.
+    // Small links (the avatar) stay excluded.
+    const a=e.target.closest('a');
+    if(a){
+      const r=a.getBoundingClientRect();
+      if(r.width<=110&&r.height<=110)return false;
+    }
+    return true;
+  };
   const sideAt=x=>x<innerWidth*.40?'left':x>innerWidth*.60?'right':'';
   const visibleVideo=video=>{
     const r=video.getBoundingClientRect();
@@ -2200,7 +2210,7 @@ private val X_VIDEO_DOUBLE_TAP_SEEK_SCRIPT = """
       // If X's own double-tap handler ALSO moved the playhead, undo only the
       // overshoot in the seek direction (never touch a stall or a newer tap).
       const dir=side==='left'?-1:1;
-      for(const delay of [300,750]){
+      for(const delay of [300,750,1500,2500,4000]){
         setTimeout(()=>{
           if(lastSeek!==record||video.seeking||!video.isConnected)return;
           const expected=next+(video.paused?0:(performance.now()-record.at)/1000);
@@ -2219,7 +2229,7 @@ private val X_VIDEO_DOUBLE_TAP_SEEK_SCRIPT = """
   const guardNativeSeek=(video,from,at)=>{
     if(!Number.isFinite(from))return;
     const paused=video.paused;
-    for(const delay of [300,800]){
+    for(const delay of [300,800,1600,2600,4000]){
       setTimeout(()=>{
         if(!video.isConnected||video.seeking||activeVideo()!==video)return;
         // We seeked on purpose after this tap: the overshoot guard owns it.
